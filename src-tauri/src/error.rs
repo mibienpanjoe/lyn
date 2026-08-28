@@ -1,0 +1,1 @@
+//! Stable application error contract.

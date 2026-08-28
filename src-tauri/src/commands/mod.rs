@@ -1,0 +1,1 @@
+//! Narrow Tauri command gateway.
