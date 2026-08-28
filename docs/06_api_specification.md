@@ -1,10 +1,10 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.2, 2026-08-28
+Version: v1.3, 2026-08-28
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
-Contract status: **Shared primitives implemented; commands proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
+Contract status: **Shared primitives and manual context commands implemented; remaining commands proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
 
 ## Conventions
 
@@ -416,6 +416,27 @@ interface SaveAudioCaptureInput {
 
 ## Context Commands
 
+### `pick_project_directory`
+
+Open the operating system's native directory picker. Rust validates the selected directory and retains its canonical path in process memory; no path crosses IPC.
+
+**Input:** `{}`
+
+**Success:**
+
+```ts
+CommandResult<{
+  selection: {
+    selectedDirectoryToken: string;
+    suggestedName: string;
+  } | null;
+}>
+```
+
+Cancellation succeeds with `selection: null`. The opaque token expires after five minutes, is consumed by one `create_context` attempt, and becomes invalid when Lyn exits. `suggestedName` is a bounded, display-safe directory basename and is not an authority to access that directory.
+
+**Errors:** `PERMISSION_DENIED`, `INTERNAL_ERROR`.
+
 ### `list_contexts`
 
 List reusable contexts for manual selection and Library navigation.
@@ -446,7 +467,7 @@ type CreateContextInput =
   | { kind: "project"; name: string; selectedDirectoryToken: string };
 ```
 
-`selectedDirectoryToken` is issued by a native directory picker and is not a raw path supplied by the WebView.
+`selectedDirectoryToken` is issued by `pick_project_directory` and is not a raw path supplied by the WebView. Rust consumes and revalidates the token before inspecting Git metadata or writing a project context. A Git common directory is the stable project key when available; a valid non-Git directory remains a project context without a Git key.
 
 **Success:** `CommandResult<{ context: ContextRef }>`
 

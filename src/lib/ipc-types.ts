@@ -8,6 +8,8 @@ export type ContextId = string;
 
 export type ContextSourceId = string;
 
+export type DirectorySelectionToken = string;
+
 export type MediaId = string;
 
 export type StagedMediaId = string;
@@ -43,6 +45,18 @@ export type MediaMimeType = "image/png" | "audio/wav";
 export type EnrichmentStatus = "not_requested" | "pending" | "completed" | "skipped" | "failed";
 
 export type ContextRef = { id: ContextId, kind: ContextKind, name: string, };
+
+export type SelectedProjectDirectory = { selectedDirectoryToken: DirectorySelectionToken, suggestedName: string, };
+
+export type PickProjectDirectoryResult = { selection: SelectedProjectDirectory | null, };
+
+export type ListContextsInput = { kind: ContextKind | null, query: string | null, limit: number, };
+
+export type ListContextsResult = { contexts: Array<ContextRef>, };
+
+export type CreateContextInput = { "kind": "standalone", name: string, } | { "kind": "project", name: string, selectedDirectoryToken: DirectorySelectionToken, };
+
+export type CreateContextResult = { context: ContextRef, };
 
 export type ContextCandidate = { context: ContextRef, branchName: string | null, provider: ContextProviderKind, requiresConfirmation: boolean, };
 

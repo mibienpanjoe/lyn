@@ -49,6 +49,7 @@ opaque_uuid!(CaptureId);
 opaque_uuid!(CaptureSessionId);
 opaque_uuid!(ContextId);
 opaque_uuid!(ContextSourceId);
+opaque_uuid!(DirectorySelectionToken);
 opaque_uuid!(MediaId);
 opaque_uuid!(StagedMediaId);
 
@@ -157,6 +158,52 @@ pub struct ContextRef {
     pub id: ContextId,
     pub kind: ContextKind,
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectedProjectDirectory {
+    pub selected_directory_token: DirectorySelectionToken,
+    pub suggested_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PickProjectDirectoryResult {
+    pub selection: Option<SelectedProjectDirectory>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ListContextsInput {
+    pub kind: Option<ContextKind>,
+    pub query: Option<String>,
+    pub limit: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ListContextsResult {
+    pub contexts: Vec<ContextRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CreateContextInput {
+    Standalone {
+        name: String,
+    },
+    Project {
+        name: String,
+        #[serde(rename = "selectedDirectoryToken")]
+        selected_directory_token: DirectorySelectionToken,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateContextResult {
+    pub context: ContextRef,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -324,6 +371,7 @@ pub fn typescript_bindings() -> String {
         CaptureSessionId::decl(&config),
         ContextId::decl(&config),
         ContextSourceId::decl(&config),
+        DirectorySelectionToken::decl(&config),
         MediaId::decl(&config),
         StagedMediaId::decl(&config),
         Timestamp::decl(&config),
@@ -342,6 +390,12 @@ pub fn typescript_bindings() -> String {
         MediaMimeType::decl(&config),
         EnrichmentStatus::decl(&config),
         ContextRef::decl(&config),
+        SelectedProjectDirectory::decl(&config),
+        PickProjectDirectoryResult::decl(&config),
+        ListContextsInput::decl(&config),
+        ListContextsResult::decl(&config),
+        CreateContextInput::decl(&config),
+        CreateContextResult::decl(&config),
         ContextCandidate::decl(&config),
         ContextSelection::decl(&config),
         ContextSourceOption::decl(&config),
@@ -477,6 +531,28 @@ mod tests {
             session_id: session.session_id,
             text_body: "Keep this exact text".to_owned(),
         };
+        let directory_selection = SelectedProjectDirectory {
+            selected_directory_token: DirectorySelectionToken::new(),
+            suggested_name: "Lyn".to_owned(),
+        };
+        let picker_result = PickProjectDirectoryResult {
+            selection: Some(directory_selection.clone()),
+        };
+        let list_contexts_input = ListContextsInput {
+            kind: Some(ContextKind::Project),
+            query: Some("Lyn".to_owned()),
+            limit: 25,
+        };
+        let list_contexts_result = ListContextsResult {
+            contexts: vec![context.clone()],
+        };
+        let create_context_input = CreateContextInput::Project {
+            name: "Lyn".to_owned(),
+            selected_directory_token: directory_selection.selected_directory_token,
+        };
+        let create_context_result = CreateContextResult {
+            context: context.clone(),
+        };
         let error = AppError {
             code: ErrorCode::ValidationError,
             message: "Invalid capture".to_owned(),
@@ -502,6 +578,12 @@ mod tests {
         round_trip(&page);
         round_trip(&save_result);
         round_trip(&input);
+        round_trip(&directory_selection);
+        round_trip(&picker_result);
+        round_trip(&list_contexts_input);
+        round_trip(&list_contexts_result);
+        round_trip(&create_context_input);
+        round_trip(&create_context_result);
         round_trip(&CommandResult::<CaptureSession>::failure(error));
     }
 
@@ -528,6 +610,22 @@ mod tests {
     fn command_inputs_reject_unknown_fields() {
         let value = json!({ "sessionId": CaptureSessionId::new(), "textBody": "draft", "absolutePath": "/private/work" });
         assert!(serde_json::from_value::<SaveTextCaptureInput>(value).is_err());
+
+        let forged_project = json!({
+            "kind": "project",
+            "name": "Private project",
+            "selectedDirectoryToken": DirectorySelectionToken::new(),
+            "projectPath": "/private/work"
+        });
+        assert!(serde_json::from_value::<CreateContextInput>(forged_project).is_err());
+
+        let unknown_list_field = json!({
+            "kind": null,
+            "query": null,
+            "limit": 100,
+            "offset": 0
+        });
+        assert!(serde_json::from_value::<ListContextsInput>(unknown_list_field).is_err());
     }
 
     #[test]

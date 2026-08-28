@@ -1,5 +1,7 @@
 //! SQLite ownership and repository implementations.
 
+pub(crate) mod contexts;
+
 use std::{error::Error, fmt, fs, path::Path};
 
 use rusqlite::{Connection, TransactionBehavior, params};
@@ -69,9 +71,6 @@ impl From<rusqlite::Error> for StorageError {
 }
 
 pub(crate) struct Database {
-    // Tauri owns this connection for the application lifetime; repositories
-    // begin borrowing it in the next storage slice.
-    #[allow(dead_code, reason = "kept alive as managed application state")]
     connection: Connection,
 }
 
@@ -88,7 +87,7 @@ impl Database {
     }
 
     #[cfg(test)]
-    fn open_in_memory() -> Result<Self, StorageError> {
+    pub(crate) fn open_in_memory() -> Result<Self, StorageError> {
         Self::initialize(Connection::open_in_memory()?)
     }
 
@@ -103,8 +102,7 @@ impl Database {
         Ok(Self { connection })
     }
 
-    #[cfg(test)]
-    fn connection(&self) -> &Connection {
+    pub(crate) fn connection(&self) -> &Connection {
         &self.connection
     }
 }
