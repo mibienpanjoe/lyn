@@ -11,6 +11,7 @@ Svelte 5/TypeScript UI lives under `src/`; the Tauri/Rust core and narrow capabi
 Use Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, and the documented Tauri system prerequisites. Canonical commands are:
 
 - `pnpm install` — install the pinned frontend/tooling graph.
+- `pnpm bindings` — regenerate the tracked TypeScript IPC contract from Rust.
 - `pnpm dev` — run the frontend-only Vite server.
 - `pnpm format:check` — check frontend/config formatting.
 - `pnpm check` — run Svelte and TypeScript checks.

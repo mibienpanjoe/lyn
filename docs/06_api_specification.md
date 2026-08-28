@@ -1,10 +1,10 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.1, 2026-08-28
+Version: v1.2, 2026-08-28
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
-Contract status: **Proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
+Contract status: **Shared primitives implemented; commands proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
 
 ## Conventions
 
@@ -40,11 +40,20 @@ interface AppError {
   code: ErrorCode;
   message: string;              // Safe, localized by UI when desired
   retryable: boolean;
-  details: Record<string, string | number | boolean | null>;
+  details: Partial<Record<ErrorDetailKey, string | number | boolean | null>>;
 }
+
+type ErrorDetailKey =
+  | "field"
+  | "limit"
+  | "operation"
+  | "permission"
+  | "resourceKind"
+  | "retryAfterMs"
+  | "state";
 ```
 
-`details` MUST NOT include capture content, transcript text, clipboard data, raw OS errors, or absolute private paths.
+The Rust-owned allowlist rejects other detail keys at deserialization boundaries. `details` MUST NOT include capture content, transcript text, clipboard data, raw OS errors, or absolute private paths in either keys or values.
 
 ### Error codes
 

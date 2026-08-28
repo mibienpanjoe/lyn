@@ -22,6 +22,7 @@ Install the [Tauri 2 Linux prerequisites](https://v2.tauri.app/start/prerequisit
 
 ```bash
 pnpm install
+pnpm bindings
 pnpm dev
 pnpm format:check
 pnpm check
@@ -34,7 +35,7 @@ pnpm tauri dev
 pnpm tauri build --no-bundle
 ```
 
-`pnpm dev` runs only the frontend. `pnpm icons` regenerates platform icons from the tracked SVG master. `pnpm tauri dev` opens the desktop shell. Packaging remains disabled until the distribution gate is resolved.
+`pnpm bindings` regenerates the tracked TypeScript IPC contract from Rust. `pnpm dev` runs only the frontend. `pnpm icons` regenerates platform icons from the tracked SVG master. `pnpm tauri dev` opens the desktop shell. Packaging remains disabled until the distribution gate is resolved.
 
 ## Documentation
 
@@ -45,4 +46,4 @@ pnpm tauri build --no-bundle
 - [Typed Tauri IPC specification](docs/06_api_specification.md)
 - [Visual identity](docs/07_visual_identity.md)
 
-The implemented shell uses Tauri 2, Rust, Svelte 5, TypeScript, and Vite. SQLite and local filesystem storage remain planned for the next slices.
+The implemented shell uses Tauri 2, Rust, Svelte 5, TypeScript, and Vite. Rust now owns the shared domain and IPC primitives, with generated TypeScript bindings and malformed-input contract tests. SQLite and local filesystem storage remain planned for the next slices.

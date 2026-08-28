@@ -1,8 +1,9 @@
 mod capture;
 mod commands;
 mod context;
+pub mod contract;
 mod enrichment;
-mod error;
+pub mod error;
 mod intelligence;
 mod library;
 mod media;
