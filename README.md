@@ -12,7 +12,7 @@ Lyn captures titleless text notes, screenshots, and voice notes, associates them
 
 ## Status
 
-Implementation has started. Phase 0 provides a verified Svelte 5/Vite shell, a minimal Tauri 2/Rust desktop shell, narrow window capabilities, and frontend/Rust smoke-test harnesses. Capture, persistence, context detection, media, and Library behavior remain proposed.
+Implementation has started. Phase 0 provides a verified Svelte 5/Vite shell, a minimal Tauri 2/Rust desktop shell, narrow window capabilities, and frontend/Rust smoke-test harnesses. Phase 1 now includes Rust-owned shared IPC primitives and startup initialization of the canonical SQLite/FTS schema through ordered migrations. Context repositories, capture writes, media files, detection, and Library behavior remain proposed.
 
 The first implementation baseline is Pop!_OS 22.04 LTS (Ubuntu-compatible, x86_64, X11), Node 24.12.0 with pnpm 10.28.0, and Rust 1.96.1. macOS, Windows, Wayland, and packaging support remain unverified and are not yet claimed.
 
@@ -35,7 +35,7 @@ pnpm tauri dev
 pnpm tauri build --no-bundle
 ```
 
-`pnpm bindings` regenerates the tracked TypeScript IPC contract from Rust. `pnpm dev` runs only the frontend. `pnpm icons` regenerates platform icons from the tracked SVG master. `pnpm tauri dev` opens the desktop shell. Packaging remains disabled until the distribution gate is resolved.
+`pnpm bindings` regenerates the tracked TypeScript IPC contract from Rust. `pnpm dev` runs only the frontend. `pnpm icons` regenerates platform icons from the tracked SVG master. `pnpm tauri dev` opens the desktop shell and initializes `lyn.db` in Tauri's application-data directory. Packaging remains disabled until the distribution gate is resolved.
 
 ## Documentation
 
@@ -46,4 +46,4 @@ pnpm tauri build --no-bundle
 - [Typed Tauri IPC specification](docs/06_api_specification.md)
 - [Visual identity](docs/07_visual_identity.md)
 
-The implemented shell uses Tauri 2, Rust, Svelte 5, TypeScript, and Vite. Rust now owns the shared domain and IPC primitives, with generated TypeScript bindings and malformed-input contract tests. SQLite and local filesystem storage remain planned for the next slices.
+The implemented shell uses Tauri 2, Rust, Svelte 5, TypeScript, Vite, and bundled SQLite through `rusqlite`. Rust owns the shared domain and IPC primitives, generated TypeScript bindings, database initialization, canonical schema, transactional migrations, and FTS projection. Repository operations and Lyn-owned media file storage remain planned for the next slices.

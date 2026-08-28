@@ -4,7 +4,7 @@
 
 Lyn has a Phase 0 Svelte/Tauri shell; `README.md` is the entry point. Read `docs/project_overview.md`, then `01_requirements_prd.md` through `07_visual_identity.md`. Preserve requirement, invariant, and error IDs across documents.
 
-Svelte 5/TypeScript UI lives under `src/`; the Tauri/Rust core and narrow capability manifest live under `src-tauri/`. Keep presentation and IPC clients in `src/`; storage, context detection, media, and OS integration belong in Rust.
+Svelte 5/TypeScript UI lives under `src/`; the Tauri/Rust core and narrow capability manifest live under `src-tauri/`. Ordered SQLite migrations live under `src-tauri/migrations/` and must remain immutable after release. Keep presentation and IPC clients in `src/`; storage, context detection, media, and OS integration belong in Rust.
 
 ## Build, Test, and Development Commands
 
