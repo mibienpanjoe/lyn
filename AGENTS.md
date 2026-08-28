@@ -2,24 +2,38 @@
 
 ## Project Structure & Module Organization
 
-Lyn is documentation-only; `README.md` is the entry point. Read `docs/project_overview.md`, then `01_requirements_prd.md` through `07_visual_identity.md`. Preserve requirement, invariant, and error IDs across documents.
+Lyn has a Phase 0 Svelte/Tauri shell; `README.md` is the entry point. Read `docs/project_overview.md`, then `01_requirements_prd.md` through `07_visual_identity.md`. Preserve requirement, invariant, and error IDs across documents.
 
-The proposed layout places Svelte 5/TypeScript UI under `src/` and the Tauri/Rust core under `src-tauri/src/`. Keep presentation and IPC clients in `src/`; storage, context detection, media, and OS integration belong in Rust.
+Svelte 5/TypeScript UI lives under `src/`; the Tauri/Rust core and narrow capability manifest live under `src-tauri/`. Keep presentation and IPC clients in `src/`; storage, context detection, media, and OS integration belong in Rust.
 
 ## Build, Test, and Development Commands
 
-No package manifest or executable tooling is committed, so no build, test, lint, or development commands exist. For documentation-only changes, run:
+Use Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, and the documented Tauri system prerequisites. Canonical commands are:
+
+- `pnpm install` — install the pinned frontend/tooling graph.
+- `pnpm dev` — run the frontend-only Vite server.
+- `pnpm format:check` — check frontend/config formatting.
+- `pnpm check` — run Svelte and TypeScript checks.
+- `pnpm test` — run frontend component/accessibility tests once.
+- `pnpm icons` — regenerate platform icons from the tracked SVG master.
+- `cargo fmt --check --manifest-path src-tauri/Cargo.toml` — check Rust formatting.
+- `cargo test --manifest-path src-tauri/Cargo.toml` — run Rust tests.
+- `pnpm build` — build frontend assets.
+- `pnpm tauri dev` — open the desktop development shell.
+- `pnpm tauri build --no-bundle` — compile the production binary without packaging.
+
+For documentation changes, also run:
 
 - `git diff --check` — detect whitespace errors.
 - `rg -n "FR-|INV-|ERR-" docs/` — inspect cross-document identifiers.
 
-When tooling is introduced, add its exact commands here and to `README.md` in the same change.
+Packaging remains disabled until distribution requirements are accepted and verified. Add new exact commands here and to `README.md` in the same change.
 
 ## Coding Style & Naming Conventions
 
 Write concise Markdown with descriptive headings and relative links. Keep numbered filenames stable. Never present proposed designs as implemented or verified.
 
-For future code, use `rustfmt` and the configured Svelte/TypeScript formatter. Use `snake_case` for Rust modules/functions, `PascalCase` for Rust types and Svelte components, and kebab-case for TypeScript utility files. Preserve typed Tauri IPC; the frontend must not access SQLite or arbitrary filesystem paths.
+Use `rustfmt` and Prettier. Use `snake_case` for Rust modules/functions, `PascalCase` for Rust types and Svelte components, and kebab-case for TypeScript utility files. Preserve typed Tauri IPC; the frontend must not access SQLite or arbitrary filesystem paths.
 
 ## Testing Guidelines
 
