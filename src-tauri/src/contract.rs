@@ -297,6 +297,18 @@ pub struct CaptureSession {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CancelCaptureSessionInput {
+    pub session_id: CaptureSessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelCaptureSessionResult {
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveCaptureResult {
     pub capture_id: CaptureId,
@@ -403,6 +415,8 @@ pub fn typescript_bindings() -> String {
         StagedMedia::decl(&config),
         RecordingState::decl(&config),
         CaptureSession::decl(&config),
+        CancelCaptureSessionInput::decl(&config),
+        CancelCaptureSessionResult::decl(&config),
         SaveCaptureResult::decl(&config),
         MediaSummary::decl(&config),
         CaptureSummary::decl(&config),
@@ -531,6 +545,10 @@ mod tests {
             session_id: session.session_id,
             text_body: "Keep this exact text".to_owned(),
         };
+        let cancel_input = CancelCaptureSessionInput {
+            session_id: session.session_id,
+        };
+        let cancel_result = CancelCaptureSessionResult { cancelled: true };
         let directory_selection = SelectedProjectDirectory {
             selected_directory_token: DirectorySelectionToken::new(),
             suggested_name: "Lyn".to_owned(),
@@ -572,6 +590,8 @@ mod tests {
         round_trip(&source);
         round_trip(&staged_media);
         round_trip(&session);
+        round_trip(&cancel_input);
+        round_trip(&cancel_result);
         round_trip(&media);
         round_trip(&summary);
         round_trip(&detail);

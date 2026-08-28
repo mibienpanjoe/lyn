@@ -4,7 +4,7 @@
 
 Lyn has a Phase 0 Svelte/Tauri shell; `README.md` is the entry point. Read `docs/project_overview.md`, then `01_requirements_prd.md` through `07_visual_identity.md`. Preserve requirement, invariant, and error IDs across documents.
 
-Svelte 5/TypeScript UI lives under `src/`; the Tauri/Rust core and narrow capability manifest live under `src-tauri/`. Ordered SQLite migrations live under `src-tauri/migrations/` and must remain immutable after release. Keep presentation and IPC clients in `src/`; storage, context detection, media, and OS integration belong in Rust. Context commands live in `src-tauri/src/commands/context.rs`, with persistence isolated in `src-tauri/src/storage/contexts.rs`.
+Svelte 5/TypeScript UI lives under `src/`; the Tauri/Rust core and narrow capability manifest live under `src-tauri/`. Ordered SQLite migrations live under `src-tauri/migrations/` and must remain immutable after release. Keep presentation and IPC clients in `src/`; storage, capture-session state, context detection, media, and OS integration belong in Rust. Capture-session transitions live in `src-tauri/src/capture/session.rs`; command gateways live under `src-tauri/src/commands/`, with persistence isolated under `src-tauri/src/storage/`.
 
 ## Build, Test, and Development Commands
 
@@ -49,5 +49,7 @@ Pull requests should explain scope/rationale, link requirements or issues, list 
 ## Security & Product Boundaries
 
 Lyn is local-first. Core capture must not depend on accounts, cloud APIs, or remote AI. Treat clipboard data, paths, window titles, and media as untrusted. Never log capture content or commit secrets. Project directories must enter through the Rust-owned native picker; expose only expiring one-use tokens and safe labels to the frontend, never raw paths or generic filesystem permissions. Bind automatic context to the pre-popup foreground window; never use a global last-reported session or expose terminal, editor, or agent content. Context correction must preserve the draft. Preserve “save first, enrich afterward” and user-authored metadata precedence.
+
+The Rust capture-session service owns the single active session and save idempotency. Commands must not derive session state from popup mount/unmount events or perform persistence outside the service's serialized `save_once` boundary.
 
 Update this guide in the same change whenever repository state, commands, structure, contracts, or contributor workflows change. Breaking API, invariant, data-model, security, or platform changes require matching guidance updates.

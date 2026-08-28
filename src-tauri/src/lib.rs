@@ -23,9 +23,14 @@ pub fn run() {
             let database = storage::Database::open(database_path)?;
             app.manage(Mutex::new(database));
             app.manage(Mutex::new(context::DirectorySelectionRegistry::default()));
+            app.manage(Mutex::new(
+                capture::session::CaptureSessionService::default(),
+            ));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::capture::get_active_capture_session,
+            commands::capture::cancel_capture_session,
             commands::context::pick_project_directory,
             commands::context::create_context,
             commands::context::list_contexts,

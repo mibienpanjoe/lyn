@@ -72,6 +72,10 @@ export type RecordingState = { "state": "idle" } | { "state": "recording", elaps
 
 export type CaptureSession = { sessionId: CaptureSessionId, contextResolution: ContextResolution, stagedMedia: StagedMedia | null, recordingState: RecordingState, };
 
+export type CancelCaptureSessionInput = { sessionId: CaptureSessionId, };
+
+export type CancelCaptureSessionResult = { cancelled: boolean, };
+
 export type SaveCaptureResult = { captureId: CaptureId, capturedAt: Timestamp, enrichmentScheduled: boolean, };
 
 export type MediaSummary = { mediaId: MediaId, kind: MediaKind, previewUri: string, durationMs: number | null, widthPx: number | null, heightPx: number | null, available: boolean, };

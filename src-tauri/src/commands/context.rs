@@ -4,6 +4,7 @@ use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::{
+    commands::is_empty_input,
     context::{DirectorySelectionRegistry, inspect_project_directory},
     contract::{
         CreateContextInput, CreateContextResult, ListContextsInput, ListContextsResult,
@@ -18,9 +19,13 @@ const MAX_CONTEXT_QUERY_CHARS: usize = 100;
 
 #[tauri::command]
 pub(crate) async fn pick_project_directory(
+    input: serde_json::Value,
     app: AppHandle,
     selections: State<'_, Mutex<DirectorySelectionRegistry>>,
 ) -> Result<CommandResult<PickProjectDirectoryResult>, ()> {
+    if !is_empty_input(&input) {
+        return Ok(CommandResult::failure(validation_error("input")));
+    }
     #[cfg(desktop)]
     let selected = app
         .dialog()

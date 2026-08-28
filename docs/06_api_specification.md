@@ -1,16 +1,17 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.3, 2026-08-28
+Version: v1.4, 2026-08-28
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
-Contract status: **Shared primitives and manual context commands implemented; remaining commands proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
+Contract status: **Shared primitives, manual context commands, and capture-session get/cancel commands implemented; remaining commands proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
 
 ## Conventions
 
 ### Transport
 
 - Commands use Tauri 2 `invoke` transport.
+- Each command receives one JSON argument named `input`; commands documented with input `{}` reject any fields in that object.
 - Rust owns command registration and validation.
 - The frontend consumes generated or compile-checked TypeScript bindings from the same contract definitions.
 - Commands use `snake_case` names at the Tauri boundary and `camelCase` JSON fields.
@@ -209,6 +210,8 @@ Context providers are Rust-side adapters, not frontend IPC. They submit only val
 
 Return the one active session prepared by shortcut invocation. It MAY prepare a session when the capture window is opened through an explicit application menu action.
 
+Until automatic context providers are connected, a newly prepared session starts with `contextResolution.state = "required"`. Repeated calls return the same session identifier and state until that session is cancelled or durably saved.
+
 **Input:** `{}`
 
 **Success:** `CommandResult<CaptureSession>`
@@ -274,7 +277,7 @@ Cancel the session and remove only its staged media.
 
 **Idempotency:** Repeating cancellation for the most recently cancelled session returns `{ cancelled: true }` and creates no side effect.
 
-**Errors:** `VALIDATION_ERROR`, `INTERNAL_ERROR` when cleanup is deferred. A deferred cleanup error MUST NOT create a capture.
+**Errors:** `VALIDATION_ERROR`, `STALE_SESSION`, `INTERNAL_ERROR` when cleanup is deferred. A deferred cleanup error MUST NOT create a capture. The implemented state machine queues cleanup by the cancelled session and staged-media identifiers; the Media Service worker that performs filesystem cleanup remains a later slice.
 
 ### `save_text_capture`
 
@@ -435,7 +438,7 @@ CommandResult<{
 
 Cancellation succeeds with `selection: null`. The opaque token expires after five minutes, is consumed by one `create_context` attempt, and becomes invalid when Lyn exits. `suggestedName` is a bounded, display-safe directory basename and is not an authority to access that directory.
 
-**Errors:** `PERMISSION_DENIED`, `INTERNAL_ERROR`.
+**Errors:** `VALIDATION_ERROR`, `PERMISSION_DENIED`, `INTERNAL_ERROR`.
 
 ### `list_contexts`
 
