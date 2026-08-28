@@ -1,6 +1,6 @@
 # Lyn — Visual Identity and Interface System
 
-Version: v1.0, 2026-08-27
+Version: v1.1, 2026-08-28
 
 Derived from: [`01_requirements_prd.md`](01_requirements_prd.md), [`02_requirements_srs.md`](02_requirements_srs.md), and [`05_architecture.md`](05_architecture.md)
 
@@ -340,7 +340,7 @@ Core concepts:
 
 ```text
 ┌──────────────────────────────────────────────────────┐
-│ [context icon] stipen  /  feature/auth          [•••]│
+│ [context icon] stipen  /  feature/auth          [⌄] │
 │                                                      │
 │ Type or paste anything…                              │
 │                                                      │
@@ -356,7 +356,7 @@ Core concepts:
 - Placeholder: “Type or paste anything…”; it is not a label substitute for assistive technology.
 - Bottom action row is secondary. Screenshot and Voice are quiet/ghost controls, not competing primary buttons.
 - “Enter to save” may be shown as a keyboard hint; saving still uses actual keyboard behavior and an accessible Save control when pointer users need it.
-- Missing context expands an inline chooser without discarding or covering entered content.
+- The context row is always an operable control. Missing, ambiguous, or stale context expands an inline chooser without discarding or covering entered content.
 - Save error appears inline above the action row with a concise message and Retry; focus moves to the error summary only when required to make it discoverable.
 
 The popup MUST NOT contain tags, folders, statuses, branch selection, formatting controls, search, or Library navigation.
@@ -366,7 +366,7 @@ The popup MUST NOT contain tags, folders, statuses, branch selection, formatting
 1. Text/caption input on open.
 2. Screenshot action.
 3. Voice action or recording controls.
-4. Context chooser only when required.
+4. Context control; opening it moves focus into the chooser.
 5. Save and cancel affordances when exposed.
 
 `Esc` cancels only when no child menu/chooser needs to close first. The first `Esc` closes the topmost child surface; the next cancels the capture.
@@ -374,10 +374,15 @@ The popup MUST NOT contain tags, folders, statuses, branch selection, formatting
 ### Context indicator and chooser
 
 - Indicator uses a repository/folder icon, context name, separator, and branch.
-- It is a compact status/control, not a colorful badge.
-- Resolved state is neutral; manual-attention state uses warning icon plus “Choose context”.
-- The chooser has an accessible combobox/listbox pattern, supports typeahead, and presents “Create context” after matching existing items.
-- Project and standalone context types are expressed by icon and text grouping, not color alone.
+- It is a compact button/combobox control, not a colorful badge. Its accessible name includes context and branch, followed by “Change context”.
+- Resolved state is neutral. Ambiguous state uses a warning icon plus “Choose session”; stale state says “Session changed — choose again”.
+- The chooser uses an accessible combobox/listbox pattern, supports typeahead, and separates “Live sessions” from “Saved contexts”. “Create context” follows matching saved items.
+- Each live row shows application, project/worktree label, and branch when known. The exact pre-popup source may carry the text label “Current window”; do not communicate it by color alone.
+- Distinguish VS Code windows, integrated terminals, external terminals, and shells by icon plus visible type label. A coding agent is represented only through its terminal/workspace—not by guessed agent identity.
+- Never show terminal commands/output, editor content, agent conversation text, process IDs, raw correlation tokens, or full private paths.
+- Selecting any option closes the chooser, restores focus to the context control, changes only the current capture context, and preserves text, preview, staged-media identity, recording state, and scroll position.
+- If a live source becomes stale during selection or save, keep the chooser available and draft intact; never jump silently to another recent source.
+- Project and standalone saved contexts are expressed by icon and text grouping, not color alone.
 - Long values use middle truncation, with full accessible label and tooltip.
 
 ### Buttons
@@ -479,6 +484,8 @@ Every view MUST define these states; blank space or an endless spinner is not ac
 | Empty search | Echo the query safely and offer to clear filters; do not imply semantic interpretation. |
 | Save in progress | Prevent duplicate submit, preserve content, and use quiet progress on the Save affordance; never wait on enrichment. |
 | Save failed | Keep content, show concise error + Retry, and do not dismiss. |
+| Context ambiguous | Keep input ready; mark the context control with “Choose session” and open the grouped chooser on activation. |
+| Context source stale | Keep all draft/media/recording state; say “Session changed — choose again” and refresh the live list. |
 | Missing media | Preserve metadata and show “Media file unavailable” with non-destructive diagnostic action. |
 | Microphone denied | Explain the permission, keep other capture types usable, and expose an OS-settings action when available. |
 | Model absent | Describe transcription as optional and local; saving remains primary. |
@@ -647,6 +654,8 @@ Preferred:
 
 - “Saved”
 - “Choose a context to save this capture.”
+- “Choose the session for this capture.”
+- “Session changed — choose again.”
 - “Microphone access is off.”
 - “Media file unavailable.”
 - “Caption not generated. Your voice note is saved.”
@@ -669,7 +678,7 @@ Avoid:
 ## 13. Implementation Guidance
 
 - Build lightweight Svelte primitives and CSS custom properties; do not import a heavyweight UI framework for basic controls.
-- Prefer composition: `CapturePopup`, `ContextIndicator`, `CaptureStream`, `CaptureRow`, `MediaPreview`, `VoicePlayer`, and focused primitives.
+- Prefer composition: `CapturePopup`, `ContextIndicator`, `ContextSourceChooser`, `CaptureStream`, `CaptureRow`, `MediaPreview`, `VoicePlayer`, and focused primitives.
 - Keep data/IPC clients separate from presentational components.
 - Colocate component tests and state stories/examples where the project tooling supports them.
 - Use real capture examples in development fixtures; placeholder lorem ipsum hides wrapping and density defects.
@@ -684,6 +693,11 @@ Before a UI slice is considered verified:
 
 - [ ] Quick capture accepts keyboard input immediately and does not animate a staged entrance.
 - [ ] `Enter`, `Shift + Enter`, `Esc`, IME composition, and missing-context focus paths work.
+- [ ] Concurrent VS Code windows, integrated/external terminals, coding-agent working directories, and Git worktrees produce distinct, accurate, safely labeled choices.
+- [ ] The pre-popup foreground source is marked and selected ahead of unrelated recent activity; ambiguity never guesses.
+- [ ] Switching or losing a live source preserves text, staged media, recording state, scroll, and focus recovery.
+- [ ] Chooser accessibility works with keyboard and screen readers, including group labels, current-window status, ambiguity, and stale-source errors.
+- [ ] No terminal/editor/agent content, process ID, correlation token, or full private path appears in the UI, DOM, accessibility tree, or event payloads.
 - [ ] All interactive elements are reachable and usable by keyboard.
 - [ ] Focus indicators remain visible in light and dark themes.
 - [ ] Screen-reader structure, labels, live regions, and error associations are correct.

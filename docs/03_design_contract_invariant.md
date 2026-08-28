@@ -1,6 +1,6 @@
 # Lyn — System Contract & Invariants
 
-Version: v1.0, 2026-08-27
+Version: v1.1, 2026-08-28
 
 Derived from: [`02_requirements_srs.md`](02_requirements_srs.md)
 
@@ -11,8 +11,8 @@ Derived from: [`02_requirements_srs.md`](02_requirements_srs.md)
 | User | Invoke and cancel capture; enter text; paste images; record and play audio; select context; browse and search; open media; change settings; enable optional local intelligence. |
 | Capture UI | Render session state; collect user intent; call typed core commands; display returned errors. It may not write the database or application-data filesystem directly. |
 | Rust Core | Validate commands; coordinate capture, context, storage, media, search, settings, and enrichment; expose narrowly scoped results to the UI. |
-| Context Provider | Return evidence about a shell directory, editor workspace, foreground window, or manual selection. It may not persist a capture. |
-| Platform Adapter | Access only the OS capability assigned to it: shortcut, focus, clipboard, active-window metadata, external-open, filesystem, or microphone. |
+| Context Provider | Register validated, local observations about one editor window, terminal/shell session, working directory, or manual selection. It may not persist a capture or expose terminal/editor content. |
+| Platform Adapter | Access only the OS capability assigned to it: shortcut, pre-popup foreground identity, focus, clipboard, active-window metadata, external-open, filesystem, or microphone. |
 | Local Speech Engine | Read a Lyn-owned audio asset when enabled; produce a local transcript or derived caption; report status. It may not determine whether the capture can be saved. |
 
 No actor may bypass the Rust command boundary to mutate canonical capture data. No optional actor may become a prerequisite for text, screenshot, or voice capture.
@@ -77,6 +77,18 @@ All captures belonging to one project MUST remain queryable as one chronological
 
 Protects: FR-028, FR-064, BR-04.
 
+**INV-14 — Invocation-bound automatic context**
+
+Automatic context MUST be derived from evidence correlated with the OS window that was focused immediately before Lyn appeared. An unrelated editor or terminal that reported more recently MUST NOT override an exact foreground-window, process, or terminal-session association.
+
+Protects: FR-101, FR-102, FR-103, FR-104, BR-09.
+
+**INV-15 — Explicit context correction authority**
+
+When the user selects another live source or saved context, that selection MUST replace the automatic candidate for the current capture without altering any draft text, caption, screenshot, audio, or recording state. A selected live source MUST be revalidated before save; a stale selection cannot be silently substituted.
+
+Protects: FR-105, FR-106, FR-107, BR-10.
+
 ### Local data and retrieval integrity
 
 **INV-07 — Local core privacy boundary**
@@ -124,6 +136,10 @@ Protects: FR-092, FR-093 and the SRS security constraints.
 | FRB-13 | Give the WebView direct database access, arbitrary shell execution, or unrestricted local-filesystem access. |
 | FRB-14 | Log capture bodies, captions, transcripts, raw clipboard contents, or audio bytes. |
 | FRB-15 | Require an account, network connection, paid API, speech model, OCR, vision model, embedding model, or vector database for core capture and retrieval. |
+| FRB-16 | Choose a globally recent editor or terminal observation over an exact invocation-bound foreground association. |
+| FRB-17 | Modify or discard draft content when the user changes the selected context source. |
+| FRB-18 | Display or retain terminal commands, terminal output, editor contents, or coding-agent conversations as context-source metadata. |
+| FRB-19 | Silently replace a stale user-selected live source with another source at save time. |
 
 ## Exception Handlers
 
@@ -143,6 +159,9 @@ Protects: FR-092, FR-093 and the SRS security constraints.
 | EXC-12 | INV-11 | Cancellation cleanup cannot remove staged media immediately | Mark the session abandoned and retry scoped cleanup; never publish the staged data as a capture. |
 | EXC-13 | INV-12 | Duplicate save command arrives for a completed session | Return the original capture identifier as an idempotent result or `STALE_SESSION`; do not create another record. |
 | EXC-14 | INV-13 | IPC payload is invalid, path is outside allowed scope, or capability is not granted | Reject before side effects with a typed validation or permission error and record only non-sensitive diagnostic metadata. |
+| EXC-15 | INV-14 | Foreground correlation is unavailable or multiple sources have equal reliable evidence | Return an ambiguous result, preserve the active draft, and require explicit selection instead of choosing by global recency. |
+| EXC-16 | INV-15 | A selected live source exits or fails revalidation before save | Return `CONTEXT_SOURCE_STALE`, refresh eligible sources, preserve the entire draft, and require reselection. |
+| EXC-17 | INV-14, INV-15 | A provider registration is malformed or its local channel fails | Discard the observation, continue other providers/manual selection, and do not disable capture. |
 
 ## Change Control
 

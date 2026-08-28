@@ -1,6 +1,6 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.0, 2026-08-27
+Version: v1.1, 2026-08-28
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
@@ -53,6 +53,9 @@ type ErrorCode =
   | "VALIDATION_ERROR"
   | "STALE_SESSION"
   | "CONTEXT_REQUIRED"
+  | "CONTEXT_AMBIGUOUS"
+  | "CONTEXT_SOURCE_NOT_FOUND"
+  | "CONTEXT_SOURCE_STALE"
   | "EMPTY_CAPTURE"
   | "CAPTURE_NOT_FOUND"
   | "CONTEXT_NOT_FOUND"
@@ -81,6 +84,11 @@ type CaptureKind = "text" | "image" | "audio";
 type ContextKind = "project" | "standalone";
 type CaptionSource = "user" | "context_generated" | "transcript_generated";
 type ContextProviderKind = "manual" | "vscode" | "shell" | "foreground_window";
+type ContextSourceKind =
+  | "vscode_window"
+  | "integrated_terminal"
+  | "external_terminal"
+  | "shell";
 
 interface ContextRef {
   id: string;
@@ -95,10 +103,29 @@ interface ContextCandidate {
   requiresConfirmation: boolean;
 }
 
+type ContextSelection =
+  | { kind: "live_source"; sourceId: string }
+  | { kind: "saved_context"; contextId: string };
+
+interface ContextSourceOption {
+  sourceId: string;              // Opaque and valid only while the source is live
+  kind: ContextSourceKind;
+  provider: ContextProviderKind;
+  applicationName: string;
+  label: string;                 // Safe project/worktree label; never terminal content
+  context: ContextRef;
+  branchName: string | null;
+  isForeground: boolean;
+}
+
+type ContextResolution =
+  | { state: "resolved"; candidate: ContextCandidate; selection: ContextSelection | null }
+  | { state: "ambiguous"; candidate: null; selection: null }
+  | { state: "required"; candidate: null; selection: null };
+
 interface CaptureSession {
   sessionId: string;
-  contextCandidate: ContextCandidate | null;
-  contextRequired: boolean;
+  contextResolution: ContextResolution;
   stagedMedia: StagedMedia | null;
   recordingState: RecordingState;
 }
@@ -163,6 +190,10 @@ interface Page<T> {
 
 `previewUri` is created by Rust for a validated media ID. It is not a user-controlled URL and MUST resolve only through Lyn's read-only media protocol.
 
+### Local provider observation contract
+
+Context providers are Rust-side adapters, not frontend IPC. They submit only validated correlation metadata: provider/source kind, opaque OS window/process/session tokens, workspace or working directory, observation time, and liveness. Context Resolver derives the public `ContextSourceOption`; raw paths and tokens never cross the Tauri boundary. Provider observations MUST NOT contain terminal commands/output, editor contents, clipboard content, or agent conversations, and MUST NOT be persisted.
+
 ## Capture Session Commands
 
 ### `get_active_capture_session`
@@ -180,22 +211,49 @@ Return the one active session prepared by shortcut invocation. It MAY prepare a 
 | `STORAGE_UNAVAILABLE` | Core storage could not initialize. |
 | `INTERNAL_ERROR` | A safe session could not be prepared. |
 
-### `select_capture_context`
+### `list_capture_context_sources`
 
-Assign an existing context to the active session. The branch remains the current resolver result only when it belongs to the selected project; otherwise it is null.
+List currently eligible live sources and saved contexts for the active capture. Labels are safe summaries and never include terminal commands/output or agent/editor content.
 
 **Input:**
 
 ```ts
-interface SelectCaptureContextInput {
+interface ListCaptureContextSourcesInput {
   sessionId: string;
-  contextId: string;
+  query: string | null;
+  limit: number;                 // 1..100 per group
 }
 ```
 
+**Success:**
+
+```ts
+CommandResult<{
+  liveSources: ContextSourceOption[];
+  savedContexts: ContextRef[];
+}>
+```
+
+**Errors:** `STALE_SESSION`, `VALIDATION_ERROR`, `STORAGE_UNAVAILABLE`.
+
+### `select_capture_context_source`
+
+Replace the proposed context for this capture only. The command changes only context resolution state: entered text, staged media, and recording state MUST remain byte-for-byte/identity equivalent.
+
+**Input:**
+
+```ts
+interface SelectCaptureContextSourceInput {
+  sessionId: string;
+  selection: ContextSelection;
+}
+```
+
+Live sources are revalidated before selection. A saved context has `branchName: null` unless Context Resolver can safely refresh it from a currently associated live source.
+
 **Success:** `CommandResult<CaptureSession>`
 
-**Errors:** `STALE_SESSION`, `CONTEXT_NOT_FOUND`, `VALIDATION_ERROR`.
+**Errors:** `STALE_SESSION`, `CONTEXT_SOURCE_NOT_FOUND`, `CONTEXT_SOURCE_STALE`, `CONTEXT_NOT_FOUND`, `VALIDATION_ERROR`.
 
 ### `cancel_capture_session`
 
@@ -218,7 +276,6 @@ Commit a titleless text capture.
 ```ts
 interface SaveTextCaptureInput {
   sessionId: string;
-  contextId: string;
   textBody: string;
 }
 ```
@@ -233,6 +290,8 @@ There is intentionally no title field.
 |---|---|
 | `STALE_SESSION` | Session is unknown, cancelled, or superseded. |
 | `CONTEXT_REQUIRED` | No valid context is assigned. |
+| `CONTEXT_AMBIGUOUS` | Multiple sources remain equally plausible and no explicit selection exists. |
+| `CONTEXT_SOURCE_STALE` | The selected live source disappeared or changed identity before save. |
 | `EMPTY_CAPTURE` | `textBody` is blank after the blankness check; original text is never rewritten. |
 | `STORAGE_WRITE_FAILED` | Atomic database commit failed. |
 | `VALIDATION_ERROR` | Payload exceeds a documented implementation limit or has invalid types. |
@@ -262,7 +321,6 @@ Finalize and commit the staged PNG.
 ```ts
 interface SaveImageCaptureInput {
   sessionId: string;
-  contextId: string;
   stagedMediaId: string;
   caption: string | null;
 }
@@ -272,7 +330,7 @@ Whitespace-only captions are treated as null. A non-blank caption is stored with
 
 **Success:** `CommandResult<SaveCaptureResult>`
 
-**Errors:** `STALE_SESSION`, `CONTEXT_REQUIRED`, `MEDIA_NOT_FOUND`, `MEDIA_FINALIZE_FAILED`, `STORAGE_WRITE_FAILED`, `VALIDATION_ERROR`.
+**Errors:** `STALE_SESSION`, `CONTEXT_REQUIRED`, `CONTEXT_AMBIGUOUS`, `CONTEXT_SOURCE_STALE`, `MEDIA_NOT_FOUND`, `MEDIA_FINALIZE_FAILED`, `STORAGE_WRITE_FAILED`, `VALIDATION_ERROR`.
 
 ## Voice Commands
 
@@ -336,7 +394,6 @@ Finalize and commit staged WAV audio.
 ```ts
 interface SaveAudioCaptureInput {
   sessionId: string;
-  contextId: string;
   stagedMediaId: string;
   caption: string | null;
 }
@@ -346,7 +403,7 @@ interface SaveAudioCaptureInput {
 
 `enrichmentScheduled` is true only when the caption is null, local intelligence is enabled, and an eligible local model is available or installation policy permits a pending job. Save success never depends on the job outcome.
 
-**Errors:** `STALE_SESSION`, `CONTEXT_REQUIRED`, `MEDIA_NOT_FOUND`, `MEDIA_FINALIZE_FAILED`, `STORAGE_WRITE_FAILED`, `VALIDATION_ERROR`.
+**Errors:** `STALE_SESSION`, `CONTEXT_REQUIRED`, `CONTEXT_AMBIGUOUS`, `CONTEXT_SOURCE_STALE`, `MEDIA_NOT_FOUND`, `MEDIA_FINALIZE_FAILED`, `STORAGE_WRITE_FAILED`, `VALIDATION_ERROR`.
 
 ## Context Commands
 
@@ -495,7 +552,7 @@ Image preview uses the read-only opaque `previewUri` returned in media summaries
 ```ts
 interface AppSettings {
   globalShortcut: string;
-  providerOrder: ContextProviderKind[];
+  providerTieBreakOrder: ContextProviderKind[];
   theme: "system" | "light" | "dark";
   localSpeechEnabled: boolean;
 }
@@ -569,6 +626,10 @@ Events are namespaced, contain no absolute paths or capture bodies, and cannot b
 Emitted after shortcut invocation and session preparation.
 
 Payload: `CaptureSession`.
+
+### `context://sources-changed`
+
+Emitted when eligible live sources for the active capture may have changed. Payload: `{ sessionId: string }`. The event contains no source details; the UI re-runs `list_capture_context_sources` only while the chooser is open.
 
 ### `recording://state-changed`
 
@@ -653,13 +714,17 @@ No concrete model distributor is selected in the source overview. A release MUST
 | ERR-014 committed media missing | Summary has `available: false`; open/play returns `MEDIA_NOT_FOUND` |
 | ERR-015 invalid/stale IPC | `VALIDATION_ERROR` or `STALE_SESSION` |
 | ERR-016 exit during enrichment | Accepted capture persists; local job remains resumable |
+| ERR-017 ambiguous context evidence | `CONTEXT_AMBIGUOUS`; draft remains available and chooser opens |
+| ERR-018 selected live source stale | `CONTEXT_SOURCE_STALE`; draft remains available for refresh/reselection |
+| ERR-019 malformed/unavailable provider registration | Provider is ignored; resolution continues or returns `CONTEXT_REQUIRED`/`CONTEXT_AMBIGUOUS` |
 
 ## Command Summary
 
 | Group | Command | Primary component | Mutation |
 |---|---|---|---|
 | Session | `get_active_capture_session` | Capture Service | Session only |
-| Session | `select_capture_context` | Capture Service | Session only |
+| Session | `list_capture_context_sources` | Context Resolver | No |
+| Session | `select_capture_context_source` | Capture Service + Context Resolver | Session only |
 | Session | `cancel_capture_session` | Capture Service | Staging cleanup |
 | Capture | `save_text_capture` | Capture Service | Yes |
 | Screenshot | `stage_clipboard_image` | Media Service | Staging only |
@@ -689,4 +754,7 @@ No concrete model distributor is selected in the source overview. A release MUST
 - Run negative tests for unknown fields, invalid enums, malformed UUIDs/timestamps, stale sessions, duplicate saves, path traversal attempts, and over-limit pages.
 - Assert that no core command accepts a URL, SQL statement, shell string, absolute media path, or raw clipboard/audio payload.
 - Verify every `ErrorCode` renders an actionable UI state and no error details leak sensitive content.
+- Exercise concurrent VS Code windows, integrated and external terminals, multiple coding-agent working directories, and Git worktrees; the pre-popup foreground source must win over unrelated recency.
+- Prove source selection and stale-source failures preserve text, staged-media identity, recording state, and the active session ID.
+- Assert live-source events/options reveal no terminal/editor/agent content and that observations are absent from persisted data.
 - Treat any command rename or incompatible payload change as a coordinated contract migration.

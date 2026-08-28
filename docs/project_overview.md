@@ -95,6 +95,18 @@ Project: stipen
 Branch: feature/auth
 ```
 
+Context detection is bound to the exact application window or terminal session that was focused when the shortcut was pressed. Lyn records the previously focused OS window before showing its own popup, then correlates that window with a live VS Code window, integrated terminal, external terminal session, or shell process. It must not use a single global “last reported project” when several coding sessions are open.
+
+The context shown in the popup is selectable. If Lyn detects the wrong session, the user can open the context control and choose another live VS Code/terminal session or a saved context without losing entered text, pasted media, or a recording. Explicit selection wins over automatic detection and applies to the current capture by default.
+
+Live sessions and stored contexts are different:
+
+- a **live session** is a currently available VS Code window, terminal tab, shell, or coding-agent workspace;
+- a **stored context** is a persistent Lyn project or standalone context;
+- a **capture snapshot** is the selected context and Git branch frozen when the capture is saved.
+
+A coding agent does not become a context by itself. Its current working directory determines the repository or Git worktree. Git worktrees belonging to the same Git common directory share one Lyn project history while retaining their individual branches as capture metadata.
+
 If no project can be detected, Lyn should ask the user to:
 
 - choose an existing context, or
@@ -608,6 +620,8 @@ Project + Git branch
 
 Avoid attaching excessive metadata such as every active file or task unless there is a clear future need.
 
+Automatic detection should use invocation-bound evidence, not whichever provider reported most recently. If the evidence is ambiguous or the selected live session becomes stale, Lyn should preserve the draft and ask the user to choose again. The session chooser may show application, project/worktree, and branch labels, but must not expose terminal commands, terminal contents, or coding-agent conversations.
+
 ## 8. Search Before AI Search
 
 Normal full-text search through SQLite FTS5 should be the first solution.
@@ -742,4 +756,3 @@ It captures thoughts with almost no interruption, automatically associates them 
 Its defining qualities should remain:
 
 **Fast. Local. Lightweight. Minimal. Context-aware.**
-

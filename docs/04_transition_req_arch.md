@@ -1,6 +1,6 @@
 # Lyn — Transition from Requirements to Architecture
 
-Version: v1.0, 2026-08-27
+Version: v1.1, 2026-08-28
 
 Derived from: [`03_design_contract_invariant.md`](03_design_contract_invariant.md)
 
@@ -26,7 +26,7 @@ The coordinator for one active capture session. It validates capture content, pr
 
 ### Context Resolver
 
-The provider-based resolver for shell, VS Code, foreground-window, Git, and manual context evidence. It produces exactly one project or standalone context snapshot, including a named branch when available.
+The provider-based resolver and ephemeral live-source registry for shell, VS Code, foreground-window, Git, and manual context evidence. It binds automatic detection to the pre-popup foreground window, exposes safe selectable sources, revalidates user selection, and produces exactly one project or standalone context snapshot with a named branch when available.
 
 ### Storage Service
 
@@ -50,7 +50,7 @@ The optional adapter around whisper.cpp, its installed model, transcription exec
 
 ### Platform Service
 
-Narrow adapters for global shortcut registration, popup focus, clipboard access, active-window evidence, microphone streams, application lifecycle, and opening files with the operating system. Platform-specific code is kept behind stable Rust traits.
+Narrow adapters for global shortcut registration, capturing the pre-popup foreground identity, popup focus, clipboard access, active-window evidence, microphone streams, application lifecycle, and opening files with the operating system. Platform-specific code is kept behind stable Rust traits.
 
 ## Invariant Assignments
 
@@ -76,11 +76,15 @@ Narrow adapters for global shortcut registration, popup focus, clipboard access,
 
 **INV-03 — User-authored metadata authority.** Enrichment Service reads the current caption source and revision before applying a generated result. A user-authored or newer caption causes the generated result to be discarded.
 
-### Context Resolver owns INV-04 and INV-05
+### Context Resolver owns INV-04, INV-05, INV-14, and INV-15
 
 **INV-04 — Exactly one context.** Context Resolver returns either one resolved context or a `context_required` outcome. Capture Service cannot accept the save without the resolver's context identifier.
 
 **INV-05 — Capture-time context snapshot.** Context Resolver materializes project identity and the current named branch into a value object passed to save. Provider state is never retained as a live link that could rewrite old captures.
+
+**INV-14 — Invocation-bound automatic context.** Context Resolver ranks observations by verified association with the pre-popup foreground window, process, editor instance, or terminal session. Global provider recency cannot outrank exact invocation evidence.
+
+**INV-15 — Explicit context correction authority.** Context Resolver exposes live and saved sources through opaque selection identifiers, revalidates a user-selected live source before save, and never mutates the capture draft while selection changes.
 
 ### Library Service owns INV-06 and INV-09
 
@@ -109,8 +113,10 @@ Narrow adapters for global shortcut registration, popup focus, clipboard access,
 | INV-11 Cancellation non-persistence | Capture Service | Session-scoped cancel and staging cleanup | Cancel-after-each-state tests |
 | INV-12 Single-session, single-save semantics | Capture Service | Active-session lock and save idempotency key | Duplicate shortcut/save tests |
 | INV-13 Narrow, validated privilege boundary | Command Gateway | Typed commands, validation, Tauri capabilities | Negative IPC and path traversal tests |
+| INV-14 Invocation-bound automatic context | Context Resolver | Pre-popup window capture plus evidence-quality ranking | Multi-window/session correlation tests |
+| INV-15 Explicit context correction authority | Context Resolver | Opaque selection, draft-preserving update, save-time revalidation | Source-switch and stale-source tests |
 
-Coverage: 13 of 13 invariants have one owner; none are jointly owned.
+Coverage: 15 of 15 invariants have one owner; none are jointly owned.
 
 ## Requirements-to-Component Allocation
 
@@ -125,6 +131,7 @@ Coverage: 13 of 13 invariants have one owner; none are jointly owned.
 | FR-070 Search | Library Service | Storage Service, Frontend Shell |
 | FR-080 Settings and local intelligence | Storage Service | Command Gateway, Enrichment Service, Local Speech Adapter, Frontend Shell |
 | FR-090 Persistence and data ownership | Storage Service | Command Gateway, Media Service, Library Service |
+| FR-100 Concurrent work-session context | Context Resolver | Platform Service, Command Gateway, Capture Service, Frontend Shell |
 
 ## Coupling and Cohesion Decisions
 
@@ -135,6 +142,12 @@ Capture Service owns the user-visible transaction but not SQLite or files. This 
 ### Context resolution uses providers, not platform conditionals in capture logic
 
 Shell, editor, foreground-window, and manual strategies vary by platform and reliability. Context Resolver normalizes their evidence so Capture Service receives one stable result rather than learning every integration.
+
+Provider identity and evidence quality are separate concerns. Exact invocation-bound evidence wins first; configurable provider order only resolves a tie between equally reliable candidates. This prevents a background editor or agent session from winning merely because it reported more recently.
+
+### Live sources are ephemeral; contexts are persistent
+
+VS Code windows, terminal tabs, shells, and coding-agent workspaces register ephemeral local observations with Context Resolver. Storage Service persists project/standalone contexts and capture snapshots, not live process/window records. Selecting a live source resolves it to a stored context plus branch; selecting a saved context bypasses live-source correlation.
 
 ### Media lifecycle is separated from optional enrichment
 

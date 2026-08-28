@@ -1,6 +1,6 @@
 # Lyn — Software Requirements Specification
 
-Version: v1.0, 2026-08-27
+Version: v1.1, 2026-08-28
 
 Derived from: [`01_requirements_prd.md`](01_requirements_prd.md)
 
@@ -40,10 +40,10 @@ This specification defines the intended MVP. Performance figures marked **provis
 
 ### FR-020 — Context resolution
 
-- **FR-021**: Lyn MUST implement context detection as an ordered set of providers rather than as editor-specific core logic.
+- **FR-021**: Lyn MUST implement context detection as a provider set with deterministic evidence ranking rather than as editor-specific core logic.
 - **FR-022**: The initial provider set MUST support shell, VS Code workspace, foreground-window, and manual context sources.
-- **FR-023**: Given a filesystem path inside a Git worktree, Lyn MUST resolve the repository root as the project identity and read the current named Git branch when available.
-- **FR-024**: Context resolution MUST be deterministic for the same available provider evidence and configured provider order.
+- **FR-023**: Given a filesystem path inside a Git worktree, Lyn MUST resolve the worktree root, use the canonical Git common directory as stable project identity, and read the current named Git branch when available.
+- **FR-024**: Context resolution MUST be deterministic for the same invocation-bound evidence. Evidence quality and exact foreground association MUST outrank provider recency; configured provider order MAY break ties only between equally reliable candidates.
 - **FR-025**: If no project or standalone context is resolved, Lyn MUST require the user to select an existing context or create one before saving.
 - **FR-026**: Lyn MUST support standalone contexts with no filesystem path or Git repository.
 - **FR-027**: Each saved capture MUST retain a snapshot of its context identity and branch value at capture time.
@@ -108,7 +108,7 @@ This specification defines the intended MVP. Performance figures marked **provis
 - **FR-084**: Model availability, download progress, and failure MUST be visible to the user.
 - **FR-085**: Disabling local intelligence MUST stop new transcription work without changing or deleting existing captures.
 - **FR-086**: A model download failure MUST NOT affect any core feature.
-- **FR-087**: Lyn MUST provide settings for the global shortcut and provider precedence when those settings are supported by the target platform.
+- **FR-087**: Lyn MUST provide settings for the global shortcut and provider tie-break order when those settings are supported by the target platform. A preference MUST NOT override stronger invocation-bound evidence.
 
 ### FR-090 — Persistence and data ownership
 
@@ -122,6 +122,18 @@ This specification defines the intended MVP. Performance figures marked **provis
 - **FR-098**: Lyn MUST maintain its FTS index consistently with capture creation and caption updates.
 - **FR-099**: Core operation MUST NOT send capture content or metadata to a remote service.
 
+### FR-100 — Concurrent work-session context
+
+- **FR-101**: Platform Service MUST record the previously focused OS window identity before showing or focusing the Lyn capture popup.
+- **FR-102**: Each live editor or shell observation MUST have an opaque source ID and enough local correlation data to distinguish its application instance, window or terminal session, workspace or working directory, observation time, and liveness without exposing raw correlation data to the frontend.
+- **FR-103**: When a live observation is bound to the previously focused window or its verified process/session relationship, Lyn MUST prefer it over an unrelated provider that merely reported more recently.
+- **FR-104**: Lyn MUST represent concurrently open VS Code windows, integrated terminals, external terminal sessions, and shell sessions as distinct selectable sources when they can be reliably distinguished.
+- **FR-105**: The capture context control MUST list eligible live sources and saved project or standalone contexts using safe application, context/worktree, and branch labels.
+- **FR-106**: Selecting another live source or saved context MUST preserve all draft text, captions, staged screenshots, staged audio, and recording state, and MUST override automatic detection for the current capture only.
+- **FR-107**: Lyn MUST revalidate a selected live source and refresh its workspace or working directory and named branch before save. A dead, stale, or no-longer-correlatable source MUST require reselection without discarding the draft.
+- **FR-108**: An integrated terminal source MUST be correlated through its owning editor window and active terminal session when available. An external terminal with multiple tabs MUST expose the active session through a supported integration; otherwise Lyn MUST treat the evidence as ambiguous.
+- **FR-109**: A coding agent's context MUST derive from its shell working directory rather than its agent identity. Git worktrees sharing one Git common directory MUST map to one project context while retaining the selected worktree's named branch as capture metadata.
+
 ## Business Rules
 
 - **BR-01 — Capture first:** Any optional behavior that would delay capture acceptance MUST be deferred until after save.
@@ -130,8 +142,10 @@ This specification defines the intended MVP. Performance figures marked **provis
 - **BR-04 — Branch as metadata:** A branch describes the capture-time context; it does not own a Library.
 - **BR-05 — Titleless text:** A text note has a body, not a generated or required title.
 - **BR-06 — Local by default:** Core storage, retrieval, and media behavior stays on the device.
-- **BR-07 — Capture and organization separation:** Quick capture contains only controls needed to create the current capture and resolve a missing context.
+- **BR-07 — Capture and organization separation:** Quick capture contains only controls needed to create the current capture and resolve or correct its context.
 - **BR-08 — No silent false context:** If evidence is insufficient, manual selection is preferable to an unverified automatic assignment.
+- **BR-09 — Invocation-bound detection:** The window/session that triggered capture is more authoritative than a global last-reported project.
+- **BR-10 — Explicit context selection wins:** A user-selected source is authoritative for the current capture and never mutates the draft payload.
 
 ## Non-Functional Constraints
 
@@ -166,6 +180,7 @@ The following thresholds are provisional acceptance targets from the PRD:
 - Optional local transcription MUST process audio on the device.
 - Lyn MUST NOT introduce telemetry containing capture content in the MVP.
 - Logs MUST NOT contain capture bodies, transcripts, raw clipboard content, or audio bytes.
+- Live-source observations and diagnostics MUST NOT contain terminal commands, terminal output, editor contents, coding-agent conversations, or continuously retained activity history.
 
 ### Data integrity
 
@@ -186,6 +201,7 @@ The following thresholds are provisional acceptance targets from the PRD:
 - The architecture MUST isolate platform-specific shortcut, active-window, clipboard, filesystem-open, and audio behavior behind adapters.
 - The set of supported operating systems is not established by the overview. Each declared release target MUST pass the same behavioral contract before being described as supported.
 - Platform limitations MUST degrade to manual context or unavailable optional controls rather than corrupting captures.
+- If a platform cannot reliably associate the foreground window with an active editor/terminal tab, it MUST return ambiguous evidence rather than choose a global recent session.
 
 ### Accessibility and interaction
 
@@ -215,6 +231,9 @@ The following thresholds are provisional acceptance targets from the PRD:
 | ERR-014 | A committed media file is missing or unreadable | Render an explicit unavailable-media state, keep metadata visible, and never substitute another file. |
 | ERR-015 | An IPC payload is invalid or stale | Reject it with `VALIDATION_ERROR` or `STALE_SESSION`; do not partially mutate storage. |
 | ERR-016 | Application exits while enrichment is pending | Preserve the accepted capture; enrichment MAY resume safely on the next launch. |
+| ERR-017 | Multiple live sources are equally plausible or none is bound reliably to the pre-popup foreground window | Return `CONTEXT_AMBIGUOUS`, preserve the draft, and open or make available the context chooser. |
+| ERR-018 | A user-selected live source has exited, become stale, or can no longer be correlated before save | Return `CONTEXT_SOURCE_STALE`, preserve all draft/staged content, refresh the source list, and require another selection. |
+| ERR-019 | A provider submits malformed observation data or its local registration channel is unavailable | Reject or ignore that observation, continue with other providers, and retain manual context selection; core capture remains available. |
 
 ## Verification Basis
 

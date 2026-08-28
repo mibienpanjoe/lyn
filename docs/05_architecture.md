@@ -1,6 +1,6 @@
 # Lyn — System Architecture
 
-Version: v1.0, 2026-08-27
+Version: v1.1, 2026-08-28
 
 Derived from: [`04_transition_req_arch.md`](04_transition_req_arch.md)
 
@@ -52,6 +52,8 @@ Microservices, cloud services, frontend-owned SQL, and a generic plugin runtime 
 3. Preserve unsaved UI state after a command error.
 4. Render Library pages incrementally and lazy-load media.
 5. Present loading, empty, unavailable-media, permission, and retry states.
+6. Let the user replace the proposed capture context without changing text, staged media, or recording state.
+7. Render only safe live-source labels supplied by the Context Resolver.
 
 **MUST NOT:** Execute SQL; construct arbitrary filesystem paths; invoke a shell; treat an optimistic UI transition as durable save; hide a storage error by closing the popup.
 
@@ -81,43 +83,47 @@ Microservices, cloud services, frontend-owned SQL, and a generic plugin runtime 
 
 **Owned invariants:** INV-01, INV-10, INV-11, INV-12.
 
-**Inputs:** Prepared context candidate, user content, staged-media identifier, and session identifier.
+**Inputs:** Prepared context candidate or explicit context-source selection, user content, staged-media identifier, and session identifier.
 
 **Outputs:** Active session state, saved capture identifier, cancellation result, or typed error.
 
 **Key behaviors:**
 
 1. Issue one active session identifier when the popup is invoked.
-2. Preserve the resolved context candidate for display while allowing a required manual choice.
+2. Preserve the resolved context candidate for display while allowing explicit correction or a required choice.
 3. Validate that the session contains text or one supported staged media item.
 4. Treat session ID as an idempotency key.
-5. Coordinate Media Service finalization and Storage Service transaction.
-6. Return success only when the canonical capture is durable.
-7. Schedule eligible enrichment after success without waiting for it.
+5. Ask Context Resolver to revalidate a selected live source and refresh its Git branch before persistence.
+6. Coordinate Media Service finalization and Storage Service transaction.
+7. Return success only when the canonical capture is durable.
+8. Schedule eligible enrichment after success without waiting for it.
 
 **MUST NOT:** Generate a text-note title, rewrite text, own SQL, accept a missing context, wait for transcription, or create two captures for one session.
 
 ### Context Resolver
 
-**Responsibility:** Convert provider evidence into exactly one project or standalone capture-time context snapshot.
+**Responsibility:** Correlate invocation-bound provider evidence, maintain an ephemeral live-source registry, and produce exactly one project or standalone capture-time context snapshot.
 
-**Owned invariants:** INV-04 (exactly one context), INV-05 (capture-time context snapshot).
+**Owned invariants:** INV-04 (exactly one context), INV-05 (capture-time context snapshot), INV-14 (invocation-bound automatic context), INV-15 (explicit context correction authority).
 
-**Inputs:** Manual selection, editor workspace evidence, shell working-directory evidence, foreground-window metadata, known contexts, and Git inspection results.
+**Inputs:** Pre-popup foreground identity, editor-window and integrated-terminal evidence, external-terminal and shell evidence, explicit selection, known contexts, and Git inspection results.
 
-**Outputs:** `ResolvedContext`, `ContextChoiceRequired`, or a typed provider diagnostic.
+**Outputs:** Safe `ContextSourceOption` values, `ResolvedContext`, `ContextChoiceRequired`, `ContextSourceStale`, or a typed provider diagnostic.
 
 **Key behaviors:**
 
-1. Query providers through a shared trait.
-2. Normalize and canonicalize candidate filesystem paths without exposing them to the UI unless needed for context management.
-3. Locate the enclosing Git worktree and current named branch when available.
-4. Match a repository root to a stable project context.
-5. Return a manual-choice outcome when evidence is absent or ambiguous.
+1. Accept validated observations through a shared local provider trait and assign opaque source identifiers.
+2. Correlate observations to the operating-system window that held focus immediately before Lyn appeared.
+3. Normalize candidate paths without exposing raw correlation tokens, processes, terminal content, or editor content to the UI.
+4. Locate the enclosing Git worktree, current named branch, and Git common directory when available.
+5. Use the canonical Git common directory as stable project identity while retaining worktree and branch as capture metadata.
+6. Produce safe labels for distinct live sources and combine them with saved contexts for the chooser.
+7. Revalidate the selected live source and refresh its branch immediately before save.
+8. Return an explicit-choice outcome when evidence is absent, ambiguous, or stale.
 
-**Proposed deterministic precedence:** explicit manual selection → VS Code workspace → shell integration → foreground-window inference → unresolved. This is an implementation decision inferred from evidence quality and requires usability validation.
+**Deterministic evidence order:** explicit selection for this capture → source exactly associated with the pre-popup foreground window → verified editor/process/terminal relation → recent foreground inference → unresolved. Configured provider order breaks ties only between evidence of equal quality.
 
-**MUST NOT:** Guess between equally plausible projects, require Git for standalone contexts, or retain a live provider reference that can rewrite old captures.
+**MUST NOT:** Use a global last-reported project as invocation context, guess between equally plausible sources, persist live observations, expose terminal commands/output or agent conversations, require Git for standalone contexts, silently substitute a stale source, or retain a live provider reference that can rewrite old captures.
 
 ### Storage Service
 
@@ -228,14 +234,14 @@ Microservices, cloud services, frontend-owned SQL, and a generic plugin runtime 
 
 **Owned invariants:** None; domain services own the guarantees supported by these adapters.
 
-**Ports:** `ShortcutPort`, `WindowFocusPort`, `ClipboardPort`, `ActiveWindowPort`, `AudioInputPort`, `AudioPlaybackPort`, and `ExternalOpenPort`.
+**Ports:** `ShortcutPort`, `WindowFocusPort`, `ForegroundIdentityPort`, `ClipboardPort`, `AudioInputPort`, `AudioPlaybackPort`, and `ExternalOpenPort`.
 
 **Key behaviors:**
 
 1. Register/unregister the configured global shortcut.
-2. Show and focus the capture window while preserving the previously active application for return-to-work behavior.
+2. Record the foreground window identity before showing Lyn, then preserve it for return-to-work behavior.
 3. Read supported clipboard content on explicit paste intent.
-4. Provide minimal foreground-window evidence.
+4. Provide minimal, opaque foreground-window correlation evidence.
 5. Stream microphone samples through CPAL and play audio through Rodio where supported.
 6. Open a Media Service-validated file through the native default application.
 
@@ -264,15 +270,22 @@ Setting                           SchemaMigration
 | `id` | text UUID | Primary key; stable across restarts. |
 | `kind` | enum | `project` or `standalone`. |
 | `name` | text | Non-blank user-visible name. |
-| `project_path` | text nullable | Canonical local root for a project; null for standalone. Never exposed as a generic IPC path. |
+| `project_key` | text nullable | Stable local project identifier derived from the canonical Git common directory; null for standalone or non-Git contexts. |
+| `project_path` | text nullable | Preferred local root for display/management, not project identity; null for standalone. Never exposed as a generic IPC path. |
 | `created_at` | UTC timestamp | Immutable creation time. |
 | `updated_at` | UTC timestamp | Last metadata change. |
 
 Constraints:
 
-- `kind = standalone` implies `project_path IS NULL`.
-- A canonical project path is unique when present.
+- `kind = standalone` implies `project_key IS NULL AND project_path IS NULL`.
+- A `project_key` is unique when present; multiple worktrees may resolve to that same context.
 - Context deletion behavior is outside the MVP and is not defined by this contract.
+
+### Ephemeral live-source registry
+
+Context Resolver keeps validated `ContextSourceObservation` values in memory only. Each contains an opaque source ID, source kind/provider, internal window/process/session correlation tokens, an internal workspace or working directory, a safe display label, observation time, and liveness state. It never contains terminal commands/output, editor contents, or agent conversations. Observations expire and are never written to `contexts` or `captures`.
+
+A coding agent has no special identity in this model: its context is the verified working directory of its owning terminal session. Worktrees sharing one Git common directory contribute to one project chronology; `branch_name` remains a per-capture snapshot.
 
 #### `captures`
 
@@ -344,7 +357,7 @@ It stores no unique canonical information and can be rebuilt from `captures`.
 
 #### `settings` and `schema_migrations`
 
-`settings` stores validated application settings such as shortcut, provider order, theme, and local-intelligence enablement. Secrets are not expected in v1. `schema_migrations` records monotonically applied migration versions.
+`settings` stores validated application settings such as shortcut, provider tie-break order, theme, and local-intelligence enablement. Secrets are not expected in v1. `schema_migrations` records monotonically applied migration versions.
 
 ### Media layout
 
@@ -396,21 +409,35 @@ If storage initialization fails, Lyn may show diagnostics and settings but MUST 
 
 ```text
 Global shortcut
-  → Platform Service shows/focuses popup
+  → Platform Service records the previously focused OS window
   → Capture Service creates or restores one active session
-  → Context Resolver evaluates provider evidence
-  → Frontend Shell receives session + resolved context candidate
-  → input receives focus
+  → Platform Service shows/focuses popup; input becomes usable
+  → Context Resolver correlates live observations to that window
+  → Frontend Shell receives resolved, ambiguous, or required context state
 ```
 
 Context preparation may continue briefly after the input becomes usable. Saving waits only for required manual context resolution, not for optional metadata enrichment.
+
+### Context correction
+
+```text
+Open context control
+  → Context Resolver lists safe live-source options + saved contexts
+  → user selects one option
+  → Capture Service preserves text, staged media, and recording state
+  → selected live source is revalidated and branch metadata refreshed
+  → context candidate updates for this capture only
+```
+
+If the source disappears or changes identity, the command returns `CONTEXT_SOURCE_STALE`; the draft remains intact and Lyn asks for another selection. Choosing a source never changes the default for later captures.
 
 ### Text save
 
 ```text
 Enter
   → Command Gateway validates SaveTextCapture
-  → Capture Service validates session, context, and non-blank body
+  → Capture Service revalidates any selected live source
+  → Capture Service validates session, context snapshot, and non-blank body
   → Storage Service transaction inserts capture + FTS projection
   → Capture Service returns capture ID
   → popup closes and focus returns to prior application
@@ -536,11 +563,13 @@ src-tauri/src/
 ├── commands/             # Command Gateway only
 ├── capture/              # Capture Service
 ├── context/              # Context Resolver and providers
+│   ├── session_registry.rs
 │   ├── shell.rs
 │   ├── vscode.rs
 │   ├── foreground.rs
 │   ├── manual.rs
-│   └── git.rs
+│   ├── git.rs
+│   └── worktree.rs
 ├── storage/              # Storage Service
 │   ├── db.rs
 │   ├── migrations.rs
@@ -566,7 +595,7 @@ Frontend feature folders contain presentation and command clients, not business 
 | Requirement IDs | Architecture enforcement | Verification level |
 |---|---|---|
 | FR-010, FR-011, FR-012, FR-013, FR-014, FR-015, FR-016, FR-017, FR-018, FR-019 | Capture Service + Platform Service + focus-aware Frontend Shell | Desktop integration and keyboard tests |
-| FR-020, FR-021, FR-022, FR-023, FR-024, FR-025, FR-026, FR-027, FR-028, FR-029 | Context Resolver provider trait, deterministic precedence, Git adapter | Provider unit tests and real-worktree integration tests |
+| FR-020, FR-021, FR-022, FR-023, FR-024, FR-025, FR-026, FR-027, FR-028, FR-029 | Context Resolver provider trait, invocation-bound evidence ranking, Git adapter | Provider unit tests and real-worktree integration tests |
 | FR-030, FR-031, FR-032, FR-033, FR-034 | Titleless Capture Service text command and Storage constraints | Round-trip and validation tests |
 | FR-040, FR-041, FR-042, FR-043, FR-044, FR-045, FR-046, FR-047, FR-048, FR-049 | Clipboard adapter, PNG staging/finalization, optional Enrichment Service | Media integration tests |
 | FR-050, FR-051, FR-052, FR-053, FR-054, FR-055, FR-056, FR-057, FR-058, FR-059 | CPAL/Rodio adapters, WAV encoder, post-commit speech adapter | Device-contract and file-format tests |
@@ -574,6 +603,7 @@ Frontend feature folders contain presentation and command clients, not business 
 | FR-070, FR-071, FR-072, FR-073, FR-074, FR-075, FR-076 | Bounded FTS5 projection and safe query compilation | Search correctness/performance tests |
 | FR-080, FR-081, FR-082, FR-083, FR-084, FR-085, FR-086, FR-087 | Settings persistence and isolated model lifecycle | Offline and configuration tests |
 | FR-090, FR-091, FR-092, FR-093, FR-094, FR-095, FR-096, FR-097, FR-098, FR-099 | Rust-only SQLite/filesystem ownership and typed gateway | Boundary, migration, and recovery tests |
+| FR-100, FR-101, FR-102, FR-103, FR-104, FR-105, FR-106, FR-107, FR-108, FR-109 | Foreground identity port, ephemeral source registry, chooser commands, save-time revalidation, Git common-directory identity | Concurrent-window, stale-source, privacy, and draft-preservation tests |
 
 ## Invariant Traceability Matrix
 
@@ -592,10 +622,12 @@ Frontend feature folders contain presentation and command clients, not business 
 | INV-11 Cancellation non-persistence | Capture Service | Session-scoped cancellation and Media Service staging cleanup. |
 | INV-12 Single-session, single-save semantics | Capture Service | One active session and unique `captures.session_id`. |
 | INV-13 Narrow, validated privilege boundary | Command Gateway | Typed domain commands, Tauri capability allowlist, media IDs instead of paths. |
+| INV-14 Invocation-bound automatic context | Context Resolver | Pre-popup foreground identity and evidence-quality ranking; provider order breaks ties only. |
+| INV-15 Explicit context correction authority | Context Resolver | Current-capture selection overrides inference; Capture Service preserves the draft while revalidation fails safely. |
 
 ## Architectural Decisions
 
-These decisions are accepted by the source overview unless marked provisional.
+These decisions are accepted by the source overview or subsequent recorded product decisions unless marked provisional.
 
 ### ADR-001 — Tauri 2 instead of Electron
 
@@ -623,9 +655,9 @@ Search text bodies and captions with SQLite FTS5. OCR, embeddings, vector databa
 
 ### ADR-005 — Provider-based context resolution
 
-**Status:** Accepted; provider precedence is provisional.
+**Status:** Accepted.
 
-Shell, VS Code, foreground-window, and manual sources implement a common provider contract. The proposed evidence precedence must be validated with real invocation scenarios before it becomes final.
+Shell, VS Code, foreground-window, and manual sources implement a common provider contract. Evidence associated with the pre-popup foreground window outranks unrelated recent reports; provider order is only a same-confidence tie-breaker.
 
 ### ADR-006 — Enrichment is post-commit and optional
 
@@ -638,3 +670,9 @@ Screenshot metadata and voice transcription run only after durable save. whisper
 **Status:** Proposed.
 
 Treat the IPC surface in [`06_api_specification.md`](06_api_specification.md) as a versioned internal public contract. This reduces UI/core drift, limits privileges, and permits contract testing. Exact command names may change only through coordinated specification and binding updates.
+
+### ADR-008 — Invocation-bound live-session context selection
+
+**Status:** Accepted, 2026-08-28.
+
+Lyn records the OS window active before capture, correlates it with validated editor/terminal observations, and offers safe live-session choices when inference is wrong or ambiguous. Explicit selection applies only to the current capture and cannot discard draft content. A global “last active project,” persistent live-session records, and exposure of terminal/editor/agent content are rejected because they become incorrect and invasive under concurrent windows and agents.

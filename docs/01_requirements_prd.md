@@ -1,6 +1,6 @@
 # Lyn — Product Requirements Document
 
-Version: v1.0, 2026-08-27
+Version: v1.1, 2026-08-28
 
 Source: [`project_overview.md`](project_overview.md)
 
@@ -45,7 +45,7 @@ This persona informs the long-term direction, but agent-oriented export is not p
 
 ## 3. Solution Overview
 
-Lyn is a lightweight, local-first desktop working-memory companion. A global shortcut opens a compact capture popup with the input already focused. The user types, pastes a screenshot, or records a voice note, then presses Enter to save and close. Lyn associates the capture with a detected project and Git branch when available, or with a user-selected standalone context when automatic detection is unavailable.
+Lyn is a lightweight, local-first desktop working-memory companion. A global shortcut opens a compact capture popup with the input already focused. The user types, pastes a screenshot, or records a voice note, then presses Enter to save and close. Lyn associates the capture with the project and Git branch bound to the previously focused VS Code window or terminal session. The user can replace that detection with another live session or saved context without losing the draft.
 
 Captured information is reviewed separately in a Library. Each project or standalone context has one chronological stream. Branches remain metadata on individual captures rather than fragmenting the project into separate libraries. Full-text search covers text notes and user-visible media captions.
 
@@ -66,8 +66,16 @@ Optional local intelligence may enrich saved material, but saving never depends 
 ### 4.2 Context detection and selection
 
 - Resolve context through provider-based detection, beginning with shell, VS Code, foreground-window, and manual providers.
+- Record the previously focused OS window before the Lyn popup takes focus.
+- Correlate that window with the exact live VS Code window, integrated terminal, external terminal, shell, or coding-agent working directory when reliable evidence exists.
+- Prefer invocation-bound evidence over a global “most recently reported” project; use configured provider order only to break ties between equally reliable evidence.
 - Associate a detected repository with a project context.
 - Record the current Git branch as capture metadata when a branch is available.
+- Treat Git worktrees sharing one Git common directory as one project while retaining each worktree's current branch on its captures.
+- Make the displayed context selectable from the popup and list other live sessions alongside saved project and standalone contexts.
+- Preserve all draft text and staged media when the user changes the selected source.
+- Make explicit user selection authoritative for the current capture and refresh its branch before saving.
+- Remove dead sessions from the chooser and require reselection when a chosen session becomes stale or ambiguous.
 - Ask the user to select or create a context before saving when automatic detection cannot produce one.
 - Support standalone contexts that do not map to a Git repository.
 - Keep a single continuous history per project; do not create a separate library per branch.
@@ -126,6 +134,8 @@ The following are explicitly excluded:
 - guaranteed search over raw voice transcripts;
 - a rich-text editor or document-oriented note pages;
 - folders, complex tagging, workflow statuses, or task management in quick capture;
+- manual branch editing in quick capture; branch follows the selected live session;
+- persistent automatic pinning of all future captures to a manually selected live session;
 - separate project libraries for each Git branch;
 - a plugin ecosystem;
 - automatic agent interaction or agent-context export;
@@ -151,6 +161,9 @@ The overview does not provide validated numerical targets. The following are **p
 ### Context usefulness
 
 - When invoked from a supported shell or VS Code workspace inside a Git repository, Lyn assigns the correct project and branch in at least 95% of scripted acceptance cases.
+- Concurrent-session acceptance covers multiple VS Code windows, integrated terminals, external terminal tabs, coding agents, and Git worktrees without allowing an unrelated recent provider report to win.
+- A user can replace the detected source with another live session or saved context without losing any draft content or staged media.
+- Selecting a live session refreshes its project/worktree and named branch before save.
 - When context cannot be resolved confidently, Lyn requests a manual choice instead of silently filing the capture under an unrelated context.
 
 ### Local-first integrity
