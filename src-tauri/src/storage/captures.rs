@@ -5,12 +5,10 @@ use crate::{
     storage::StorageError,
 };
 
-#[allow(dead_code, reason = "connected by the T09 command increment")]
 pub(crate) struct CaptureRepository<'connection> {
     connection: &'connection mut Connection,
 }
 
-#[allow(dead_code, reason = "connected by the T09 command increment")]
 impl<'connection> CaptureRepository<'connection> {
     pub(crate) fn new(connection: &'connection mut Connection) -> Self {
         Self { connection }

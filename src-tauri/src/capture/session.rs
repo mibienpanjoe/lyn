@@ -10,15 +10,13 @@ pub(crate) enum SessionStateError {
     StaleSession,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code, reason = "consumed by the durable save slice in T09")]
-pub(crate) enum SaveOnceResult {
-    Saved(CaptureId),
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SaveOnceResult<Value> {
+    Saved { capture_id: CaptureId, value: Value },
     AlreadySaved(CaptureId),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-#[allow(dead_code, reason = "consumed by the durable save slice in T09")]
 pub(crate) enum SaveOnceError<PersistenceError> {
     Session(SessionStateError),
     Persistence(PersistenceError),
@@ -34,7 +32,6 @@ pub(crate) struct StagingCleanupRequest {
 pub(crate) struct CaptureSessionService {
     active: Option<CaptureSession>,
     last_cancelled: Option<CaptureSessionId>,
-    #[allow(dead_code, reason = "consumed by the durable save slice in T09")]
     last_completed: Option<(CaptureSessionId, CaptureId)>,
     cleanup_requests: VecDeque<StagingCleanupRequest>,
 }
@@ -58,15 +55,10 @@ impl CaptureSessionService {
         session
     }
 
-    #[allow(
-        dead_code,
-        reason = "state inspection is used by upcoming capture slices"
-    )]
     pub(crate) fn active_session(&self) -> Option<CaptureSession> {
         self.active.clone()
     }
 
-    #[allow(dead_code, reason = "context resolution is connected after T08")]
     pub(crate) fn set_context_resolution(
         &mut self,
         session_id: CaptureSessionId,
@@ -107,12 +99,11 @@ impl CaptureSessionService {
         Ok(())
     }
 
-    #[allow(dead_code, reason = "durable persistence is connected in T09")]
-    pub(crate) fn save_once<PersistenceError>(
+    pub(crate) fn save_once<Value, PersistenceError>(
         &mut self,
         session_id: CaptureSessionId,
-        persist: impl FnOnce(&CaptureSession) -> Result<CaptureId, PersistenceError>,
-    ) -> Result<SaveOnceResult, SaveOnceError<PersistenceError>> {
+        persist: impl FnOnce(&CaptureSession) -> Result<(CaptureId, Value), PersistenceError>,
+    ) -> Result<SaveOnceResult<Value>, SaveOnceError<PersistenceError>> {
         if let Some((completed_session_id, capture_id)) = self.last_completed
             && completed_session_id == session_id
         {
@@ -123,11 +114,11 @@ impl CaptureSessionService {
             .as_ref()
             .filter(|session| session.session_id == session_id)
             .ok_or(SaveOnceError::Session(SessionStateError::StaleSession))?;
-        let capture_id = persist(session).map_err(SaveOnceError::Persistence)?;
+        let (capture_id, value) = persist(session).map_err(SaveOnceError::Persistence)?;
 
         self.active = None;
         self.last_completed = Some((session_id, capture_id));
-        Ok(SaveOnceResult::Saved(capture_id))
+        Ok(SaveOnceResult::Saved { capture_id, value })
     }
 
     #[allow(dead_code, reason = "the media cleanup worker is connected after T08")]
@@ -135,7 +126,6 @@ impl CaptureSessionService {
         self.cleanup_requests.pop_front()
     }
 
-    #[allow(dead_code, reason = "used by context and media transitions after T08")]
     fn active_mut(
         &mut self,
         session_id: CaptureSessionId,
@@ -276,18 +266,24 @@ mod tests {
         let saved = service
             .save_once(session.session_id, |_| {
                 writes += 1;
-                Ok::<_, ()>(capture_id)
+                Ok::<_, ()>((capture_id, "saved"))
             })
             .unwrap();
         let next_session = service.get_or_prepare();
         let replayed = service
             .save_once(session.session_id, |_| {
                 writes += 1;
-                Ok::<_, ()>(CaptureId::new())
+                Ok::<_, ()>((CaptureId::new(), "duplicate"))
             })
             .unwrap();
 
-        assert_eq!(saved, SaveOnceResult::Saved(capture_id));
+        assert_eq!(
+            saved,
+            SaveOnceResult::Saved {
+                capture_id,
+                value: "saved",
+            }
+        );
         assert_eq!(replayed, SaveOnceResult::AlreadySaved(capture_id));
         assert_eq!(writes, 1);
         assert_eq!(service.active_session(), Some(next_session));
@@ -298,7 +294,8 @@ mod tests {
         let mut service = CaptureSessionService::default();
         let session = service.get_or_prepare();
 
-        let failed = service.save_once(session.session_id, |_| Err::<CaptureId, _>("offline"));
+        let failed =
+            service.save_once(session.session_id, |_| Err::<(CaptureId, ()), _>("offline"));
 
         assert_eq!(failed, Err(SaveOnceError::Persistence("offline")));
         assert_eq!(service.active_session(), Some(session));
@@ -310,10 +307,11 @@ mod tests {
         let cancelled = service.get_or_prepare();
         service.cancel(cancelled.session_id).unwrap();
 
-        let cancelled_save =
-            service.save_once(cancelled.session_id, |_| Ok::<_, ()>(CaptureId::new()));
+        let cancelled_save = service.save_once(cancelled.session_id, |_| {
+            Ok::<_, ()>((CaptureId::new(), ()))
+        });
         let unknown_save = service.save_once(crate::contract::CaptureSessionId::new(), |_| {
-            Ok::<_, ()>(CaptureId::new())
+            Ok::<_, ()>((CaptureId::new(), ()))
         });
 
         assert_eq!(

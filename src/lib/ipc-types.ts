@@ -76,6 +76,8 @@ export type CancelCaptureSessionInput = { sessionId: CaptureSessionId, };
 
 export type CancelCaptureSessionResult = { cancelled: boolean, };
 
+export type SelectCaptureContextSourceInput = { sessionId: CaptureSessionId, selection: ContextSelection, };
+
 export type SaveCaptureResult = { captureId: CaptureId, capturedAt: Timestamp, enrichmentScheduled: boolean, };
 
 export type MediaSummary = { mediaId: MediaId, kind: MediaKind, previewUri: string, durationMs: number | null, widthPx: number | null, heightPx: number | null, available: boolean, };

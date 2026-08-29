@@ -68,6 +68,17 @@ impl<'connection> ContextRepository<'connection> {
         Ok(context)
     }
 
+    pub(crate) fn get(&self, id: ContextId) -> Result<Option<ContextRef>, StorageError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT id, kind, name FROM contexts WHERE id = ?1",
+                [id.to_string()],
+                decode_context,
+            )
+            .optional()?)
+    }
+
     pub(crate) fn list(
         &self,
         kind: Option<ContextKind>,

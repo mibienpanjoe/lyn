@@ -1,10 +1,10 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.4, 2026-08-28
+Version: v1.5, 2026-08-29
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
-Contract status: **Shared primitives, manual context commands, and capture-session get/cancel commands implemented; remaining commands proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
+Contract status: **Shared primitives, manual contexts, capture-session lifecycle, and durable text save are implemented; remaining media, live-source, Library, settings, and enrichment commands are proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
 
 ## Conventions
 
@@ -263,6 +263,8 @@ interface SelectCaptureContextSourceInput {
 
 Live sources are revalidated before selection. A saved context has `branchName: null` unless Context Resolver can safely refresh it from a currently associated live source.
 
+The current implementation accepts `saved_context` selections. `live_source` selection and save-time source revalidation remain part of the live-provider slice and currently return `CONTEXT_SOURCE_NOT_FOUND` without changing the session.
+
 **Success:** `CommandResult<CaptureSession>`
 
 **Errors:** `STALE_SESSION`, `CONTEXT_SOURCE_NOT_FOUND`, `CONTEXT_SOURCE_STALE`, `CONTEXT_NOT_FOUND`, `VALIDATION_ERROR`.
@@ -294,6 +296,8 @@ interface SaveTextCaptureInput {
 
 There is intentionally no title field.
 
+`textBody` is limited to 1,048,576 UTF-8 bytes. Blankness is checked without modifying the value; a non-blank accepted body, including leading/trailing whitespace and line breaks, is stored exactly as supplied.
+
 **Success:** `CommandResult<SaveCaptureResult>`
 
 **Errors:**
@@ -308,7 +312,7 @@ There is intentionally no title field.
 | `STORAGE_WRITE_FAILED` | Atomic database commit failed. |
 | `VALIDATION_ERROR` | Payload exceeds a documented implementation limit or has invalid types. |
 
-**Idempotency:** A repeated call with the same completed `sessionId` MUST return the original `captureId` or `STALE_SESSION`; it MUST NOT create a second capture.
+**Idempotency:** A repeated call with the same completed `sessionId` returns `STALE_SESSION` and MUST NOT create a second capture. Concurrent duplicate deliveries are serialized by the session service, with database uniqueness as the durable backstop.
 
 ## Screenshot Commands
 

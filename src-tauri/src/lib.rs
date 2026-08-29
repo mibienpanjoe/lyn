@@ -31,6 +31,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::capture::get_active_capture_session,
             commands::capture::cancel_capture_session,
+            commands::capture::select_capture_context_source,
+            commands::capture::save_text_capture,
             commands::context::pick_project_directory,
             commands::context::create_context,
             commands::context::list_contexts,

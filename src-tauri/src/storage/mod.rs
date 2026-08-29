@@ -107,7 +107,6 @@ impl Database {
         &self.connection
     }
 
-    #[allow(dead_code, reason = "connected by the T09 command increment")]
     pub(crate) fn connection_mut(&mut self) -> &mut Connection {
         &mut self.connection
     }
