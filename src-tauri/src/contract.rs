@@ -72,6 +72,13 @@ impl Serialize for Timestamp {
     }
 }
 
+impl fmt::Display for Timestamp {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = self.0.format(&Rfc3339).map_err(|_| fmt::Error)?;
+        formatter.write_str(&value)
+    }
+}
+
 impl<'de> Deserialize<'de> for Timestamp {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

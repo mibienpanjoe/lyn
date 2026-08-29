@@ -1,5 +1,6 @@
 //! SQLite ownership and repository implementations.
 
+pub(crate) mod captures;
 pub(crate) mod contexts;
 
 use std::{error::Error, fmt, fs, path::Path};
@@ -104,6 +105,11 @@ impl Database {
 
     pub(crate) fn connection(&self) -> &Connection {
         &self.connection
+    }
+
+    #[allow(dead_code, reason = "connected by the T09 command increment")]
+    pub(crate) fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.connection
     }
 }
 
