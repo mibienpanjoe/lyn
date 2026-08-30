@@ -194,6 +194,9 @@ fn stop_audio_recording_value<Audio: AudioInputPlatform>(
     if service.active_session().map(|session| session.session_id) != Some(input.session_id) {
         return CommandResult::failure(stale_session_error());
     }
+    let previous_staged_media_id = service
+        .active_session()
+        .and_then(|session| session.staged_media.map(|media| media.staged_media_id));
     let recorded = match audio_input
         .lock()
         .ok()
@@ -228,7 +231,14 @@ fn stop_audio_recording_value<Audio: AudioInputPlatform>(
         }
     };
     match service.stop_recording(input.session_id, staged.clone()) {
-        Ok(_) => CommandResult::success(staged),
+        Ok(_) => {
+            if let Some(previous) = previous_staged_media_id
+                && let Ok(mut media) = media_store.lock()
+            {
+                let _ = media.discard_staged(input.session_id, previous);
+            }
+            CommandResult::success(staged)
+        }
         Err(_) => CommandResult::failure(audio_recording_error()),
     }
 }
@@ -357,7 +367,16 @@ fn save_audio_capture_value(
                     .map_err(|_| storage_write_error())
             });
         if saved.is_err() {
-            let _ = media.remove_final(&finalized.relative_path);
+            if media
+                .restore_staged_after_failed_save(
+                    input.session_id,
+                    input.staged_media_id,
+                    &finalized,
+                )
+                .is_err()
+            {
+                let _ = media.remove_final(&finalized.relative_path);
+            }
         }
         saved.map(|saved| (capture_id, saved))
     }) {
@@ -431,7 +450,16 @@ fn save_image_capture_value(
                     .map_err(|_| storage_write_error())
             });
         if saved.is_err() {
-            let _ = media.remove_final(&finalized.relative_path);
+            if media
+                .restore_staged_after_failed_save(
+                    input.session_id,
+                    input.staged_media_id,
+                    &finalized,
+                )
+                .is_err()
+            {
+                let _ = media.remove_final(&finalized.relative_path);
+            }
         }
         saved.map(|saved| (capture_id, saved))
     }) {
@@ -1419,6 +1447,82 @@ mod tests {
                 750
             )
         );
+    }
+
+    #[test]
+    fn failed_audio_storage_restores_staging_for_an_identical_retry() {
+        let directory = tempdir().unwrap();
+        let database = Database::open_in_memory().unwrap();
+        let context = ContextRepository::new(database.connection())
+            .create_standalone("Voice notes")
+            .unwrap();
+        database
+            .connection()
+            .execute_batch(
+                "CREATE TRIGGER reject_audio_capture BEFORE INSERT ON captures
+                 WHEN NEW.kind = 'audio'
+                 BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END;",
+            )
+            .unwrap();
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        service
+            .lock()
+            .unwrap()
+            .set_context_resolution(
+                session.session_id,
+                ContextResolution::Resolved {
+                    candidate: ContextCandidate {
+                        context,
+                        branch_name: None,
+                        provider: ContextProviderKind::Manual,
+                        requires_confirmation: false,
+                    },
+                    selection: None,
+                },
+            )
+            .unwrap();
+        let mut media = MediaStore::open(directory.path()).unwrap();
+        let staged = media
+            .stage_audio_wav(session.session_id, b"retryable wav", 250)
+            .unwrap();
+        service
+            .lock()
+            .unwrap()
+            .set_staged_media(session.session_id, staged.clone())
+            .unwrap();
+        let database = Mutex::new(database);
+        let media = Mutex::new(media);
+        let input = serde_json::to_value(SaveAudioCaptureInput {
+            session_id: session.session_id,
+            staged_media_id: staged.staged_media_id,
+            caption: Some("keep me".to_owned()),
+        })
+        .unwrap();
+
+        let failed = save_audio_capture_value(input.clone(), &database, &service, &media);
+
+        let CommandResult::Failure { error, .. } = failed else {
+            panic!("forced audio failure succeeded")
+        };
+        assert_eq!(error.code, ErrorCode::StorageWriteFailed);
+        assert!(
+            media
+                .lock()
+                .unwrap()
+                .staged_preview(staged.staged_media_id)
+                .is_ok()
+        );
+        database
+            .lock()
+            .unwrap()
+            .connection()
+            .execute_batch("DROP TRIGGER reject_audio_capture;")
+            .unwrap();
+        assert!(matches!(
+            save_audio_capture_value(input, &database, &service, &media),
+            CommandResult::Success { .. }
+        ));
     }
 
     #[test]

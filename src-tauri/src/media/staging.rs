@@ -244,6 +244,39 @@ impl MediaStore {
         Ok(())
     }
 
+    pub(crate) fn restore_staged_after_failed_save(
+        &mut self,
+        session_id: CaptureSessionId,
+        staged_media_id: StagedMediaId,
+        finalized: &FinalizedMedia,
+    ) -> Result<(), StagingError> {
+        let source = self.final_path(&finalized.relative_path)?;
+        let destination = self.staging_path(
+            session_id,
+            staged_media_id,
+            finalized.kind,
+            finalized.mime_type,
+        )?;
+        let parent = destination.parent().ok_or(StagingError::PathOutsideRoot)?;
+        fs::create_dir_all(parent)?;
+        fs::rename(source, &destination)?;
+        self.staged.insert(
+            staged_media_id,
+            StagedAsset {
+                session_id,
+                kind: finalized.kind,
+                mime_type: finalized.mime_type,
+                path: destination,
+                byte_size: finalized.byte_size,
+                checksum: finalized.checksum.clone(),
+                duration_ms: finalized.duration_ms,
+                width_px: finalized.width_px,
+                height_px: finalized.height_px,
+            },
+        );
+        Ok(())
+    }
+
     pub(crate) fn cleanup_session(
         &mut self,
         session_id: CaptureSessionId,
