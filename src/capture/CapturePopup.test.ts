@@ -71,6 +71,21 @@ function createClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
       capturedAt: '2026-08-29T10:00:00Z',
       enrichmentScheduled: false,
     }),
+    stageClipboardImage: vi.fn().mockResolvedValue({
+      stagedMediaId: 'staged-image-1',
+      kind: 'image',
+      previewUri: 'lyn-media://staged/staged-image-1',
+      mimeType: 'image/png',
+      byteSize: 128,
+      durationMs: null,
+      widthPx: 2,
+      heightPx: 1,
+    }),
+    saveImage: vi.fn().mockResolvedValue({
+      captureId: 'capture-image-1',
+      capturedAt: '2026-08-29T10:00:00Z',
+      enrichmentScheduled: false,
+    }),
     cancel: vi.fn().mockResolvedValue({ cancelled: true }),
     dismissPopup: vi.fn().mockResolvedValue({
       dismissed: true,
@@ -112,6 +127,62 @@ describe('quick-capture popup', () => {
       ),
     );
     expect(dismiss).toHaveBeenCalledOnce();
+  });
+
+  it('stages an image paste without sending bytes and saves the draft as its caption', async () => {
+    const client = createClient();
+    const dismiss = vi.fn();
+    render(CapturePopup, { client, dismiss });
+    const input = screen.getByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(input, { target: { value: '  Manual caption  ' } });
+
+    await fireEvent.paste(input, {
+      clipboardData: { items: [{ type: 'image/png' }] },
+    });
+
+    expect(
+      await screen.findByRole('img', { name: 'Screenshot ready to save' }),
+    ).toHaveAttribute('src', 'lyn-media://staged/staged-image-1');
+    expect(client.stageClipboardImage).toHaveBeenCalledWith('session-1');
+    expect(input).toHaveValue('  Manual caption  ');
+
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() =>
+      expect(client.saveImage).toHaveBeenCalledWith(
+        'session-1',
+        'staged-image-1',
+        '  Manual caption  ',
+      ),
+    );
+    expect(client.saveText).not.toHaveBeenCalled();
+    expect(dismiss).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the screenshot preview and caption when image save fails', async () => {
+    const failure: AppError = {
+      code: 'MEDIA_FINALIZE_FAILED',
+      message: 'The screenshot could not be finalized',
+      retryable: true,
+      details: {},
+    };
+    const client = createClient({
+      saveImage: vi.fn().mockRejectedValue(new CaptureCommandError(failure)),
+    });
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    const input = screen.getByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(input, { target: { value: 'Keep caption' } });
+    await fireEvent.paste(input, {
+      clipboardData: { items: [{ type: 'image/png' }] },
+    });
+    await screen.findByRole('img', { name: 'Screenshot ready to save' });
+
+    await fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('finalized');
+    expect(
+      screen.getByRole('img', { name: 'Screenshot ready to save' }),
+    ).toBeVisible();
+    expect(input).toHaveValue('Keep caption');
   });
 
   it('leaves Shift+Enter to insert a newline without saving', async () => {

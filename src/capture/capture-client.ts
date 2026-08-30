@@ -15,6 +15,7 @@ import type {
   DismissCapturePopupResult,
   ListContextsResult,
   SaveCaptureResult,
+  StagedMedia,
 } from '../lib/ipc-types';
 
 type Invoke = <T>(
@@ -41,6 +42,12 @@ export interface CaptureClient {
   saveText(
     sessionId: CaptureSessionId,
     textBody: string,
+  ): Promise<SaveCaptureResult>;
+  stageClipboardImage(sessionId: CaptureSessionId): Promise<StagedMedia>;
+  saveImage(
+    sessionId: CaptureSessionId,
+    stagedMediaId: string,
+    caption: string | null,
   ): Promise<SaveCaptureResult>;
   cancel(sessionId: CaptureSessionId): Promise<CancelCaptureSessionResult>;
   dismissPopup(): Promise<DismissCapturePopupResult>;
@@ -114,6 +121,14 @@ export function createCaptureClient(call: Invoke = invoke): CaptureClient {
       command<SaveCaptureResult>(call, 'save_text_capture', {
         sessionId,
         textBody,
+      }),
+    stageClipboardImage: (sessionId) =>
+      command<StagedMedia>(call, 'stage_clipboard_image', { sessionId }),
+    saveImage: (sessionId, stagedMediaId, caption) =>
+      command<SaveCaptureResult>(call, 'save_image_capture', {
+        sessionId,
+        stagedMediaId,
+        caption,
       }),
     cancel: (sessionId) =>
       command<CancelCaptureSessionResult>(call, 'cancel_capture_session', {

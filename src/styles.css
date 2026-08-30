@@ -100,7 +100,7 @@ textarea:focus-visible {
 
 .capture-popup {
   display: grid;
-  grid-template-areas: 'context' 'chooser' 'input' 'error' 'actions';
+  grid-template-areas: 'context' 'chooser' 'input' 'preview' 'error' 'actions';
   width: min(100%, 560px);
   min-height: 168px;
   overflow: hidden;
@@ -309,6 +309,47 @@ textarea:focus-visible {
 
 .capture-input::placeholder {
   color: var(--color-text-faint);
+}
+
+.image-preview {
+  grid-area: preview;
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 var(--space-5) var(--space-3);
+}
+
+.image-preview img {
+  display: block;
+  width: 100%;
+  max-height: min(280px, 38vh);
+  object-fit: contain;
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-control);
+  outline: 1px solid color-mix(in srgb, var(--color-text) 12%, transparent);
+  outline-offset: -2px;
+  background: var(--color-surface-subtle);
+}
+
+.image-preview figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.image-preview button {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text);
+}
+
+.image-preview button:hover:not(:disabled) {
+  background: var(--color-surface-subtle);
 }
 
 .capture-error {

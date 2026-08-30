@@ -106,6 +106,48 @@ describe('capture client', () => {
     ]);
   });
 
+  it('uses opaque screenshot staging and save inputs', async () => {
+    const staged = {
+      stagedMediaId: 'staged-1',
+      kind: 'image' as const,
+      previewUri: 'lyn-media://staged/staged-1',
+      mimeType: 'image/png' as const,
+      byteSize: 42,
+      durationMs: null,
+      widthPx: 1,
+      heightPx: 1,
+    };
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, data: staged })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          captureId: 'capture-1',
+          capturedAt: '2026-08-29T10:00:00Z',
+          enrichmentScheduled: false,
+        },
+      });
+    const client = createCaptureClient(invoke);
+
+    await client.stageClipboardImage('session-1');
+    await client.saveImage('session-1', 'staged-1', 'caption');
+
+    expect(invoke.mock.calls).toEqual([
+      ['stage_clipboard_image', { input: { sessionId: 'session-1' } }],
+      [
+        'save_image_capture',
+        {
+          input: {
+            sessionId: 'session-1',
+            stagedMediaId: 'staged-1',
+            caption: 'caption',
+          },
+        },
+      ],
+    ]);
+  });
+
   it('lists and selects opaque live context sources', async () => {
     const sourceResult = {
       liveSources: [],

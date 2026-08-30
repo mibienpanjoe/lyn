@@ -34,6 +34,7 @@
   let sourceStale = $state(false);
   let error = $state<AppError | null>(null);
   let isSaving = $state(false);
+  let isStagingImage = $state(false);
   let isCreatingContext = $state(false);
   let isComposing = $state(false);
   let cancelRequested = $state(false);
@@ -192,7 +193,15 @@
     isSaving = true;
     error = null;
     try {
-      await client.saveText(session.sessionId, draft);
+      if (session.stagedMedia?.kind === 'image') {
+        await client.saveImage(
+          session.sessionId,
+          session.stagedMedia.stagedMediaId,
+          draft,
+        );
+      } else {
+        await client.saveText(session.sessionId, draft);
+      }
       await (dismiss?.() ?? client.dismissPopup());
     } catch (caught) {
       error = toAppError(caught, 'The capture could not be saved. Try again.');
@@ -205,6 +214,34 @@
       draftInput?.focus();
     } finally {
       isSaving = false;
+    }
+  }
+
+  async function stageImage() {
+    if (!session || isStagingImage) return;
+    isStagingImage = true;
+    error = null;
+    try {
+      const stagedMedia = await client.stageClipboardImage(session.sessionId);
+      session = { ...session, stagedMedia };
+    } catch (caught) {
+      error = toAppError(
+        caught,
+        'The clipboard image could not be prepared. Try copying it again.',
+      );
+    } finally {
+      isStagingImage = false;
+    }
+  }
+
+  function handlePaste(event: ClipboardEvent) {
+    if (
+      Array.from(event.clipboardData?.items ?? []).some((item) =>
+        item.type.startsWith('image/'),
+      )
+    ) {
+      event.preventDefault();
+      void stageImage();
     }
   }
 
@@ -260,7 +297,23 @@
       placeholder="Type or paste anything…"
       aria-describedby={error ? 'capture-error' : undefined}
       oncompositionstart={() => (isComposing = true)}
-      oncompositionend={() => (isComposing = false)}></textarea>
+      oncompositionend={() => (isComposing = false)}
+      onpaste={handlePaste}></textarea>
+
+    {#if session?.stagedMedia?.kind === 'image'}
+      <figure class="image-preview">
+        <img
+          src={session.stagedMedia.previewUri}
+          alt="Screenshot ready to save"
+        />
+        <figcaption>
+          <span>Screenshot ready</span>
+          <button type="button" disabled={isStagingImage} onclick={stageImage}
+            >{isStagingImage ? 'Replacing…' : 'Replace'}</button
+          >
+        </figcaption>
+      </figure>
+    {/if}
 
     <ContextIndicator
       bind:button={contextButton}
