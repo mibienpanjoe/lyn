@@ -33,9 +33,16 @@ pub fn run() {
     );
     builder
         .setup(|app| {
-            let database_path = app.path().app_data_dir()?.join("lyn.db");
+            let app_data_dir = app.path().app_data_dir()?;
+            let database_path = app_data_dir.join("lyn.db");
             let database = storage::Database::open(database_path)?;
+            let referenced_paths =
+                storage::media_assets::MediaAssetRepository::new(database.connection())
+                    .referenced_relative_paths()?;
+            let mut media_store = media::staging::MediaStore::open(app_data_dir)?;
+            media_store.reconcile(&referenced_paths)?;
             app.manage(Mutex::new(database));
+            app.manage(Mutex::new(media_store));
             app.manage(Mutex::new(context::DirectorySelectionRegistry::default()));
             app.manage(Mutex::new(
                 context::session_registry::ContextSourceRegistry::default(),

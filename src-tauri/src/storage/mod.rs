@@ -2,6 +2,7 @@
 
 pub(crate) mod captures;
 pub(crate) mod contexts;
+pub(crate) mod media_assets;
 
 use std::{error::Error, fmt, fs, path::Path};
 
