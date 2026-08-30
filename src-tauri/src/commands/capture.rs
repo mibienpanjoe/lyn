@@ -7,12 +7,13 @@ use crate::{
     commands::is_empty_input,
     context::{provider::ProviderSourceKind, session_registry::ContextSourceRegistry},
     contract::{
-        CancelCaptureSessionInput, CancelCaptureSessionResult, CaptureSession, ContextCandidate,
-        ContextProviderKind, ContextResolution, ContextSelection, ContextSourceKind,
-        ContextSourceOption, ListCaptureContextSourcesInput, ListCaptureContextSourcesResult,
-        RecordingState, SaveCaptureResult, SaveImageCaptureInput, SaveTextCaptureInput,
+        AudioPlaybackResult, CancelCaptureSessionInput, CancelCaptureSessionResult, CaptureSession,
+        ContextCandidate, ContextProviderKind, ContextResolution, ContextSelection,
+        ContextSourceKind, ContextSourceOption, ListCaptureContextSourcesInput,
+        ListCaptureContextSourcesResult, PlayStagedAudioInput, RecordingState,
+        SaveAudioCaptureInput, SaveCaptureResult, SaveImageCaptureInput, SaveTextCaptureInput,
         SelectCaptureContextSourceInput, StageClipboardImageInput, StagedMedia,
-        StartAudioRecordingInput, StopAudioRecordingInput,
+        StartAudioRecordingInput, StopAudioPlaybackInput, StopAudioRecordingInput,
     },
     error::{AppError, CommandResult, ErrorCode, ErrorDetailKey, ErrorDetailValue, ErrorDetails},
     media::{audio, images, staging::MediaStore},
@@ -20,12 +21,110 @@ use crate::{
         InvocationContext,
         audio::{AudioInputError, AudioInputPlatform, NativeAudioInputPlatform},
         clipboard::{ClipboardError, ClipboardImagePlatform, NativeClipboardPlatform},
+        playback::{AudioPlaybackPlatform, NativeAudioPlaybackPlatform},
     },
     storage::{Database, captures::CaptureRepository, contexts::ContextRepository},
 };
 
 pub(crate) const MAX_TEXT_BODY_BYTES: usize = 1024 * 1024;
 const MAX_CONTEXT_SOURCE_QUERY_CHARS: usize = 100;
+
+#[tauri::command]
+pub(crate) fn play_staged_audio(
+    input: serde_json::Value,
+    service: State<'_, Mutex<CaptureSessionService>>,
+    media_store: State<'_, Mutex<MediaStore>>,
+    playback: State<'_, Mutex<NativeAudioPlaybackPlatform>>,
+) -> CommandResult<AudioPlaybackResult> {
+    play_staged_audio_value(
+        input,
+        service.inner(),
+        media_store.inner(),
+        playback.inner(),
+    )
+}
+
+fn play_staged_audio_value<Playback: AudioPlaybackPlatform>(
+    input: serde_json::Value,
+    service: &Mutex<CaptureSessionService>,
+    media_store: &Mutex<MediaStore>,
+    playback: &Mutex<Playback>,
+) -> CommandResult<AudioPlaybackResult> {
+    let Ok(input) = serde_json::from_value::<PlayStagedAudioInput>(input) else {
+        return CommandResult::failure(validation_error());
+    };
+    let session = service
+        .lock()
+        .ok()
+        .and_then(|service| service.active_session());
+    let Some(staged) = session
+        .filter(|session| session.session_id == input.session_id)
+        .and_then(|session| session.staged_media)
+        .filter(|media| {
+            media.staged_media_id == input.staged_media_id
+                && media.kind == crate::contract::MediaKind::Audio
+        })
+    else {
+        return CommandResult::failure(media_not_found_error());
+    };
+    let bytes = match media_store
+        .lock()
+        .ok()
+        .and_then(|media| media.staged_preview(input.staged_media_id).ok())
+    {
+        Some((bytes, _)) => bytes,
+        None => return CommandResult::failure(media_not_found_error()),
+    };
+    let target_id = input.staged_media_id.to_string();
+    if playback
+        .lock()
+        .ok()
+        .and_then(|mut playback| playback.play_wav(&target_id, bytes).ok())
+        .is_none()
+    {
+        return CommandResult::failure(audio_playback_error());
+    }
+    CommandResult::success(AudioPlaybackResult {
+        playing: true,
+        duration_ms: staged.duration_ms,
+    })
+}
+
+#[tauri::command]
+pub(crate) fn stop_audio_playback(
+    input: serde_json::Value,
+    playback: State<'_, Mutex<NativeAudioPlaybackPlatform>>,
+) -> CommandResult<AudioPlaybackResult> {
+    stop_audio_playback_value(input, playback.inner())
+}
+
+fn stop_audio_playback_value<Playback: AudioPlaybackPlatform>(
+    input: serde_json::Value,
+    playback: &Mutex<Playback>,
+) -> CommandResult<AudioPlaybackResult> {
+    let Ok(input) = serde_json::from_value::<StopAudioPlaybackInput>(input) else {
+        return CommandResult::failure(validation_error());
+    };
+    if input
+        .playback_target_id
+        .parse::<crate::contract::StagedMediaId>()
+        .is_err()
+    {
+        return CommandResult::failure(validation_error());
+    }
+    if playback
+        .lock()
+        .ok()
+        .and_then(|mut playback| playback.stop(&input.playback_target_id).ok())
+        .is_none()
+    {
+        return CommandResult::failure(audio_playback_error());
+    }
+    CommandResult::success(AudioPlaybackResult {
+        playing: false,
+        duration_ms: None,
+    })
+}
 
 #[tauri::command]
 pub(crate) fn start_audio_recording(
@@ -184,6 +283,90 @@ pub(crate) fn save_image_capture(
         service.inner(),
         media_store.inner(),
     )
+}
+
+#[tauri::command]
+pub(crate) fn save_audio_capture(
+    input: serde_json::Value,
+    database: State<'_, Mutex<Database>>,
+    service: State<'_, Mutex<CaptureSessionService>>,
+    media_store: State<'_, Mutex<MediaStore>>,
+) -> CommandResult<SaveCaptureResult> {
+    save_audio_capture_value(
+        input,
+        database.inner(),
+        service.inner(),
+        media_store.inner(),
+    )
+}
+
+fn save_audio_capture_value(
+    input: serde_json::Value,
+    database: &Mutex<Database>,
+    service: &Mutex<CaptureSessionService>,
+    media_store: &Mutex<MediaStore>,
+) -> CommandResult<SaveCaptureResult> {
+    let Ok(input) = serde_json::from_value::<SaveAudioCaptureInput>(input) else {
+        return CommandResult::failure(validation_error());
+    };
+    let caption = normalize_optional_caption(input.caption);
+    let Ok(mut service) = service.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    match service.save_once(input.session_id, |session| {
+        let crate::contract::ContextResolution::Resolved { candidate, .. } =
+            &session.context_resolution
+        else {
+            return Err(context_required_error());
+        };
+        let staged = session
+            .staged_media
+            .as_ref()
+            .filter(|media| {
+                media.staged_media_id == input.staged_media_id
+                    && media.kind == crate::contract::MediaKind::Audio
+            })
+            .ok_or_else(media_not_found_error)?;
+        let duration_ms = staged.duration_ms.ok_or_else(media_stage_error)?;
+        let capture_id = crate::contract::CaptureId::new();
+        let mut media = media_store.lock().map_err(|_| internal_error())?;
+        let finalized = media
+            .finalize(
+                input.staged_media_id,
+                capture_id,
+                crate::contract::MediaKind::Audio,
+            )
+            .map_err(|_| media_finalize_error())?;
+        let saved = database
+            .lock()
+            .map_err(|_| internal_error())
+            .and_then(|mut database| {
+                CaptureRepository::new(database.connection_mut())
+                    .save_audio(
+                        input.session_id,
+                        candidate.context.id,
+                        candidate.branch_name.as_deref(),
+                        capture_id,
+                        finalized.media_id,
+                        &finalized.relative_path,
+                        finalized.byte_size,
+                        &finalized.checksum,
+                        caption.as_deref(),
+                        duration_ms,
+                    )
+                    .map_err(|_| storage_write_error())
+            });
+        if saved.is_err() {
+            let _ = media.remove_final(&finalized.relative_path);
+        }
+        saved.map(|saved| (capture_id, saved))
+    }) {
+        Ok(SaveOnceResult::Saved { value, .. }) => CommandResult::success(value),
+        Ok(SaveOnceResult::AlreadySaved(_)) | Err(SaveOnceError::Session(_)) => {
+            CommandResult::failure(stale_session_error())
+        }
+        Err(SaveOnceError::Persistence(error)) => CommandResult::failure(error),
+    }
 }
 
 fn save_image_capture_value(
@@ -869,6 +1052,33 @@ fn media_stage_error() -> AppError {
     }
 }
 
+fn media_finalize_error() -> AppError {
+    AppError {
+        code: ErrorCode::MediaFinalizeFailed,
+        message: "The media could not be finalized".to_owned(),
+        retryable: true,
+        details: ErrorDetails::default(),
+    }
+}
+
+fn media_not_found_error() -> AppError {
+    AppError {
+        code: ErrorCode::MediaNotFound,
+        message: "The requested media is unavailable".to_owned(),
+        retryable: false,
+        details: ErrorDetails::default(),
+    }
+}
+
+fn audio_playback_error() -> AppError {
+    AppError {
+        code: ErrorCode::AudioPlaybackFailed,
+        message: "Audio playback could not be completed".to_owned(),
+        retryable: true,
+        details: ErrorDetails::default(),
+    }
+}
+
 fn audio_input_error(error: AudioInputError) -> AppError {
     let (code, message) = match error {
         AudioInputError::DeviceUnavailable => (
@@ -927,8 +1137,8 @@ mod tests {
         contract::{
             CancelCaptureSessionInput, CaptureSessionId, ContextCandidate, ContextProviderKind,
             ContextResolution, ContextSelection, ListCaptureContextSourcesInput, MediaKind,
-            MediaMimeType, RecordingState, SaveImageCaptureInput, SaveTextCaptureInput,
-            SelectCaptureContextSourceInput,
+            MediaMimeType, RecordingState, SaveAudioCaptureInput, SaveImageCaptureInput,
+            SaveTextCaptureInput, SelectCaptureContextSourceInput,
         },
         error::{CommandResult, ErrorCode},
         media::staging::MediaStore,
@@ -936,6 +1146,7 @@ mod tests {
             WindowCorrelationToken,
             audio::{AudioInputError, AudioInputPlatform, RecordedAudio},
             clipboard::{ClipboardError, ClipboardImage, ClipboardImagePlatform},
+            playback::{AudioPlaybackError, AudioPlaybackPlatform},
         },
         storage::{Database, contexts::ContextRepository},
     };
@@ -943,9 +1154,11 @@ mod tests {
     use super::{
         cancel_capture_session_value, drain_staging_cleanup, get_active_capture_session_impl,
         get_active_capture_session_value, list_capture_context_sources_value,
-        save_image_capture_value, save_text_capture_value, save_text_capture_with_registry_value,
+        play_staged_audio_value, save_audio_capture_value, save_image_capture_value,
+        save_text_capture_value, save_text_capture_with_registry_value,
         select_capture_context_source_value, select_capture_context_source_with_registry_value,
-        stage_clipboard_image_value, start_audio_recording_value, stop_audio_recording_value,
+        stage_clipboard_image_value, start_audio_recording_value, stop_audio_playback_value,
+        stop_audio_recording_value,
     };
 
     struct FakeClipboard(Result<ClipboardImage, ClipboardError>);
@@ -968,6 +1181,28 @@ mod tests {
 
         fn stop(&mut self) -> Result<RecordedAudio, AudioInputError> {
             self.stop_result.clone()
+        }
+    }
+
+    #[derive(Default)]
+    struct FakePlayback {
+        active_target: Option<String>,
+        played_bytes: usize,
+    }
+
+    impl AudioPlaybackPlatform for FakePlayback {
+        fn play_wav(&mut self, target_id: &str, bytes: Vec<u8>) -> Result<(), AudioPlaybackError> {
+            self.active_target = Some(target_id.to_owned());
+            self.played_bytes = bytes.len();
+            Ok(())
+        }
+
+        fn stop(&mut self, target_id: &str) -> Result<(), AudioPlaybackError> {
+            if self.active_target.as_deref() != Some(target_id) {
+                return Err(AudioPlaybackError::NotPlaying);
+            }
+            self.active_target = None;
+            Ok(())
         }
     }
 
@@ -1049,6 +1284,140 @@ mod tests {
                 .unwrap()
                 .recording_state,
             RecordingState::Idle
+        );
+    }
+
+    #[test]
+    fn staged_audio_playback_is_scoped_to_the_active_session_and_target() {
+        let directory = tempdir().unwrap();
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        let mut media = MediaStore::open(directory.path()).unwrap();
+        let staged = media
+            .stage_audio_wav(session.session_id, b"wav bytes", 125)
+            .unwrap();
+        service
+            .lock()
+            .unwrap()
+            .set_staged_media(session.session_id, staged.clone())
+            .unwrap();
+        let media = Mutex::new(media);
+        let playback = Mutex::new(FakePlayback::default());
+
+        let played = play_staged_audio_value(
+            json!({
+                "sessionId": session.session_id,
+                "stagedMediaId": staged.staged_media_id
+            }),
+            &service,
+            &media,
+            &playback,
+        );
+        let forged = play_staged_audio_value(
+            json!({
+                "sessionId": CaptureSessionId::new(),
+                "stagedMediaId": staged.staged_media_id
+            }),
+            &service,
+            &media,
+            &playback,
+        );
+        let stopped = stop_audio_playback_value(
+            json!({ "playbackTargetId": staged.staged_media_id.to_string() }),
+            &playback,
+        );
+
+        assert!(matches!(played, CommandResult::Success { .. }));
+        assert_eq!(playback.lock().unwrap().played_bytes, 9);
+        let CommandResult::Failure { error, .. } = forged else {
+            panic!("forged playback succeeded")
+        };
+        assert_eq!(error.code, ErrorCode::MediaNotFound);
+        assert!(matches!(stopped, CommandResult::Success { .. }));
+    }
+
+    #[test]
+    fn audio_save_commits_exact_caption_duration_and_media_atomically() {
+        let directory = tempdir().unwrap();
+        let database = Database::open_in_memory().unwrap();
+        let context = ContextRepository::new(database.connection())
+            .create_standalone("Voice notes")
+            .unwrap();
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        service
+            .lock()
+            .unwrap()
+            .set_context_resolution(
+                session.session_id,
+                ContextResolution::Resolved {
+                    candidate: ContextCandidate {
+                        context,
+                        branch_name: None,
+                        provider: ContextProviderKind::Manual,
+                        requires_confirmation: false,
+                    },
+                    selection: None,
+                },
+            )
+            .unwrap();
+        let mut media = MediaStore::open(directory.path()).unwrap();
+        let staged = media
+            .stage_audio_wav(session.session_id, b"durable wav", 750)
+            .unwrap();
+        service
+            .lock()
+            .unwrap()
+            .set_staged_media(session.session_id, staged.clone())
+            .unwrap();
+        let database = Mutex::new(database);
+        let media = Mutex::new(media);
+
+        let saved = save_audio_capture_value(
+            serde_json::to_value(SaveAudioCaptureInput {
+                session_id: session.session_id,
+                staged_media_id: staged.staged_media_id,
+                caption: Some("  exact voice caption  ".to_owned()),
+            })
+            .unwrap(),
+            &database,
+            &service,
+            &media,
+        );
+
+        let CommandResult::Success { data: saved, .. } = saved else {
+            panic!("audio save failed")
+        };
+        let stored: (String, String, String, String, i64) = database
+            .lock()
+            .unwrap()
+            .connection()
+            .query_row(
+                "SELECT captures.caption, captures.caption_source, media_assets.kind,
+                        media_assets.mime_type, media_assets.duration_ms
+                 FROM captures JOIN media_assets ON media_assets.capture_id = captures.id
+                 WHERE captures.id = ?1",
+                [saved.capture_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            stored,
+            (
+                "  exact voice caption  ".to_owned(),
+                "user".to_owned(),
+                "audio".to_owned(),
+                "audio/wav".to_owned(),
+                750
+            )
         );
     }
 

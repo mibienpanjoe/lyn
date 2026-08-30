@@ -4,6 +4,7 @@ use std::fmt;
 
 pub(crate) mod audio;
 pub(crate) mod clipboard;
+pub(crate) mod playback;
 
 #[cfg(not(target_os = "linux"))]
 use tauri::Manager;

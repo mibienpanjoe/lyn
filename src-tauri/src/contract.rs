@@ -448,6 +448,26 @@ pub struct SaveAudioCaptureInput {
     pub caption: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlayStagedAudioInput {
+    pub session_id: CaptureSessionId,
+    pub staged_media_id: StagedMediaId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StopAudioPlaybackInput {
+    pub playback_target_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioPlaybackResult {
+    pub playing: bool,
+    pub duration_ms: Option<u64>,
+}
+
 pub fn typescript_bindings() -> String {
     let config = Config::default().with_large_int("number");
     let declarations = [
@@ -504,6 +524,9 @@ pub fn typescript_bindings() -> String {
         StartAudioRecordingInput::decl(&config),
         StopAudioRecordingInput::decl(&config),
         SaveAudioCaptureInput::decl(&config),
+        PlayStagedAudioInput::decl(&config),
+        StopAudioPlaybackInput::decl(&config),
+        AudioPlaybackResult::decl(&config),
     ]
     .map(|declaration| format!("export {declaration}"));
     format!(

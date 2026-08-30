@@ -105,3 +105,9 @@ export type StartAudioRecordingInput = { sessionId: CaptureSessionId, inputDevic
 export type StopAudioRecordingInput = { sessionId: CaptureSessionId, };
 
 export type SaveAudioCaptureInput = { sessionId: CaptureSessionId, stagedMediaId: StagedMediaId, caption: string | null, };
+
+export type PlayStagedAudioInput = { sessionId: CaptureSessionId, stagedMediaId: StagedMediaId, };
+
+export type StopAudioPlaybackInput = { playbackTargetId: string, };
+
+export type AudioPlaybackResult = { playing: boolean, durationMs: number | null, };

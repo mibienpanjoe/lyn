@@ -82,6 +82,9 @@ pub fn run() {
             app.manage(Mutex::new(
                 platform::audio::NativeAudioInputPlatform::default(),
             ));
+            app.manage(Mutex::new(
+                platform::playback::NativeAudioPlaybackPlatform::default(),
+            ));
             app.manage(Mutex::new(context::DirectorySelectionRegistry::default()));
             app.manage(Mutex::new(
                 context::session_registry::ContextSourceRegistry::default(),
@@ -107,6 +110,9 @@ pub fn run() {
             commands::capture::save_image_capture,
             commands::capture::start_audio_recording,
             commands::capture::stop_audio_recording,
+            commands::capture::play_staged_audio,
+            commands::capture::stop_audio_playback,
+            commands::capture::save_audio_capture,
             commands::context::pick_project_directory,
             commands::context::create_context,
             commands::context::list_contexts,

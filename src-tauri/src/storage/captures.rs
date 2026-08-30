@@ -79,6 +79,63 @@ impl<'connection> CaptureRepository<'connection> {
             enrichment_scheduled: false,
         })
     }
+
+    pub(crate) fn save_audio(
+        &mut self,
+        session_id: CaptureSessionId,
+        context_id: ContextId,
+        branch_name: Option<&str>,
+        capture_id: CaptureId,
+        media_id: crate::contract::MediaId,
+        relative_path: &str,
+        byte_size: u64,
+        checksum: &str,
+        caption: Option<&str>,
+        duration_ms: u64,
+    ) -> Result<SaveCaptureResult, StorageError> {
+        let byte_size = i64::try_from(byte_size)
+            .map_err(|_| StorageError::Sql(rusqlite::Error::IntegralValueOutOfRange(0, 0)))?;
+        let duration_ms = i64::try_from(duration_ms)
+            .map_err(|_| StorageError::Sql(rusqlite::Error::IntegralValueOutOfRange(0, 0)))?;
+        let captured_at = Timestamp::now_utc();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "INSERT INTO captures (id, session_id, context_id, kind, text_body, caption,
+                caption_source, branch_name, source_app, source_window_title, captured_at, updated_at)
+             VALUES (?1, ?2, ?3, 'audio', NULL, ?4,
+                CASE WHEN ?4 IS NULL THEN NULL ELSE 'user' END, ?5, NULL, NULL, ?6, ?6)",
+            params![
+                capture_id.to_string(),
+                session_id.to_string(),
+                context_id.to_string(),
+                caption,
+                branch_name,
+                captured_at.to_string()
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO media_assets (id, capture_id, kind, relative_path, mime_type, byte_size,
+                checksum, duration_ms, width_px, height_px, created_at)
+             VALUES (?1, ?2, 'audio', ?3, 'audio/wav', ?4, ?5, ?6, NULL, NULL, ?7)",
+            params![
+                media_id.to_string(),
+                capture_id.to_string(),
+                relative_path,
+                byte_size,
+                checksum,
+                duration_ms,
+                captured_at.to_string()
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(SaveCaptureResult {
+            capture_id,
+            captured_at,
+            enrichment_scheduled: false,
+        })
+    }
 }
 
 #[cfg(test)]
