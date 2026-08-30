@@ -2,7 +2,12 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import axe from 'axe-core';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AppError, CaptureSession, ContextRef } from '../lib/ipc-types';
+import type {
+  AppError,
+  CaptureSession,
+  ContextRef,
+  ContextSourceOption,
+} from '../lib/ipc-types';
 import CapturePopup from './CapturePopup.svelte';
 import { CaptureCommandError, type CaptureClient } from './capture-client';
 
@@ -21,6 +26,17 @@ const requiredSession: CaptureSession = {
   },
   stagedMedia: null,
   recordingState: { state: 'idle' },
+};
+
+const liveSource: ContextSourceOption = {
+  sourceId: 'source-1',
+  kind: 'integrated_terminal',
+  provider: 'vscode',
+  applicationName: 'VS Code',
+  label: 'Lyn · main',
+  context: { id: 'context-lyn', kind: 'project', name: 'Lyn' },
+  branchName: 'main',
+  isForeground: true,
 };
 
 function resolvedSession(context = inbox): CaptureSession {
@@ -43,8 +59,13 @@ function createClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
   return {
     getActiveSession: vi.fn().mockResolvedValue(resolvedSession()),
     listContexts: vi.fn().mockResolvedValue([inbox]),
+    listContextSources: vi.fn().mockResolvedValue({
+      liveSources: [],
+      savedContexts: [inbox],
+    }),
     createStandaloneContext: vi.fn().mockResolvedValue(inbox),
     selectContext: vi.fn().mockResolvedValue(resolvedSession()),
+    selectLiveSource: vi.fn().mockResolvedValue(resolvedSession()),
     saveText: vi.fn().mockResolvedValue({
       captureId: 'capture-1',
       capturedAt: '2026-08-29T10:00:00Z',
@@ -56,6 +77,7 @@ function createClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
       focusRestored: true,
     }),
     onSessionReady: vi.fn().mockResolvedValue(vi.fn()),
+    onContextSourcesChanged: vi.fn().mockResolvedValue(vi.fn()),
     ...overrides,
   };
 }
@@ -244,5 +266,83 @@ describe('quick-capture popup', () => {
       expect(client.cancel).toHaveBeenCalledWith('session-1'),
     );
     expect(dismiss).toHaveBeenCalledOnce();
+  });
+
+  it('groups searchable live and saved contexts and selects the current window without changing the draft', async () => {
+    const client = createClient({
+      getActiveSession: vi.fn().mockResolvedValue(requiredSession),
+      listContextSources: vi.fn().mockResolvedValue({
+        liveSources: [liveSource],
+        savedContexts: [inbox],
+      }),
+      selectLiveSource: vi
+        .fn()
+        .mockResolvedValue(resolvedSession(liveSource.context)),
+    });
+    const { container } = render(CapturePopup, { client, dismiss: vi.fn() });
+    const draft = screen.getByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(draft, { target: { value: 'Draft stays' } });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Choose context' }),
+    );
+
+    expect(
+      screen.getByRole('heading', { name: 'Live sessions' }),
+    ).toBeVisible();
+    expect(screen.getByText('Current window')).toBeVisible();
+    expect(
+      screen.getByRole('heading', { name: 'Saved contexts' }),
+    ).toBeVisible();
+    const search = screen.getByRole('searchbox', { name: 'Search contexts' });
+    expect(search).toHaveFocus();
+    await fireEvent.input(search, { target: { value: 'Lyn' } });
+    expect(
+      screen.queryByRole('button', { name: 'Use context Inbox' }),
+    ).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: /Lyn · main/ }));
+
+    await waitFor(() =>
+      expect(client.selectLiveSource).toHaveBeenCalledWith(
+        'session-1',
+        'source-1',
+      ),
+    );
+    expect(draft).toHaveValue('Draft stays');
+    expect((await axe.run(container)).violations).toEqual([]);
+  });
+
+  it('keeps the chooser and draft available when a live source becomes stale', async () => {
+    const stale: AppError = {
+      code: 'CONTEXT_SOURCE_STALE',
+      message: 'The selected context source is stale',
+      retryable: true,
+      details: {},
+    };
+    const client = createClient({
+      getActiveSession: vi.fn().mockResolvedValue(requiredSession),
+      listContextSources: vi.fn().mockResolvedValue({
+        liveSources: [liveSource],
+        savedContexts: [inbox],
+      }),
+      selectLiveSource: vi
+        .fn()
+        .mockRejectedValue(new CaptureCommandError(stale)),
+    });
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    const draft = screen.getByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(draft, { target: { value: 'Do not lose this' } });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Choose context' }),
+    );
+    await fireEvent.click(screen.getByRole('button', { name: /Lyn · main/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('stale');
+    expect(
+      screen.getByRole('region', { name: 'Choose context' }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: /Context source stale/ }),
+    ).toBeVisible();
+    expect(draft).toHaveValue('Do not lose this');
   });
 });

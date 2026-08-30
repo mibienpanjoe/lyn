@@ -113,7 +113,7 @@ textarea:focus-visible {
   grid-area: context;
   display: flex;
   align-items: center;
-  min-height: 36px;
+  min-height: 44px;
   gap: var(--space-2);
   padding: var(--space-2) 14px;
   border: 0;
@@ -125,7 +125,16 @@ textarea:focus-visible {
   text-align: left;
   transition:
     background-color 150ms ease-out,
-    color 150ms ease-out;
+    color 150ms ease-out,
+    transform 150ms ease-out;
+}
+
+.context-control:active,
+.context-option:active,
+.context-create button:active:not(:disabled),
+.cancel-button:active,
+.save-button:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 .context-control:hover,
@@ -137,19 +146,21 @@ textarea:focus-visible {
   color: var(--color-error);
 }
 
-.context-mark {
-  width: 8px;
-  height: 8px;
+.context-icon,
+.context-chevron {
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
-  border: 1.5px solid currentcolor;
-  border-radius: 2px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
 }
 
 .context-chevron {
   margin-left: auto;
   color: var(--color-text-muted);
-  font-size: 14px;
-  line-height: 1;
 }
 
 .context-chooser {
@@ -157,6 +168,8 @@ textarea:focus-visible {
   padding: var(--space-3) 14px var(--space-4);
   border-bottom: 1px solid var(--color-divider);
   background: var(--color-surface-raised);
+  max-height: min(300px, 56vh);
+  overflow-y: auto;
 }
 
 .chooser-label,
@@ -168,6 +181,26 @@ textarea:focus-visible {
   font-weight: 500;
 }
 
+.chooser-label {
+  margin-top: var(--space-3);
+}
+
+.context-search {
+  width: 100%;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.chooser-status {
+  margin: var(--space-3) 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
 .context-list {
   display: grid;
   gap: var(--space-1);
@@ -176,7 +209,7 @@ textarea:focus-visible {
 
 .context-option {
   display: flex;
-  min-height: 36px;
+  min-height: 44px;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
@@ -185,7 +218,9 @@ textarea:focus-visible {
   border-radius: var(--radius-control);
   background: var(--color-surface-subtle);
   text-align: left;
-  transition: background-color 150ms ease-out;
+  transition:
+    background-color 150ms ease-out,
+    transform 150ms ease-out;
 }
 
 .context-option:hover,
@@ -198,10 +233,29 @@ textarea:focus-visible {
   font-size: 11px;
 }
 
+.option-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.source-status {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .context-create-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-2);
+}
+
+.context-create {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-divider);
 }
 
 .context-create input {

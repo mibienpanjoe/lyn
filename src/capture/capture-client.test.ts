@@ -106,6 +106,37 @@ describe('capture client', () => {
     ]);
   });
 
+  it('lists and selects opaque live context sources', async () => {
+    const sourceResult = {
+      liveSources: [],
+      savedContexts: [context],
+    };
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, data: sourceResult })
+      .mockResolvedValueOnce({ ok: true, data: session });
+    const client = createCaptureClient(invoke);
+
+    await client.listContextSources(session.sessionId, 'lyn');
+    await client.selectLiveSource(session.sessionId, 'source-1');
+
+    expect(invoke.mock.calls).toEqual([
+      [
+        'list_capture_context_sources',
+        { input: { sessionId: 'session-1', query: 'lyn', limit: 100 } },
+      ],
+      [
+        'select_capture_context_source',
+        {
+          input: {
+            sessionId: 'session-1',
+            selection: { kind: 'live_source', sourceId: 'source-1' },
+          },
+        },
+      ],
+    ]);
+  });
+
   it('throws the structured application error without flattening it', async () => {
     const failure: CommandResult<CaptureSession> = {
       ok: false,

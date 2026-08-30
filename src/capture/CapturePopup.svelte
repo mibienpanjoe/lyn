@@ -1,12 +1,20 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
 
-  import type { AppError, CaptureSession, ContextRef } from '../lib/ipc-types';
+  import type {
+    AppError,
+    CaptureSession,
+    ContextRef,
+    ContextSourceOption,
+    ListCaptureContextSourcesResult,
+  } from '../lib/ipc-types';
   import {
     CaptureCommandError,
     captureClient,
     type CaptureClient,
   } from './capture-client';
+  import ContextIndicator from './ContextIndicator.svelte';
+  import ContextSourceChooser from './ContextSourceChooser.svelte';
 
   interface Props {
     client?: CaptureClient;
@@ -17,9 +25,13 @@
 
   let draft = $state('');
   let session = $state<CaptureSession | null>(null);
-  let contexts = $state<ContextRef[]>([]);
+  let sources = $state<ListCaptureContextSourcesResult>({
+    liveSources: [],
+    savedContexts: [],
+  });
   let chooserOpen = $state(false);
-  let contextName = $state('');
+  let sourcesLoading = $state(false);
+  let sourceStale = $state(false);
   let error = $state<AppError | null>(null);
   let isSaving = $state(false);
   let isCreatingContext = $state(false);
@@ -27,13 +39,6 @@
   let cancelRequested = $state(false);
   let draftInput = $state<HTMLTextAreaElement>();
   let contextButton = $state<HTMLButtonElement>();
-  let contextNameInput = $state<HTMLInputElement>();
-
-  const selectedContext = $derived(
-    session?.contextResolution.state === 'resolved'
-      ? session.contextResolution.candidate.context
-      : null,
-  );
 
   onMount(() => {
     draftInput?.focus();
@@ -43,22 +48,25 @@
       draft = '';
       error = null;
       chooserOpen = false;
-      void client.listContexts().then((saved) => (contexts = saved));
+      sourceStale = false;
+      void refreshSources();
       void tick().then(() => draftInput?.focus());
+    });
+    const unlistenSources = client.onContextSourcesChanged((sessionId) => {
+      if (chooserOpen && session?.sessionId === sessionId)
+        void refreshSources();
     });
     return () => {
       void unlisten.then((removeListener) => removeListener());
+      void unlistenSources.then((removeListener) => removeListener());
     };
   });
 
   async function initialise() {
     try {
-      const [activeSession, savedContexts] = await Promise.all([
-        client.getActiveSession(),
-        client.listContexts(),
-      ]);
+      const activeSession = await client.getActiveSession();
       session = activeSession;
-      contexts = savedContexts;
+      await refreshSources();
       if (cancelRequested) {
         await cancel();
       }
@@ -85,10 +93,20 @@
   async function openChooser() {
     chooserOpen = true;
     error = null;
+    await refreshSources();
     await tick();
-    const firstOption =
-      document.querySelector<HTMLButtonElement>('.context-option');
-    (firstOption ?? contextNameInput)?.focus();
+  }
+
+  async function refreshSources() {
+    if (!session) return;
+    sourcesLoading = true;
+    try {
+      sources = await client.listContextSources(session.sessionId);
+    } catch (caught) {
+      error = toAppError(caught, 'Contexts could not be refreshed. Try again.');
+    } finally {
+      sourcesLoading = false;
+    }
   }
 
   async function closeChooser() {
@@ -101,6 +119,7 @@
     if (!session) return;
     try {
       session = await client.selectContext(session.sessionId, context.id);
+      sourceStale = false;
       error = null;
       await closeChooser();
     } catch (caught) {
@@ -111,21 +130,44 @@
     }
   }
 
-  async function createContext() {
-    if (!session || isCreatingContext || contextName.trim().length === 0)
-      return;
+  async function selectLiveSource(source: ContextSourceOption) {
+    if (!session) return;
+    try {
+      session = await client.selectLiveSource(
+        session.sessionId,
+        source.sourceId,
+      );
+      sourceStale = false;
+      error = null;
+      await closeChooser();
+    } catch (caught) {
+      error = toAppError(
+        caught,
+        'That live source is no longer available. Choose another context.',
+      );
+      sourceStale = true;
+      await refreshSources();
+    }
+  }
+
+  async function createContext(name: string) {
+    if (!session || isCreatingContext || name.trim().length === 0) return false;
     isCreatingContext = true;
     error = null;
     try {
-      const context = await client.createStandaloneContext(contextName.trim());
-      contexts = [...contexts, context];
-      contextName = '';
+      const context = await client.createStandaloneContext(name.trim());
+      sources = {
+        ...sources,
+        savedContexts: [...sources.savedContexts, context],
+      };
       await selectContext(context);
+      return true;
     } catch (caught) {
       error = toAppError(
         caught,
         'The context could not be created. Try again.',
       );
+      return false;
     } finally {
       isCreatingContext = false;
     }
@@ -154,6 +196,11 @@
       await (dismiss?.() ?? client.dismissPopup());
     } catch (caught) {
       error = toAppError(caught, 'The capture could not be saved. Try again.');
+      if (error.code === 'CONTEXT_SOURCE_STALE') {
+        sourceStale = true;
+        await openChooser();
+        return;
+      }
       await tick();
       draftInput?.focus();
     } finally {
@@ -215,73 +262,24 @@
       oncompositionstart={() => (isComposing = true)}
       oncompositionend={() => (isComposing = false)}></textarea>
 
-    <button
-      bind:this={contextButton}
-      class:context-required={!selectedContext}
-      class="context-control"
-      type="button"
-      aria-expanded={chooserOpen}
-      aria-controls="context-chooser"
-      aria-label={selectedContext
-        ? `Context ${selectedContext.name}. Change context`
-        : 'Choose context'}
+    <ContextIndicator
+      bind:button={contextButton}
+      resolution={session?.contextResolution ?? null}
+      open={chooserOpen}
+      stale={sourceStale}
       onclick={() => (chooserOpen ? closeChooser() : openChooser())}
-    >
-      <span aria-hidden="true" class="context-mark"></span>
-      <span>{selectedContext?.name ?? 'Choose context'}</span>
-      <span aria-hidden="true" class="context-chevron">⌄</span>
-    </button>
+    />
 
     {#if chooserOpen}
-      <section
-        id="context-chooser"
-        class="context-chooser"
-        aria-label="Choose context"
-      >
-        {#if contexts.length > 0}
-          <p class="chooser-label">Saved contexts</p>
-          <div class="context-list">
-            {#each contexts as context (context.id)}
-              <button
-                class="context-option"
-                type="button"
-                aria-label={`Use context ${context.name}`}
-                onclick={() => selectContext(context)}
-              >
-                <span>{context.name}</span>
-                <span class="context-kind">{context.kind}</span>
-              </button>
-            {/each}
-          </div>
-        {/if}
-
-        <form
-          class="context-create"
-          onsubmit={(event) => {
-            event.preventDefault();
-            void createContext();
-          }}
-        >
-          <label for="context-name">New context</label>
-          <div class="context-create-row">
-            <input
-              bind:this={contextNameInput}
-              bind:value={contextName}
-              id="context-name"
-              name="context-name"
-              aria-label="New context name"
-              maxlength="100"
-              autocomplete="off"
-            />
-            <button
-              type="submit"
-              disabled={isCreatingContext || contextName.trim().length === 0}
-            >
-              {isCreatingContext ? 'Creating…' : 'Create context'}
-            </button>
-          </div>
-        </form>
-      </section>
+      <ContextSourceChooser
+        liveSources={sources.liveSources}
+        savedContexts={sources.savedContexts}
+        loading={sourcesLoading}
+        creating={isCreatingContext}
+        onselectlive={(source) => void selectLiveSource(source)}
+        onselectsaved={(context) => void selectContext(context)}
+        oncreate={createContext}
+      />
     {/if}
 
     {#if error}

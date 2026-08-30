@@ -8,6 +8,8 @@ import type {
   CommandResult,
   ContextId,
   ContextRef,
+  ContextSourceId,
+  ListCaptureContextSourcesResult,
   CaptureSessionId,
   CreateContextResult,
   DismissCapturePopupResult,
@@ -23,10 +25,18 @@ type Invoke = <T>(
 export interface CaptureClient {
   getActiveSession(): Promise<CaptureSession>;
   listContexts(): Promise<ContextRef[]>;
+  listContextSources(
+    sessionId: CaptureSessionId,
+    query?: string | null,
+  ): Promise<ListCaptureContextSourcesResult>;
   createStandaloneContext(name: string): Promise<ContextRef>;
   selectContext(
     sessionId: CaptureSessionId,
     contextId: ContextId,
+  ): Promise<CaptureSession>;
+  selectLiveSource(
+    sessionId: CaptureSessionId,
+    sourceId: ContextSourceId,
   ): Promise<CaptureSession>;
   saveText(
     sessionId: CaptureSessionId,
@@ -36,6 +46,9 @@ export interface CaptureClient {
   dismissPopup(): Promise<DismissCapturePopupResult>;
   onSessionReady(
     listener: (session: CaptureSession) => void,
+  ): Promise<UnlistenFn>;
+  onContextSourcesChanged(
+    listener: (sessionId: string) => void,
   ): Promise<UnlistenFn>;
 }
 
@@ -70,6 +83,12 @@ export function createCaptureClient(call: Invoke = invoke): CaptureClient {
       });
       return result.contexts;
     },
+    listContextSources: (sessionId, query = null) =>
+      command<ListCaptureContextSourcesResult>(
+        call,
+        'list_capture_context_sources',
+        { sessionId, query, limit: 100 },
+      ),
     createStandaloneContext: async (name) => {
       const result = await command<CreateContextResult>(
         call,
@@ -85,6 +104,11 @@ export function createCaptureClient(call: Invoke = invoke): CaptureClient {
       command<CaptureSession>(call, 'select_capture_context_source', {
         sessionId,
         selection: { kind: 'saved_context', contextId },
+      }),
+    selectLiveSource: (sessionId, sourceId) =>
+      command<CaptureSession>(call, 'select_capture_context_source', {
+        sessionId,
+        selection: { kind: 'live_source', sourceId },
       }),
     saveText: (sessionId, textBody) =>
       command<SaveCaptureResult>(call, 'save_text_capture', {
@@ -103,6 +127,15 @@ export function createCaptureClient(call: Invoke = invoke): CaptureClient {
       }
       return listen<CaptureSession>('capture://session-ready', (event) =>
         listener(event.payload),
+      );
+    },
+    onContextSourcesChanged: (listener) => {
+      if (!('__TAURI_INTERNALS__' in window)) {
+        return Promise.resolve(() => undefined);
+      }
+      return listen<{ sessionId: string }>(
+        'context://sources-changed',
+        (event) => listener(event.payload.sessionId),
       );
     },
   };
