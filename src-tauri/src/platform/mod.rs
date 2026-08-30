@@ -79,7 +79,6 @@ impl InvocationContext {
         self.foreground.is_some()
     }
 
-    #[cfg(test)]
     pub(crate) fn foreground(&self) -> Option<ForegroundWindowIdentity> {
         self.foreground
     }

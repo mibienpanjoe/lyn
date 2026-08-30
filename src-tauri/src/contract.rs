@@ -132,6 +132,7 @@ pub enum ContextSourceKind {
     IntegratedTerminal,
     ExternalTerminal,
     Shell,
+    ForegroundWindow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -246,6 +247,21 @@ pub struct ContextSourceOption {
     pub context: ContextRef,
     pub branch_name: Option<String>,
     pub is_foreground: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ListCaptureContextSourcesInput {
+    pub session_id: CaptureSessionId,
+    pub query: Option<String>,
+    pub limit: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ListCaptureContextSourcesResult {
+    pub live_sources: Vec<ContextSourceOption>,
+    pub saved_contexts: Vec<ContextRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -432,6 +448,8 @@ pub fn typescript_bindings() -> String {
         ContextCandidate::decl(&config),
         ContextSelection::decl(&config),
         ContextSourceOption::decl(&config),
+        ListCaptureContextSourcesInput::decl(&config),
+        ListCaptureContextSourcesResult::decl(&config),
         ContextResolution::decl(&config),
         StagedMedia::decl(&config),
         RecordingState::decl(&config),
@@ -593,6 +611,15 @@ mod tests {
         let list_contexts_result = ListContextsResult {
             contexts: vec![context.clone()],
         };
+        let list_capture_sources_input = ListCaptureContextSourcesInput {
+            session_id: session.session_id,
+            query: Some("Lyn".to_owned()),
+            limit: 25,
+        };
+        let list_capture_sources_result = ListCaptureContextSourcesResult {
+            live_sources: vec![source.clone()],
+            saved_contexts: vec![context.clone()],
+        };
         let create_context_input = CreateContextInput::Project {
             name: "Lyn".to_owned(),
             selected_directory_token: directory_selection.selected_directory_token,
@@ -632,6 +659,8 @@ mod tests {
         round_trip(&picker_result);
         round_trip(&list_contexts_input);
         round_trip(&list_contexts_result);
+        round_trip(&list_capture_sources_input);
+        round_trip(&list_capture_sources_result);
         round_trip(&create_context_input);
         round_trip(&create_context_result);
         round_trip(&CommandResult::<CaptureSession>::failure(error));
@@ -676,6 +705,17 @@ mod tests {
             "offset": 0
         });
         assert!(serde_json::from_value::<ListContextsInput>(unknown_list_field).is_err());
+
+        let unknown_source_list_field = json!({
+            "sessionId": CaptureSessionId::new(),
+            "query": null,
+            "limit": 100,
+            "providerToken": "private"
+        });
+        assert!(
+            serde_json::from_value::<ListCaptureContextSourcesInput>(unknown_source_list_field)
+                .is_err()
+        );
     }
 
     #[test]

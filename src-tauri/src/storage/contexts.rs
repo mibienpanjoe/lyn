@@ -35,7 +35,39 @@ impl<'connection> ContextRepository<'connection> {
         project_key: Option<&str>,
         project_path: &str,
     ) -> Result<ContextRef, StorageError> {
-        let existing = if let Some(project_key) = project_key {
+        self.ensure_project(ContextId::new(), name, project_key, project_path)
+    }
+
+    pub(crate) fn ensure_project(
+        &self,
+        preferred_id: ContextId,
+        name: &str,
+        project_key: Option<&str>,
+        project_path: &str,
+    ) -> Result<ContextRef, StorageError> {
+        let existing = self.find_project(project_key, project_path)?;
+        if let Some(context) = existing {
+            return Ok(context);
+        }
+
+        let context = ContextRef {
+            id: preferred_id,
+            kind: ContextKind::Project,
+            name: name.to_owned(),
+        };
+        self.connection.execute(
+            "INSERT INTO contexts (id, kind, name, project_key, project_path, created_at, updated_at)\n             VALUES (?1, 'project', ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            params![context.id.to_string(), context.name, project_key, project_path],
+        )?;
+        Ok(context)
+    }
+
+    pub(crate) fn find_project(
+        &self,
+        project_key: Option<&str>,
+        project_path: &str,
+    ) -> Result<Option<ContextRef>, StorageError> {
+        Ok(if let Some(project_key) = project_key {
             self.connection
                 .query_row(
                     "SELECT id, kind, name FROM contexts WHERE project_key = ?1",
@@ -51,21 +83,7 @@ impl<'connection> ContextRepository<'connection> {
                     decode_context,
                 )
                 .optional()?
-        };
-        if let Some(context) = existing {
-            return Ok(context);
-        }
-
-        let context = ContextRef {
-            id: ContextId::new(),
-            kind: ContextKind::Project,
-            name: name.to_owned(),
-        };
-        self.connection.execute(
-            "INSERT INTO contexts (id, kind, name, project_key, project_path, created_at, updated_at)\n             VALUES (?1, 'project', ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-            params![context.id.to_string(), context.name, project_key, project_path],
-        )?;
-        Ok(context)
+        })
     }
 
     pub(crate) fn get(&self, id: ContextId) -> Result<Option<ContextRef>, StorageError> {

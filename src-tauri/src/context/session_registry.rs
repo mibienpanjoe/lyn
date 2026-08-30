@@ -13,7 +13,7 @@ use std::{
 
 use crate::{
     context::{ProjectDirectoryIdentity, inspect_project_directory},
-    contract::{ContextProviderKind, ContextSourceId},
+    contract::{ContextId, ContextKind, ContextProviderKind, ContextRef, ContextSourceId},
     platform::WindowCorrelationToken,
 };
 
@@ -33,6 +33,7 @@ pub(crate) struct LiveContextSource {
     process: Option<CorrelationToken>,
     session: Option<CorrelationToken>,
     identity: ProjectDirectoryIdentity,
+    context: ContextRef,
     application_name: &'static str,
     label: String,
     observed_at: Instant,
@@ -60,6 +61,9 @@ impl LiveContextSource {
     }
     pub(crate) fn identity(&self) -> &ProjectDirectoryIdentity {
         &self.identity
+    }
+    pub(crate) fn context(&self) -> &ContextRef {
+        &self.context
     }
     pub(crate) fn application_name(&self) -> &'static str {
         self.application_name
@@ -118,18 +122,32 @@ impl ContextSourceRegistry {
         }
         let identity = inspect_project_directory(&canonical_directory).ok()?;
         let application_name = application_name(observation.source_kind());
-        let label = safe_label(&canonical_directory, identity.branch_name.as_deref());
+        let context_name = safe_directory_name(&canonical_directory);
+        let label = safe_label(&context_name, identity.branch_name.as_deref());
 
-        if let Some(source) = self
+        if let Some(source_id) = self
             .sources
-            .values_mut()
+            .values()
             .find(|source| same_correlation(source, &observation))
+            .map(|source| source.source_id)
         {
-            source.identity = identity;
-            source.label = label;
-            source.observed_at = observation.observed_at();
-            source.expires_at = observation.observed_at() + LIVE_SOURCE_TTL;
-            return Some(source.source_id);
+            let same_project = self.sources.get(&source_id).is_some_and(|source| {
+                source.identity.project_key == identity.project_key
+                    && source.identity.project_path == identity.project_path
+            });
+            if same_project {
+                let source = self
+                    .sources
+                    .get_mut(&source_id)
+                    .expect("source id was found");
+                source.identity = identity;
+                source.context.name = context_name;
+                source.label = label;
+                source.observed_at = observation.observed_at();
+                source.expires_at = observation.observed_at() + LIVE_SOURCE_TTL;
+                return Some(source.source_id);
+            }
+            self.sources.remove(&source_id);
         }
 
         let source_id = ContextSourceId::new();
@@ -143,6 +161,11 @@ impl ContextSourceRegistry {
                 process: observation.process(),
                 session: observation.session(),
                 identity,
+                context: ContextRef {
+                    id: ContextId::new(),
+                    kind: ContextKind::Project,
+                    name: context_name,
+                },
                 application_name,
                 label,
                 observed_at: observation.observed_at(),
@@ -224,16 +247,12 @@ fn application_name(source_kind: ProviderSourceKind) -> &'static str {
     }
 }
 
-fn safe_label(directory: &Path, branch_name: Option<&str>) -> String {
+fn safe_directory_name(directory: &Path) -> String {
     let directory_name = directory
         .file_name()
         .map(|name| name.to_string_lossy())
         .unwrap_or_default();
-    let candidate = match branch_name {
-        Some(branch) => format!("{directory_name} · {branch}"),
-        None => directory_name.into_owned(),
-    };
-    let safe: String = candidate
+    let safe: String = directory_name
         .trim()
         .chars()
         .filter(|character| !character.is_control())
@@ -244,6 +263,18 @@ fn safe_label(directory: &Path, branch_name: Option<&str>) -> String {
     } else {
         safe
     }
+}
+
+fn safe_label(context_name: &str, branch_name: Option<&str>) -> String {
+    let candidate = match branch_name {
+        Some(branch) => format!("{context_name} · {branch}"),
+        None => context_name.to_owned(),
+    };
+    candidate
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(MAX_SAFE_LABEL_CHARS)
+        .collect()
 }
 
 #[cfg(test)]
@@ -456,5 +487,45 @@ mod tests {
                 .contains(&parent.path().display().to_string())
         );
         assert!(source.label().chars().count() <= 100);
+    }
+
+    #[test]
+    fn changed_project_identity_replaces_the_source_id() {
+        let first_directory = tempdir().unwrap();
+        let second_directory = tempdir().unwrap();
+        let now = Instant::now();
+        let window = WindowCorrelationToken::from_native(14);
+        let process = CorrelationToken::new();
+        let session = CorrelationToken::new();
+        let make_observation = |directory: PathBuf, observed_at| {
+            ProviderObservation::new(
+                ContextProviderKind::Vscode,
+                ProviderSourceKind::VscodeIntegratedTerminal,
+                Some(window),
+                Some(process),
+                Some(session),
+                directory,
+                observed_at,
+                ObservationLiveness::Live,
+            )
+        };
+        let mut registry = ContextSourceRegistry::default();
+
+        let first = registry
+            .register(
+                make_observation(first_directory.path().to_path_buf(), now),
+                now,
+            )
+            .unwrap();
+        let second = registry
+            .register(
+                make_observation(second_directory.path().to_path_buf(), now),
+                now,
+            )
+            .unwrap();
+
+        assert_ne!(first, second);
+        assert!(registry.get(first, now).is_none());
+        assert!(registry.get(second, now).is_some());
     }
 }

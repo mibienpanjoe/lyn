@@ -53,6 +53,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::capture::get_active_capture_session,
             commands::capture::cancel_capture_session,
+            commands::capture::list_capture_context_sources,
             commands::capture::select_capture_context_source,
             commands::capture::save_text_capture,
             commands::context::pick_project_directory,
@@ -82,7 +83,11 @@ fn invoke_capture_popup(app: &tauri::AppHandle) {
         return;
     }
     if let Some(session) = session {
-        let _ = app.emit("capture://session-ready", session);
+        let _ = app.emit("capture://session-ready", &session);
+        let _ = app.emit(
+            "context://sources-changed",
+            serde_json::json!({ "sessionId": session.session_id }),
+        );
     }
 }
 

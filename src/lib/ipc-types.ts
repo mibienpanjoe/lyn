@@ -36,7 +36,7 @@ export type CaptionSource = "user" | "context_generated" | "transcript_generated
 
 export type ContextProviderKind = "manual" | "vscode" | "shell" | "foreground_window";
 
-export type ContextSourceKind = "vscode_window" | "integrated_terminal" | "external_terminal" | "shell";
+export type ContextSourceKind = "vscode_window" | "integrated_terminal" | "external_terminal" | "shell" | "foreground_window";
 
 export type MediaKind = "image" | "audio";
 
@@ -63,6 +63,10 @@ export type ContextCandidate = { context: ContextRef, branchName: string | null,
 export type ContextSelection = { "kind": "live_source", sourceId: ContextSourceId, } | { "kind": "saved_context", contextId: ContextId, };
 
 export type ContextSourceOption = { sourceId: ContextSourceId, kind: ContextSourceKind, provider: ContextProviderKind, applicationName: string, label: string, context: ContextRef, branchName: string | null, isForeground: boolean, };
+
+export type ListCaptureContextSourcesInput = { sessionId: CaptureSessionId, query: string | null, limit: number, };
+
+export type ListCaptureContextSourcesResult = { liveSources: Array<ContextSourceOption>, savedContexts: Array<ContextRef>, };
 
 export type ContextResolution = { "state": "resolved", candidate: ContextCandidate, selection: ContextSelection | null, } | { "state": "ambiguous", candidate: null, selection: null, } | { "state": "required", candidate: null, selection: null, };
 

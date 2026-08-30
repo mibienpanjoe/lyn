@@ -98,7 +98,8 @@ type ContextSourceKind =
   | "vscode_window"
   | "integrated_terminal"
   | "external_terminal"
-  | "shell";
+  | "shell"
+  | "foreground_window";
 
 interface ContextRef {
   id: string;
@@ -263,7 +264,7 @@ interface SelectCaptureContextSourceInput {
 
 Live sources are revalidated before selection. A saved context has `branchName: null` unless Context Resolver can safely refresh it from a currently associated live source.
 
-The current implementation accepts `saved_context` selections. `live_source` selection and save-time source revalidation remain part of the live-provider slice and currently return `CONTEXT_SOURCE_NOT_FOUND` without changing the session.
+Live sources are revalidated at selection and save time. A stale source returns `CONTEXT_SOURCE_STALE` without changing the session or its draft state.
 
 **Success:** `CommandResult<CaptureSession>`
 

@@ -1,20 +1,142 @@
-use std::{collections::BTreeMap, sync::Mutex};
+use std::{collections::BTreeMap, sync::Mutex, time::Instant};
 
 use tauri::State;
 
 use crate::{
     capture::session::{CaptureSessionService, SaveOnceError, SaveOnceResult, SessionStateError},
     commands::is_empty_input,
+    context::{provider::ProviderSourceKind, session_registry::ContextSourceRegistry},
     contract::{
         CancelCaptureSessionInput, CancelCaptureSessionResult, CaptureSession, ContextCandidate,
-        ContextProviderKind, ContextResolution, ContextSelection, SaveCaptureResult,
-        SaveTextCaptureInput, SelectCaptureContextSourceInput,
+        ContextProviderKind, ContextResolution, ContextSelection, ContextSourceKind,
+        ContextSourceOption, ListCaptureContextSourcesInput, ListCaptureContextSourcesResult,
+        SaveCaptureResult, SaveTextCaptureInput, SelectCaptureContextSourceInput,
     },
     error::{AppError, CommandResult, ErrorCode, ErrorDetailKey, ErrorDetailValue, ErrorDetails},
+    platform::InvocationContext,
     storage::{Database, captures::CaptureRepository, contexts::ContextRepository},
 };
 
 pub(crate) const MAX_TEXT_BODY_BYTES: usize = 1024 * 1024;
+const MAX_CONTEXT_SOURCE_QUERY_CHARS: usize = 100;
+
+#[tauri::command]
+pub(crate) fn list_capture_context_sources(
+    input: serde_json::Value,
+    database: State<'_, Mutex<Database>>,
+    service: State<'_, Mutex<CaptureSessionService>>,
+    registry: State<'_, Mutex<ContextSourceRegistry>>,
+    invocation: State<'_, Mutex<InvocationContext>>,
+) -> CommandResult<ListCaptureContextSourcesResult> {
+    let foreground = invocation
+        .lock()
+        .ok()
+        .and_then(|invocation| invocation.foreground())
+        .map(|identity| identity.window);
+    list_capture_context_sources_value(
+        input,
+        database.inner(),
+        service.inner(),
+        registry.inner(),
+        foreground,
+    )
+}
+
+fn list_capture_context_sources_value(
+    input: serde_json::Value,
+    database: &Mutex<Database>,
+    service: &Mutex<CaptureSessionService>,
+    registry: &Mutex<ContextSourceRegistry>,
+    foreground: Option<crate::platform::WindowCorrelationToken>,
+) -> CommandResult<ListCaptureContextSourcesResult> {
+    let Ok(input) = serde_json::from_value::<ListCaptureContextSourcesInput>(input) else {
+        return CommandResult::failure(validation_error());
+    };
+    if input.limit == 0
+        || input.limit > 100
+        || input.query.as_ref().is_some_and(|query| {
+            query.chars().count() > MAX_CONTEXT_SOURCE_QUERY_CHARS
+                || query.chars().any(char::is_control)
+        })
+    {
+        return CommandResult::failure(validation_error());
+    }
+    if service
+        .lock()
+        .ok()
+        .and_then(|service| service.active_session())
+        .map(|session| session.session_id)
+        != Some(input.session_id)
+    {
+        return CommandResult::failure(stale_session_error());
+    }
+
+    let query = input.query.as_deref().map(str::to_lowercase);
+    let source_rows = {
+        let Ok(mut registry) = registry.lock() else {
+            return CommandResult::failure(internal_error());
+        };
+        registry
+            .live_sources(Instant::now())
+            .into_iter()
+            .filter(|source| {
+                query.as_ref().is_none_or(|query| {
+                    source.label().to_lowercase().contains(query)
+                        || source.application_name().to_lowercase().contains(query)
+                })
+            })
+            .take(usize::from(input.limit))
+            .map(|source| {
+                let identity = source.identity();
+                (
+                    ContextSourceOption {
+                        source_id: source.source_id(),
+                        kind: public_source_kind(source.source_kind()),
+                        provider: source.provider(),
+                        application_name: source.application_name().to_owned(),
+                        label: source.label().to_owned(),
+                        context: source.context().clone(),
+                        branch_name: identity.branch_name.clone(),
+                        is_foreground: source.window() == foreground,
+                    },
+                    identity.project_key.clone(),
+                    identity.project_path.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let Ok(database) = database.lock() else {
+        return CommandResult::failure(storage_unavailable_error());
+    };
+    let repository = ContextRepository::new(database.connection());
+    let saved_contexts = match repository.list(None, input.query.as_deref(), input.limit) {
+        Ok(contexts) => contexts,
+        Err(_) => return CommandResult::failure(storage_unavailable_error()),
+    };
+    let mut live_sources = Vec::with_capacity(source_rows.len());
+    for (mut option, project_key, project_path) in source_rows {
+        match repository.find_project(project_key.as_deref(), &project_path) {
+            Ok(Some(context)) => option.context = context,
+            Ok(None) => {}
+            Err(_) => return CommandResult::failure(storage_unavailable_error()),
+        }
+        live_sources.push(option);
+    }
+    CommandResult::success(ListCaptureContextSourcesResult {
+        live_sources,
+        saved_contexts,
+    })
+}
+
+fn public_source_kind(kind: ProviderSourceKind) -> ContextSourceKind {
+    match kind {
+        ProviderSourceKind::VscodeWindow => ContextSourceKind::VscodeWindow,
+        ProviderSourceKind::VscodeIntegratedTerminal => ContextSourceKind::IntegratedTerminal,
+        ProviderSourceKind::ExternalTerminal => ContextSourceKind::ExternalTerminal,
+        ProviderSourceKind::ShellSession => ContextSourceKind::Shell,
+        ProviderSourceKind::ForegroundWindow => ContextSourceKind::ForegroundWindow,
+    }
+}
 
 #[tauri::command]
 pub(crate) fn get_active_capture_session(
@@ -72,14 +194,21 @@ pub(crate) fn select_capture_context_source(
     input: serde_json::Value,
     database: State<'_, Mutex<Database>>,
     service: State<'_, Mutex<CaptureSessionService>>,
+    registry: State<'_, Mutex<ContextSourceRegistry>>,
 ) -> CommandResult<CaptureSession> {
-    select_capture_context_source_value(input, database.inner(), service.inner())
+    select_capture_context_source_with_registry_value(
+        input,
+        database.inner(),
+        service.inner(),
+        registry.inner(),
+    )
 }
 
-fn select_capture_context_source_value(
+fn select_capture_context_source_with_registry_value(
     input: serde_json::Value,
     database: &Mutex<Database>,
     service: &Mutex<CaptureSessionService>,
+    registry: &Mutex<ContextSourceRegistry>,
 ) -> CommandResult<CaptureSession> {
     let Ok(input) = serde_json::from_value::<SelectCaptureContextSourceInput>(input) else {
         return CommandResult::failure(validation_error());
@@ -113,8 +242,45 @@ fn select_capture_context_source_value(
                 selection: Some(ContextSelection::SavedContext { context_id }),
             }
         }
-        ContextSelection::LiveSource { .. } => {
-            return CommandResult::failure(context_source_not_found_error());
+        ContextSelection::LiveSource { source_id } => {
+            let source = {
+                let Ok(mut registry) = registry.lock() else {
+                    return CommandResult::failure(internal_error());
+                };
+                let Some(source) = registry.get(source_id, Instant::now()) else {
+                    return CommandResult::failure(context_source_not_found_error());
+                };
+                (
+                    source.context().clone(),
+                    source.identity().project_key.clone(),
+                    source.identity().project_path.clone(),
+                    source.identity().branch_name.clone(),
+                    source.provider(),
+                )
+            };
+            let context = {
+                let Ok(database) = database.lock() else {
+                    return CommandResult::failure(internal_error());
+                };
+                match ContextRepository::new(database.connection()).ensure_project(
+                    source.0.id,
+                    &source.0.name,
+                    source.1.as_deref(),
+                    &source.2,
+                ) {
+                    Ok(context) => context,
+                    Err(_) => return CommandResult::failure(storage_unavailable_error()),
+                }
+            };
+            ContextResolution::Resolved {
+                candidate: ContextCandidate {
+                    context,
+                    branch_name: source.3,
+                    provider: source.4,
+                    requires_confirmation: false,
+                },
+                selection: Some(ContextSelection::LiveSource { source_id }),
+            }
         }
     };
 
@@ -124,19 +290,40 @@ fn select_capture_context_source_value(
     }
 }
 
+#[cfg(test)]
+fn select_capture_context_source_value(
+    input: serde_json::Value,
+    database: &Mutex<Database>,
+    service: &Mutex<CaptureSessionService>,
+) -> CommandResult<CaptureSession> {
+    select_capture_context_source_with_registry_value(
+        input,
+        database,
+        service,
+        &Mutex::new(ContextSourceRegistry::default()),
+    )
+}
+
 #[tauri::command]
 pub(crate) fn save_text_capture(
     input: serde_json::Value,
     database: State<'_, Mutex<Database>>,
     service: State<'_, Mutex<CaptureSessionService>>,
+    registry: State<'_, Mutex<ContextSourceRegistry>>,
 ) -> CommandResult<SaveCaptureResult> {
-    save_text_capture_value(input, database.inner(), service.inner())
+    save_text_capture_with_registry_value(
+        input,
+        database.inner(),
+        service.inner(),
+        registry.inner(),
+    )
 }
 
-fn save_text_capture_value(
+fn save_text_capture_with_registry_value(
     input: serde_json::Value,
     database: &Mutex<Database>,
     service: &Mutex<CaptureSessionService>,
+    registry: &Mutex<ContextSourceRegistry>,
 ) -> CommandResult<SaveCaptureResult> {
     let Ok(input) = serde_json::from_value::<SaveTextCaptureInput>(input) else {
         return CommandResult::failure(validation_error());
@@ -151,6 +338,67 @@ fn save_text_capture_value(
     let Ok(mut service) = service.lock() else {
         return CommandResult::failure(internal_error());
     };
+    if service
+        .active_session()
+        .is_none_or(|session| session.session_id != input.session_id)
+    {
+        return CommandResult::failure(stale_session_error());
+    }
+    if let Some(session) = service.active_session()
+        && let ContextResolution::Resolved {
+            selection: Some(ContextSelection::LiveSource { source_id }),
+            ..
+        } = session.context_resolution
+    {
+        let refreshed = {
+            let Ok(mut registry) = registry.lock() else {
+                return CommandResult::failure(internal_error());
+            };
+            registry.get(source_id, Instant::now()).map(|source| {
+                (
+                    source.context().clone(),
+                    source.identity().project_key.clone(),
+                    source.identity().project_path.clone(),
+                    source.identity().branch_name.clone(),
+                    source.provider(),
+                )
+            })
+        };
+        let Some(refreshed) = refreshed else {
+            return CommandResult::failure(context_source_stale_error());
+        };
+        let context = {
+            let Ok(database) = database.lock() else {
+                return CommandResult::failure(internal_error());
+            };
+            match ContextRepository::new(database.connection()).ensure_project(
+                refreshed.0.id,
+                &refreshed.0.name,
+                refreshed.1.as_deref(),
+                &refreshed.2,
+            ) {
+                Ok(context) => context,
+                Err(_) => return CommandResult::failure(storage_unavailable_error()),
+            }
+        };
+        if service
+            .set_context_resolution(
+                input.session_id,
+                ContextResolution::Resolved {
+                    candidate: ContextCandidate {
+                        context,
+                        branch_name: refreshed.3,
+                        provider: refreshed.4,
+                        requires_confirmation: false,
+                    },
+                    selection: Some(ContextSelection::LiveSource { source_id }),
+                },
+            )
+            .is_err()
+        {
+            return CommandResult::failure(stale_session_error());
+        }
+    }
     match service.save_once(input.session_id, |session| {
         let (context_id, branch_name) = match &session.context_resolution {
             ContextResolution::Resolved { candidate, .. } => {
@@ -174,6 +422,20 @@ fn save_text_capture_value(
         }
         Err(SaveOnceError::Persistence(error)) => CommandResult::failure(error),
     }
+}
+
+#[cfg(test)]
+fn save_text_capture_value(
+    input: serde_json::Value,
+    database: &Mutex<Database>,
+    service: &Mutex<CaptureSessionService>,
+) -> CommandResult<SaveCaptureResult> {
+    save_text_capture_with_registry_value(
+        input,
+        database,
+        service,
+        &Mutex::new(ContextSourceRegistry::default()),
+    )
 }
 
 fn validation_error() -> AppError {
@@ -254,6 +516,15 @@ fn context_source_not_found_error() -> AppError {
     }
 }
 
+fn context_source_stale_error() -> AppError {
+    AppError {
+        code: ErrorCode::ContextSourceStale,
+        message: "The selected context source is stale".to_owned(),
+        retryable: true,
+        details: ErrorDetails::default(),
+    }
+}
+
 fn storage_write_error() -> AppError {
     AppError {
         code: ErrorCode::StorageWriteFailed,
@@ -295,24 +566,35 @@ fn internal_error() -> AppError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        sync::{Arc, Mutex},
+        time::Instant,
+    };
 
     use serde_json::json;
 
     use crate::{
         capture::session::CaptureSessionService,
+        context::{
+            provider::{
+                CorrelationToken, ObservationLiveness, ProviderObservation, ProviderSourceKind,
+            },
+            session_registry::ContextSourceRegistry,
+        },
         contract::{
-            CancelCaptureSessionInput, CaptureSessionId, ContextSelection, SaveTextCaptureInput,
-            SelectCaptureContextSourceInput,
+            CancelCaptureSessionInput, CaptureSessionId, ContextProviderKind, ContextSelection,
+            ListCaptureContextSourcesInput, SaveTextCaptureInput, SelectCaptureContextSourceInput,
         },
         error::{CommandResult, ErrorCode},
+        platform::WindowCorrelationToken,
         storage::{Database, contexts::ContextRepository},
     };
 
     use super::{
         cancel_capture_session_value, get_active_capture_session_impl,
-        get_active_capture_session_value, save_text_capture_value,
-        select_capture_context_source_value,
+        get_active_capture_session_value, list_capture_context_sources_value,
+        save_text_capture_value, save_text_capture_with_registry_value,
+        select_capture_context_source_value, select_capture_context_source_with_registry_value,
     };
 
     #[test]
@@ -716,5 +998,102 @@ mod tests {
             ]
         );
         assert_eq!(service.lock().unwrap().active_session(), Some(session));
+    }
+
+    #[test]
+    fn live_source_list_selection_and_stale_save_preserve_the_session() {
+        let directory = tempfile::tempdir().unwrap();
+        let now = Instant::now();
+        let window = WindowCorrelationToken::from_native(77);
+        let process = CorrelationToken::new();
+        let session_token = CorrelationToken::new();
+        let live = ProviderObservation::new(
+            ContextProviderKind::Vscode,
+            ProviderSourceKind::VscodeIntegratedTerminal,
+            Some(window),
+            Some(process),
+            Some(session_token),
+            directory.path().to_path_buf(),
+            now,
+            ObservationLiveness::Live,
+        );
+        let database = Mutex::new(Database::open_in_memory().unwrap());
+        let service = Mutex::new(CaptureSessionService::default());
+        let registry = Mutex::new(ContextSourceRegistry::default());
+        let source_id = registry.lock().unwrap().register(live, now).unwrap();
+        let active = service.lock().unwrap().get_or_prepare();
+
+        let listed = list_capture_context_sources_value(
+            serde_json::to_value(ListCaptureContextSourcesInput {
+                session_id: active.session_id,
+                query: None,
+                limit: 10,
+            })
+            .unwrap(),
+            &database,
+            &service,
+            &registry,
+            Some(window),
+        );
+        let CommandResult::Success { data: listed, .. } = listed else {
+            panic!("list failed")
+        };
+        assert_eq!(listed.live_sources.len(), 1);
+        assert!(listed.live_sources[0].is_foreground);
+        assert!(
+            !serde_json::to_string(&listed)
+                .unwrap()
+                .contains(&directory.path().display().to_string())
+        );
+
+        let selected = select_capture_context_source_with_registry_value(
+            serde_json::to_value(SelectCaptureContextSourceInput {
+                session_id: active.session_id,
+                selection: ContextSelection::LiveSource { source_id },
+            })
+            .unwrap(),
+            &database,
+            &service,
+            &registry,
+        );
+        assert!(matches!(selected, CommandResult::Success { .. }));
+
+        registry.lock().unwrap().register(
+            ProviderObservation::new(
+                ContextProviderKind::Vscode,
+                ProviderSourceKind::VscodeIntegratedTerminal,
+                Some(window),
+                Some(process),
+                Some(session_token),
+                directory.path().to_path_buf(),
+                Instant::now(),
+                ObservationLiveness::Ended,
+            ),
+            Instant::now(),
+        );
+        let before = service.lock().unwrap().active_session().unwrap();
+        let stale = save_text_capture_with_registry_value(
+            serde_json::to_value(SaveTextCaptureInput {
+                session_id: active.session_id,
+                text_body: "draft remains".to_owned(),
+            })
+            .unwrap(),
+            &database,
+            &service,
+            &registry,
+        );
+
+        let CommandResult::Failure { error, .. } = stale else {
+            panic!("stale source saved")
+        };
+        assert_eq!(error.code, ErrorCode::ContextSourceStale);
+        assert_eq!(service.lock().unwrap().active_session(), Some(before));
+        let capture_count: i64 = database
+            .lock()
+            .unwrap()
+            .connection()
+            .query_row("SELECT count(*) FROM captures", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(capture_count, 0);
     }
 }
