@@ -88,6 +88,10 @@ impl DirectorySelectionRegistry {
 pub(crate) struct ProjectDirectoryIdentity {
     pub(crate) project_key: Option<String>,
     pub(crate) project_path: String,
+    #[allow(dead_code, reason = "consumed by the live-source registry in T14")]
+    pub(crate) worktree_path: Option<String>,
+    #[allow(dead_code, reason = "consumed by the live-source registry in T14")]
+    pub(crate) branch_name: Option<String>,
 }
 
 pub(crate) fn inspect_project_directory(
@@ -97,9 +101,35 @@ pub(crate) fn inspect_project_directory(
         .to_str()
         .ok_or(SelectionTokenError::DirectoryUnavailable)?
         .to_owned();
-    let git_common_directory = Command::new("git")
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .current_dir(selected_path)
+    let git_common_directory = git_output(
+        selected_path,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .and_then(|output| fs::canonicalize(output).ok())
+    .and_then(|path| path.to_str().map(str::to_owned));
+    let worktree_path = git_output(
+        selected_path,
+        &["rev-parse", "--path-format=absolute", "--show-toplevel"],
+    )
+    .and_then(|output| fs::canonicalize(output).ok())
+    .and_then(|path| path.to_str().map(str::to_owned));
+    let branch_name = git_output(
+        selected_path,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+    );
+
+    Ok(ProjectDirectoryIdentity {
+        project_key: git_common_directory,
+        project_path,
+        worktree_path,
+        branch_name,
+    })
+}
+
+fn git_output(directory: &Path, arguments: &[&str]) -> Option<String> {
+    Command::new("git")
+        .args(arguments)
+        .current_dir(directory)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_COMMON_DIR")
@@ -111,13 +141,6 @@ pub(crate) fn inspect_project_directory(
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|output| output.trim().to_owned())
         .filter(|output| !output.is_empty())
-        .and_then(|output| fs::canonicalize(output).ok())
-        .and_then(|path| path.to_str().map(str::to_owned));
-
-    Ok(ProjectDirectoryIdentity {
-        project_key: git_common_directory,
-        project_path,
-    })
 }
 
 fn safe_suggested_name(path: &Path) -> String {
@@ -214,6 +237,8 @@ mod tests {
 
         assert_eq!(identity.project_key, None);
         assert_eq!(identity.project_path, directory.path().to_str().unwrap());
+        assert_eq!(identity.worktree_path, None);
+        assert_eq!(identity.branch_name, None);
     }
 
     #[test]
@@ -245,5 +270,98 @@ mod tests {
             )
         );
         assert_eq!(nested_identity.project_path, nested.to_str().unwrap());
+        assert_eq!(
+            nested_identity.worktree_path.as_deref(),
+            directory.path().canonicalize().unwrap().to_str()
+        );
+    }
+
+    #[test]
+    fn linked_worktrees_share_a_project_key_and_keep_distinct_named_branches() {
+        let directory = tempdir().unwrap();
+        let linked = directory.path().join("linked");
+        let repository = directory.path().join("repository");
+        fs::create_dir(&repository).unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init", "--quiet", "--initial-branch=main"])
+                .current_dir(&repository)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["commit", "--quiet", "--allow-empty", "-m", "initial"])
+                .env("GIT_AUTHOR_NAME", "Lyn Test")
+                .env("GIT_AUTHOR_EMAIL", "lyn@example.invalid")
+                .env("GIT_COMMITTER_NAME", "Lyn Test")
+                .env("GIT_COMMITTER_EMAIL", "lyn@example.invalid")
+                .current_dir(&repository)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args([
+                    "worktree",
+                    "add",
+                    "--quiet",
+                    "-b",
+                    "feature",
+                    linked.to_str().unwrap()
+                ])
+                .current_dir(&repository)
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let main = inspect_project_directory(&repository).unwrap();
+        let feature = inspect_project_directory(&linked).unwrap();
+
+        assert_eq!(main.project_key, feature.project_key);
+        assert_eq!(main.branch_name.as_deref(), Some("main"));
+        assert_eq!(feature.branch_name.as_deref(), Some("feature"));
+        assert_ne!(main.worktree_path, feature.worktree_path);
+    }
+
+    #[test]
+    fn detached_head_has_no_fabricated_branch_name() {
+        let directory = tempdir().unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init", "--quiet"])
+                .current_dir(directory.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["commit", "--quiet", "--allow-empty", "-m", "initial"])
+                .env("GIT_AUTHOR_NAME", "Lyn Test")
+                .env("GIT_AUTHOR_EMAIL", "lyn@example.invalid")
+                .env("GIT_COMMITTER_NAME", "Lyn Test")
+                .env("GIT_COMMITTER_EMAIL", "lyn@example.invalid")
+                .current_dir(directory.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["checkout", "--quiet", "--detach", "HEAD"])
+                .current_dir(directory.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let identity = inspect_project_directory(directory.path()).unwrap();
+
+        assert!(identity.project_key.is_some());
+        assert_eq!(identity.branch_name, None);
     }
 }
