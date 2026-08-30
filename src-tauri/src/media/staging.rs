@@ -208,6 +208,14 @@ impl MediaStore {
         })
     }
 
+    pub(crate) fn remove_final(&self, relative_path: &str) -> Result<(), StagingError> {
+        let path = self.final_path(relative_path)?;
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn cleanup_session(
         &mut self,
         session_id: CaptureSessionId,

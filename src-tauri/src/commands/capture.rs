@@ -10,8 +10,8 @@ use crate::{
         CancelCaptureSessionInput, CancelCaptureSessionResult, CaptureSession, ContextCandidate,
         ContextProviderKind, ContextResolution, ContextSelection, ContextSourceKind,
         ContextSourceOption, ListCaptureContextSourcesInput, ListCaptureContextSourcesResult,
-        SaveCaptureResult, SaveTextCaptureInput, SelectCaptureContextSourceInput,
-        StageClipboardImageInput, StagedMedia,
+        SaveCaptureResult, SaveImageCaptureInput, SaveTextCaptureInput,
+        SelectCaptureContextSourceInput, StageClipboardImageInput, StagedMedia,
     },
     error::{AppError, CommandResult, ErrorCode, ErrorDetailKey, ErrorDetailValue, ErrorDetails},
     media::{images, staging::MediaStore},
@@ -60,6 +60,81 @@ pub(crate) fn stage_clipboard_image(
         media_store.inner(),
         clipboard.inner(),
     )
+}
+
+#[tauri::command]
+pub(crate) fn save_image_capture(
+    input: serde_json::Value,
+    database: State<'_, Mutex<Database>>,
+    service: State<'_, Mutex<CaptureSessionService>>,
+    media_store: State<'_, Mutex<MediaStore>>,
+) -> CommandResult<SaveCaptureResult> {
+    let Ok(input) = serde_json::from_value::<SaveImageCaptureInput>(input) else {
+        return CommandResult::failure(validation_error());
+    };
+    let caption = input.caption.filter(|caption| !caption.trim().is_empty());
+    let Ok(mut service) = service.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    match service.save_once(input.session_id, |session| {
+        let crate::contract::ContextResolution::Resolved { candidate, .. } =
+            &session.context_resolution
+        else {
+            return Err(context_required_error());
+        };
+        if session
+            .staged_media
+            .as_ref()
+            .map(|media| media.staged_media_id)
+            != Some(input.staged_media_id)
+        {
+            return Err(media_stage_error());
+        }
+        let capture_id = crate::contract::CaptureId::new();
+        let mut media = media_store.lock().map_err(|_| internal_error())?;
+        let finalized = media
+            .finalize(
+                input.staged_media_id,
+                capture_id,
+                crate::contract::MediaKind::Image,
+            )
+            .map_err(|_| media_stage_error())?;
+        let dimensions = session
+            .staged_media
+            .as_ref()
+            .and_then(|media| media.width_px.zip(media.height_px))
+            .ok_or_else(media_stage_error)?;
+        let saved = database
+            .lock()
+            .map_err(|_| internal_error())
+            .and_then(|mut database| {
+                CaptureRepository::new(database.connection_mut())
+                    .save_image(
+                        input.session_id,
+                        candidate.context.id,
+                        candidate.branch_name.as_deref(),
+                        capture_id,
+                        finalized.media_id,
+                        &finalized.relative_path,
+                        finalized.byte_size,
+                        &finalized.checksum,
+                        caption.as_deref(),
+                        dimensions.0,
+                        dimensions.1,
+                    )
+                    .map_err(|_| storage_write_error())
+            });
+        if saved.is_err() {
+            let _ = media.remove_final(&finalized.relative_path);
+        }
+        saved.map(|saved| (capture_id, saved))
+    }) {
+        Ok(SaveOnceResult::Saved { value, .. }) => CommandResult::success(value),
+        Ok(SaveOnceResult::AlreadySaved(_)) | Err(SaveOnceError::Session(_)) => {
+            CommandResult::failure(stale_session_error())
+        }
+        Err(SaveOnceError::Persistence(error)) => CommandResult::failure(error),
+    }
 }
 
 fn stage_clipboard_image_value<Clipboard>(

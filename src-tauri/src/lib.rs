@@ -66,6 +66,7 @@ pub fn run() {
             commands::capture::select_capture_context_source,
             commands::capture::save_text_capture,
             commands::capture::stage_clipboard_image,
+            commands::capture::save_image_capture,
             commands::context::pick_project_directory,
             commands::context::create_context,
             commands::context::list_contexts,
