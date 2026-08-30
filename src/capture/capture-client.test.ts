@@ -120,6 +120,7 @@ describe('capture client', () => {
     const invoke = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, data: staged })
+      .mockResolvedValueOnce({ ok: true, data: session })
       .mockResolvedValueOnce({
         ok: true,
         data: {
@@ -131,10 +132,15 @@ describe('capture client', () => {
     const client = createCaptureClient(invoke);
 
     await client.stageClipboardImage('session-1');
+    await client.discardStagedMedia('session-1', 'staged-1');
     await client.saveImage('session-1', 'staged-1', 'caption');
 
     expect(invoke.mock.calls).toEqual([
       ['stage_clipboard_image', { input: { sessionId: 'session-1' } }],
+      [
+        'discard_staged_media',
+        { input: { sessionId: 'session-1', stagedMediaId: 'staged-1' } },
+      ],
       [
         'save_image_capture',
         {

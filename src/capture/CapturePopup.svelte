@@ -35,6 +35,8 @@
   let error = $state<AppError | null>(null);
   let isSaving = $state(false);
   let isStagingImage = $state(false);
+  let isDiscardingMedia = $state(false);
+  let mediaNotice = $state<string | null>(null);
   let isRecordingAction = $state(false);
   let isPlaying = $state(false);
   let isCreatingContext = $state(false);
@@ -53,6 +55,7 @@
       chooserOpen = false;
       sourceStale = false;
       isPlaying = false;
+      mediaNotice = null;
       void refreshSources();
       void tick().then(() => draftInput?.focus());
     });
@@ -290,11 +293,13 @@
 
   async function stageImage(silentUnsupported = false) {
     if (!session || isStagingImage) return;
+    const replacingImage = session.stagedMedia?.kind === 'image';
     isStagingImage = true;
     error = null;
     try {
       const stagedMedia = await client.stageClipboardImage(session.sessionId);
       session = { ...session, stagedMedia };
+      mediaNotice = replacingImage ? 'Screenshot replaced' : null;
     } catch (caught) {
       const stagedError = toAppError(
         caught,
@@ -308,6 +313,30 @@
       error = stagedError;
     } finally {
       isStagingImage = false;
+    }
+  }
+
+  async function discardMedia() {
+    const staged = session?.stagedMedia;
+    if (!session || !staged || isDiscardingMedia) return;
+    isDiscardingMedia = true;
+    error = null;
+    try {
+      if (staged.kind === 'audio' && isPlaying) {
+        await client.stopAudioPlayback(staged.stagedMediaId).catch(() => {});
+      }
+      session = await client.discardStagedMedia(
+        session.sessionId,
+        staged.stagedMediaId,
+      );
+      isPlaying = false;
+      mediaNotice = null;
+      await tick();
+      draftInput?.focus();
+    } catch (caught) {
+      error = toAppError(caught, 'The media could not be removed. Try again.');
+    } finally {
+      isDiscardingMedia = false;
     }
   }
 
@@ -377,12 +406,20 @@
       <figure class="image-preview">
         <figcaption>
           <span>Screenshot preview</span>
-          <button
-            type="button"
-            disabled={isStagingImage}
-            onclick={() => stageImage()}
-            >{isStagingImage ? 'Replacing…' : 'Replace'}</button
-          >
+          <div class="media-actions">
+            <button
+              type="button"
+              disabled={isStagingImage || isDiscardingMedia}
+              onclick={() => stageImage()}
+              >{isStagingImage ? 'Pasting…' : 'Paste new image'}</button
+            >
+            <button
+              type="button"
+              disabled={isStagingImage || isDiscardingMedia}
+              onclick={discardMedia}
+              >{isDiscardingMedia ? 'Removing…' : 'Remove image'}</button
+            >
+          </div>
         </figcaption>
         <div class="image-preview-frame">
           <img
@@ -390,6 +427,9 @@
             alt="Screenshot ready to save"
           />
         </div>
+        {#if mediaNotice}
+          <p class="media-notice" role="status">{mediaNotice}</p>
+        {/if}
       </figure>
     {/if}
 
@@ -421,6 +461,14 @@
 
     {#if session?.stagedMedia?.kind !== 'image'}
       <section class="voice-controls" aria-label="Voice capture">
+        {#if session?.stagedMedia == null}
+          <button
+            type="button"
+            disabled={!session || isStagingImage}
+            onclick={() => stageImage()}
+            >{isStagingImage ? 'Pasting…' : 'Paste screenshot'}</button
+          >
+        {/if}
         <button
           type="button"
           class:recording={session?.recordingState.state === 'recording'}
@@ -450,6 +498,12 @@
             aria-pressed={isPlaying}
             onclick={togglePlayback}
             >{isPlaying ? 'Stop playback' : 'Play'}</button
+          >
+          <button
+            type="button"
+            disabled={isDiscardingMedia}
+            onclick={discardMedia}
+            >{isDiscardingMedia ? 'Removing…' : 'Remove recording'}</button
           >
         {/if}
         {#if session?.recordingState.state === 'recording'}

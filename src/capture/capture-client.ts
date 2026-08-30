@@ -46,6 +46,10 @@ export interface CaptureClient {
     textBody: string,
   ): Promise<SaveCaptureResult>;
   stageClipboardImage(sessionId: CaptureSessionId): Promise<StagedMedia>;
+  discardStagedMedia(
+    sessionId: CaptureSessionId,
+    stagedMediaId: string,
+  ): Promise<CaptureSession>;
   saveImage(
     sessionId: CaptureSessionId,
     stagedMediaId: string,
@@ -141,6 +145,11 @@ export function createCaptureClient(call: Invoke = invoke): CaptureClient {
       }),
     stageClipboardImage: (sessionId) =>
       command<StagedMedia>(call, 'stage_clipboard_image', { sessionId }),
+    discardStagedMedia: (sessionId, stagedMediaId) =>
+      command<CaptureSession>(call, 'discard_staged_media', {
+        sessionId,
+        stagedMediaId,
+      }),
     saveImage: (sessionId, stagedMediaId, caption) =>
       command<SaveCaptureResult>(call, 'save_image_capture', {
         sessionId,

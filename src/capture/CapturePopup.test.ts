@@ -81,6 +81,7 @@ function createClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
       widthPx: 2,
       heightPx: 1,
     }),
+    discardStagedMedia: vi.fn().mockResolvedValue(resolvedSession()),
     saveImage: vi.fn().mockResolvedValue({
       captureId: 'capture-image-1',
       capturedAt: '2026-08-29T10:00:00Z',
@@ -213,6 +214,76 @@ describe('quick-capture popup', () => {
     expect(client.stageClipboardImage).toHaveBeenCalledWith('session-1');
   });
 
+  it('pastes a new screenshot with visible feedback', async () => {
+    const replacement = {
+      stagedMediaId: 'staged-image-2',
+      kind: 'image' as const,
+      previewUri: 'lyn-media://staged/staged-image-2',
+      mimeType: 'image/png' as const,
+      byteSize: 256,
+      durationMs: null,
+      widthPx: 4,
+      heightPx: 2,
+    };
+    const stageClipboardImage = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stagedMediaId: 'staged-image-1',
+        kind: 'image',
+        previewUri: 'lyn-media://staged/staged-image-1',
+        mimeType: 'image/png',
+        byteSize: 128,
+        durationMs: null,
+        widthPx: 2,
+        heightPx: 1,
+      })
+      .mockResolvedValueOnce(replacement);
+    const client = createClient({ stageClipboardImage });
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    const input = screen.getByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(input, { target: { value: 'Keep this caption' } });
+    await fireEvent.paste(input, {
+      clipboardData: { items: [{ type: 'image/png' }] },
+    });
+    await screen.findByRole('img', { name: 'Screenshot ready to save' });
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Paste new image' }),
+    );
+
+    await waitFor(() => expect(stageClipboardImage).toHaveBeenCalledTimes(2));
+    expect(
+      screen.getByRole('img', { name: 'Screenshot ready to save' }),
+    ).toHaveAttribute('src', replacement.previewUri);
+    expect(screen.getByRole('status')).toHaveTextContent('Screenshot replaced');
+    expect(input).toHaveValue('Keep this caption');
+  });
+
+  it('removes a screenshot and keeps its caption as a text draft', async () => {
+    const client = createClient();
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    const input = screen.getByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(input, { target: { value: 'Continue as text' } });
+    await fireEvent.paste(input, {
+      clipboardData: { items: [{ type: 'image/png' }] },
+    });
+    await screen.findByRole('img', { name: 'Screenshot ready to save' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove image' }));
+
+    await waitFor(() =>
+      expect(client.discardStagedMedia).toHaveBeenCalledWith(
+        'session-1',
+        'staged-image-1',
+      ),
+    );
+    expect(screen.getByRole('textbox', { name: 'Capture text' })).toHaveValue(
+      'Continue as text',
+    );
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Record voice' })).toBeVisible();
+  });
+
   it('silently preserves ordinary paste when the native clipboard has no image', async () => {
     const unsupported: AppError = {
       code: 'UNSUPPORTED_CLIPBOARD_CONTENT',
@@ -305,6 +376,34 @@ describe('quick-capture popup', () => {
     );
     expect(client.saveText).not.toHaveBeenCalled();
     expect(dismiss).toHaveBeenCalledOnce();
+  });
+
+  it('removes a voice recording and keeps its caption as a text draft', async () => {
+    const client = createClient();
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    const input = screen.getByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(input, { target: { value: 'Use as text instead' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Record voice' }));
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Stop recording' }),
+    );
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Remove recording' }),
+    );
+
+    await waitFor(() =>
+      expect(client.discardStagedMedia).toHaveBeenCalledWith(
+        'session-1',
+        'staged-audio-1',
+      ),
+    );
+    expect(screen.getByRole('textbox', { name: 'Capture text' })).toHaveValue(
+      'Use as text instead',
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Play' }),
+    ).not.toBeInTheDocument();
   });
 
   it('preserves a staged voice note and caption when audio save fails', async () => {
