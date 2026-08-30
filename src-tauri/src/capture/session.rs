@@ -85,7 +85,10 @@ impl CaptureSessionService {
         session_id: CaptureSessionId,
     ) -> Result<CaptureSession, SessionStateError> {
         let session = self.active_mut(session_id)?;
-        if !matches!(session.recording_state, RecordingState::Idle) {
+        if !matches!(
+            session.recording_state,
+            RecordingState::Idle | RecordingState::Stopped { .. }
+        ) {
             return Err(SessionStateError::StaleSession);
         }
         session.recording_state = RecordingState::Recording { elapsed_ms: 0 };
@@ -216,6 +219,19 @@ mod tests {
         }
     }
 
+    fn staged_audio() -> StagedMedia {
+        StagedMedia {
+            staged_media_id: StagedMediaId::new(),
+            kind: MediaKind::Audio,
+            preview_uri: "lyn-media://staged/audio".to_owned(),
+            mime_type: MediaMimeType::AudioWav,
+            byte_size: 32_000,
+            duration_ms: Some(1_000),
+            width_px: None,
+            height_px: None,
+        }
+    }
+
     #[test]
     fn duplicate_preparation_returns_one_required_session() {
         let mut service = CaptureSessionService::default();
@@ -260,6 +276,28 @@ mod tests {
         assert_eq!(resolved.session_id, with_media.session_id);
         assert_eq!(resolved.staged_media, Some(staged));
         assert_eq!(resolved.recording_state, with_media.recording_state);
+    }
+
+    #[test]
+    fn stopped_voice_capture_can_begin_a_replacement_recording() {
+        let mut service = CaptureSessionService::default();
+        let session = service.get_or_prepare();
+        service.start_recording(session.session_id).unwrap();
+        let stopped = service
+            .stop_recording(session.session_id, staged_audio())
+            .unwrap();
+
+        let restarted = service.start_recording(session.session_id).unwrap();
+
+        assert!(matches!(
+            stopped.recording_state,
+            RecordingState::Stopped { .. }
+        ));
+        assert!(matches!(
+            restarted.recording_state,
+            RecordingState::Recording { .. }
+        ));
+        assert!(restarted.staged_media.is_some());
     }
 
     #[test]
