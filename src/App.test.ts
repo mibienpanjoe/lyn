@@ -5,12 +5,10 @@ import { describe, expect, it } from 'vitest';
 import App from './App.svelte';
 
 describe('application shell', () => {
-  it('identifies Lyn with a semantic page heading', () => {
+  it('renders the input-first quick-capture surface', () => {
     render(App);
 
-    expect(
-      screen.getByRole('heading', { level: 1, name: 'Lyn' }),
-    ).toBeVisible();
+    expect(screen.getByRole('textbox', { name: 'Capture text' })).toHaveFocus();
   });
 
   it('has no automatically detectable accessibility violations', async () => {

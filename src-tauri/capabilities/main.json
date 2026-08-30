@@ -3,5 +3,5 @@
   "identifier": "main",
   "description": "Minimal core capability for the Lyn application window",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-close"]
 }
