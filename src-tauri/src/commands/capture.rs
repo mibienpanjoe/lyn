@@ -69,10 +69,24 @@ pub(crate) fn save_image_capture(
     service: State<'_, Mutex<CaptureSessionService>>,
     media_store: State<'_, Mutex<MediaStore>>,
 ) -> CommandResult<SaveCaptureResult> {
+    save_image_capture_value(
+        input,
+        database.inner(),
+        service.inner(),
+        media_store.inner(),
+    )
+}
+
+fn save_image_capture_value(
+    input: serde_json::Value,
+    database: &Mutex<Database>,
+    service: &Mutex<CaptureSessionService>,
+    media_store: &Mutex<MediaStore>,
+) -> CommandResult<SaveCaptureResult> {
     let Ok(input) = serde_json::from_value::<SaveImageCaptureInput>(input) else {
         return CommandResult::failure(validation_error());
     };
-    let caption = input.caption.filter(|caption| !caption.trim().is_empty());
+    let caption = normalize_optional_caption(input.caption);
     let Ok(mut service) = service.lock() else {
         return CommandResult::failure(internal_error());
     };
@@ -137,6 +151,10 @@ pub(crate) fn save_image_capture(
     }
 }
 
+fn normalize_optional_caption(caption: Option<String>) -> Option<String> {
+    caption.filter(|caption| !caption.trim().is_empty())
+}
+
 fn stage_clipboard_image_value<Clipboard>(
     input: serde_json::Value,
     service: &Mutex<CaptureSessionService>,
@@ -152,6 +170,10 @@ where
     let Ok(mut service) = service.lock() else {
         return CommandResult::failure(internal_error());
     };
+    let previous_staged_media_id = service
+        .active_session()
+        .filter(|session| session.session_id == input.session_id)
+        .and_then(|session| session.staged_media.map(|media| media.staged_media_id));
     if service.active_session().map(|session| session.session_id) != Some(input.session_id) {
         return CommandResult::failure(stale_session_error());
     }
@@ -175,7 +197,12 @@ where
         Err(_) => return CommandResult::failure(media_stage_error()),
     };
     match service.set_staged_media(input.session_id, staged.clone()) {
-        Ok(_) => CommandResult::success(staged),
+        Ok(_) => {
+            if let Some(previous) = previous_staged_media_id {
+                let _ = media_store.discard_staged(input.session_id, previous);
+            }
+            CommandResult::success(staged)
+        }
         Err(SessionStateError::StaleSession) => CommandResult::failure(stale_session_error()),
     }
 }
@@ -307,8 +334,21 @@ fn get_active_capture_session_impl(
 pub(crate) fn cancel_capture_session(
     input: serde_json::Value,
     service: State<'_, Mutex<CaptureSessionService>>,
+    media_store: State<'_, Mutex<MediaStore>>,
 ) -> CommandResult<CancelCaptureSessionResult> {
-    cancel_capture_session_value(input, service.inner())
+    let result = cancel_capture_session_value(input, service.inner());
+    if matches!(result, CommandResult::Success { .. }) {
+        drain_staging_cleanup(service.inner(), media_store.inner());
+    }
+    result
+}
+
+fn drain_staging_cleanup(service: &Mutex<CaptureSessionService>, media_store: &Mutex<MediaStore>) {
+    if let (Ok(mut service), Ok(mut media_store)) = (service.lock(), media_store.lock()) {
+        while let Some(cleanup) = service.take_cleanup_request() {
+            let _ = media_store.discard_staged(cleanup.session_id, cleanup.staged_media_id);
+        }
+    }
 }
 
 fn cancel_capture_session_value(
@@ -748,8 +788,10 @@ mod tests {
             session_registry::ContextSourceRegistry,
         },
         contract::{
-            CancelCaptureSessionInput, CaptureSessionId, ContextProviderKind, ContextSelection,
-            ListCaptureContextSourcesInput, SaveTextCaptureInput, SelectCaptureContextSourceInput,
+            CancelCaptureSessionInput, CaptureSessionId, ContextCandidate, ContextProviderKind,
+            ContextResolution, ContextSelection, ListCaptureContextSourcesInput, MediaKind,
+            MediaMimeType, SaveImageCaptureInput, SaveTextCaptureInput,
+            SelectCaptureContextSourceInput,
         },
         error::{CommandResult, ErrorCode},
         media::staging::MediaStore,
@@ -761,9 +803,9 @@ mod tests {
     };
 
     use super::{
-        cancel_capture_session_value, get_active_capture_session_impl,
+        cancel_capture_session_value, drain_staging_cleanup, get_active_capture_session_impl,
         get_active_capture_session_value, list_capture_context_sources_value,
-        save_text_capture_value, save_text_capture_with_registry_value,
+        save_image_capture_value, save_text_capture_value, save_text_capture_with_registry_value,
         select_capture_context_source_value, select_capture_context_source_with_registry_value,
         stage_clipboard_image_value,
     };
@@ -814,7 +856,34 @@ mod tests {
                 .active_session()
                 .unwrap()
                 .staged_media,
-            Some(staged)
+            Some(staged.clone())
+        );
+
+        let replacement = stage_clipboard_image_value(
+            json!({ "sessionId": session.session_id }),
+            &service,
+            &media,
+            &clipboard,
+        );
+        let CommandResult::Success {
+            data: replacement, ..
+        } = replacement
+        else {
+            panic!("replacement staging failed")
+        };
+        assert!(
+            media
+                .lock()
+                .unwrap()
+                .staged_preview(staged.staged_media_id)
+                .is_err()
+        );
+        assert!(
+            media
+                .lock()
+                .unwrap()
+                .staged_preview(replacement.staged_media_id)
+                .is_ok()
         );
     }
 
@@ -838,6 +907,106 @@ mod tests {
         };
         assert_eq!(error.code, ErrorCode::UnsupportedClipboardContent);
         assert_eq!(service.lock().unwrap().active_session().unwrap(), session);
+    }
+
+    #[test]
+    fn image_save_commits_exact_manual_caption_and_matching_media_atomically() {
+        let directory = tempdir().unwrap();
+        let database = Database::open_in_memory().unwrap();
+        let context = ContextRepository::new(database.connection())
+            .create_standalone("Screenshots")
+            .unwrap();
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        service
+            .lock()
+            .unwrap()
+            .set_context_resolution(
+                session.session_id,
+                ContextResolution::Resolved {
+                    candidate: ContextCandidate {
+                        context,
+                        branch_name: None,
+                        provider: ContextProviderKind::Manual,
+                        requires_confirmation: false,
+                    },
+                    selection: None,
+                },
+            )
+            .unwrap();
+        let mut media = MediaStore::open(directory.path()).unwrap();
+        let staged = media
+            .stage_image_png(session.session_id, b"validated-png", 2, 1)
+            .unwrap();
+        service
+            .lock()
+            .unwrap()
+            .set_staged_media(session.session_id, staged.clone())
+            .unwrap();
+        let database = Mutex::new(database);
+        let media = Mutex::new(media);
+
+        let result = save_image_capture_value(
+            serde_json::to_value(SaveImageCaptureInput {
+                session_id: session.session_id,
+                staged_media_id: staged.staged_media_id,
+                caption: Some("  exact caption  ".to_owned()),
+            })
+            .unwrap(),
+            &database,
+            &service,
+            &media,
+        );
+
+        let CommandResult::Success { data: saved, .. } = result else {
+            panic!("image save failed")
+        };
+        let stored: (String, String, String, i64, i64) = database
+            .lock()
+            .unwrap()
+            .connection()
+            .query_row(
+                "SELECT captures.caption, captures.caption_source, media_assets.kind,
+                        media_assets.width_px, media_assets.height_px
+                 FROM captures JOIN media_assets ON media_assets.capture_id = captures.id
+                 WHERE captures.id = ?1",
+                [saved.capture_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            stored,
+            (
+                "  exact caption  ".to_owned(),
+                "user".to_owned(),
+                "image".to_owned(),
+                2,
+                1
+            )
+        );
+        assert!(matches!(staged.kind, MediaKind::Image));
+        assert!(matches!(staged.mime_type, MediaMimeType::ImagePng));
+    }
+
+    #[test]
+    fn image_caption_normalization_keeps_authored_text_and_nulls_only_blank_input() {
+        assert_eq!(
+            super::normalize_optional_caption(Some("  authored  ".to_owned())),
+            Some("  authored  ".to_owned())
+        );
+        assert_eq!(
+            super::normalize_optional_caption(Some(" \n\t ".to_owned())),
+            None
+        );
+        assert_eq!(super::normalize_optional_caption(None), None);
     }
 
     #[test]
@@ -880,6 +1049,36 @@ mod tests {
             panic!("unknown cancel succeeded")
         };
         assert_eq!(error.code, ErrorCode::StaleSession);
+    }
+
+    #[test]
+    fn cancellation_removes_only_the_cancelled_sessions_staged_media() {
+        let directory = tempdir().unwrap();
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        let mut media = MediaStore::open(directory.path()).unwrap();
+        let staged = media
+            .stage_image_png(session.session_id, b"png", 1, 1)
+            .unwrap();
+        service
+            .lock()
+            .unwrap()
+            .set_staged_media(session.session_id, staged.clone())
+            .unwrap();
+        let media = Mutex::new(media);
+
+        let result =
+            cancel_capture_session_value(json!({ "sessionId": session.session_id }), &service);
+        drain_staging_cleanup(&service, &media);
+
+        assert!(matches!(result, CommandResult::Success { .. }));
+        assert!(
+            media
+                .lock()
+                .unwrap()
+                .staged_preview(staged.staged_media_id)
+                .is_err()
+        );
     }
 
     #[test]

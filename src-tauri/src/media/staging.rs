@@ -229,6 +229,32 @@ impl MediaStore {
         Ok(())
     }
 
+    pub(crate) fn discard_staged(
+        &mut self,
+        session_id: CaptureSessionId,
+        staged_media_id: StagedMediaId,
+    ) -> Result<(), StagingError> {
+        let asset = self
+            .staged
+            .get(&staged_media_id)
+            .filter(|asset| asset.session_id == session_id)
+            .ok_or(StagingError::UnknownStagedMedia)?;
+        fs::remove_file(&asset.path)?;
+        self.staged.remove(&staged_media_id);
+        Ok(())
+    }
+
+    pub(crate) fn staged_preview(
+        &self,
+        staged_media_id: StagedMediaId,
+    ) -> Result<(Vec<u8>, MediaMimeType), StagingError> {
+        let asset = self
+            .staged
+            .get(&staged_media_id)
+            .ok_or(StagingError::UnknownStagedMedia)?;
+        Ok((read_bytes(&asset.path)?, asset.mime_type))
+    }
+
     pub(crate) fn reconcile(
         &mut self,
         referenced_paths: &HashSet<String>,
@@ -263,15 +289,12 @@ impl MediaStore {
         &self,
         staged_media_id: StagedMediaId,
     ) -> Result<Vec<u8>, StagingError> {
-        let asset = self
-            .staged
-            .get(&staged_media_id)
-            .ok_or(StagingError::UnknownStagedMedia)?;
-        read_bytes(&asset.path)
+        self.staged_preview(staged_media_id)
+            .map(|preview| preview.0)
     }
 
     #[cfg(test)]
-    fn read_final(&self, relative_path: &str) -> Result<Vec<u8>, StagingError> {
+    pub(crate) fn read_final(&self, relative_path: &str) -> Result<Vec<u8>, StagingError> {
         read_bytes(&self.final_path(relative_path)?)
     }
 

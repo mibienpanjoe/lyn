@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::{str::FromStr, sync::Mutex};
 
 use tauri::{Emitter, Manager};
 
@@ -19,7 +19,42 @@ mod storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    let builder = tauri::Builder::default()
+        .register_uri_scheme_protocol("lyn-media", |context, request| {
+            let not_found = || {
+                tauri::http::Response::builder()
+                    .status(404)
+                    .body(Vec::new())
+                    .expect("static media response is valid")
+            };
+            if request.uri().host() != Some("staged") {
+                return not_found();
+            }
+            let Ok(staged_media_id) =
+                contract::StagedMediaId::from_str(request.uri().path().trim_start_matches('/'))
+            else {
+                return not_found();
+            };
+            let media_state = context
+                .app_handle()
+                .state::<Mutex<media::staging::MediaStore>>();
+            let Ok(store) = media_state.lock() else {
+                return not_found();
+            };
+            let Ok((bytes, mime_type)) = store.staged_preview(staged_media_id) else {
+                return not_found();
+            };
+            let content_type = match mime_type {
+                contract::MediaMimeType::ImagePng => "image/png",
+                contract::MediaMimeType::AudioWav => "audio/wav",
+            };
+            tauri::http::Response::builder()
+                .header(tauri::http::header::CONTENT_TYPE, content_type)
+                .header(tauri::http::header::CACHE_CONTROL, "no-store")
+                .body(bytes)
+                .expect("static media response is valid")
+        })
+        .plugin(tauri_plugin_dialog::init());
     #[cfg(desktop)]
     let builder = builder.plugin(
         tauri_plugin_global_shortcut::Builder::new()
