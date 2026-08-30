@@ -1,6 +1,7 @@
 //! Context providers and invocation-bound resolution.
 
 pub(crate) mod provider;
+pub(crate) mod session_registry;
 
 use std::{
     collections::HashMap,

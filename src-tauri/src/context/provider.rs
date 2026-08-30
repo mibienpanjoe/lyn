@@ -44,6 +44,11 @@ pub(crate) enum ObservationLiveness {
     Ended,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderError {
+    Unavailable,
+}
+
 pub(crate) struct ProviderObservation {
     provider: ContextProviderKind,
     source_kind: ProviderSourceKind,
@@ -106,7 +111,7 @@ impl ProviderObservation {
 }
 
 pub(crate) trait ContextObservationProvider {
-    fn observations(&mut self, now: Instant) -> Vec<ProviderObservation>;
+    fn observations(&mut self, now: Instant) -> Result<Vec<ProviderObservation>, ProviderError>;
 }
 
 #[cfg(test)]
@@ -125,8 +130,11 @@ mod tests {
     }
 
     impl ContextObservationProvider for FixtureProvider {
-        fn observations(&mut self, _now: Instant) -> Vec<ProviderObservation> {
-            std::mem::take(&mut self.observations)
+        fn observations(
+            &mut self,
+            _now: Instant,
+        ) -> Result<Vec<ProviderObservation>, super::ProviderError> {
+            Ok(std::mem::take(&mut self.observations))
         }
     }
 
@@ -161,7 +169,7 @@ mod tests {
             ],
         };
 
-        let observations = provider.observations(Instant::now());
+        let observations = provider.observations(Instant::now()).unwrap();
 
         assert_eq!(observations.len(), 3);
         assert_ne!(observations[0].source_kind(), observations[1].source_kind());

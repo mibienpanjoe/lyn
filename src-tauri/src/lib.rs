@@ -37,6 +37,9 @@ pub fn run() {
             app.manage(Mutex::new(database));
             app.manage(Mutex::new(context::DirectorySelectionRegistry::default()));
             app.manage(Mutex::new(
+                context::session_registry::ContextSourceRegistry::default(),
+            ));
+            app.manage(Mutex::new(
                 capture::session::CaptureSessionService::default(),
             ));
             app.manage(Mutex::new(platform::InvocationContext::default()));
