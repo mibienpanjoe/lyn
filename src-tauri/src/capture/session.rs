@@ -80,6 +80,47 @@ impl CaptureSessionService {
         Ok(session.clone())
     }
 
+    pub(crate) fn start_recording(
+        &mut self,
+        session_id: CaptureSessionId,
+    ) -> Result<CaptureSession, SessionStateError> {
+        let session = self.active_mut(session_id)?;
+        if !matches!(session.recording_state, RecordingState::Idle) {
+            return Err(SessionStateError::StaleSession);
+        }
+        session.recording_state = RecordingState::Recording { elapsed_ms: 0 };
+        Ok(session.clone())
+    }
+
+    pub(crate) fn stop_recording(
+        &mut self,
+        session_id: CaptureSessionId,
+        staged_media: StagedMedia,
+    ) -> Result<CaptureSession, SessionStateError> {
+        let session = self.active_mut(session_id)?;
+        if !matches!(session.recording_state, RecordingState::Recording { .. }) {
+            return Err(SessionStateError::StaleSession);
+        }
+        let duration_ms = staged_media
+            .duration_ms
+            .ok_or(SessionStateError::StaleSession)?;
+        session.recording_state = RecordingState::Stopped {
+            elapsed_ms: duration_ms,
+            staged_media_id: staged_media.staged_media_id,
+        };
+        session.staged_media = Some(staged_media);
+        Ok(session.clone())
+    }
+
+    pub(crate) fn reset_recording(
+        &mut self,
+        session_id: CaptureSessionId,
+    ) -> Result<CaptureSession, SessionStateError> {
+        let session = self.active_mut(session_id)?;
+        session.recording_state = RecordingState::Idle;
+        Ok(session.clone())
+    }
+
     pub(crate) fn cancel(&mut self, session_id: CaptureSessionId) -> Result<(), SessionStateError> {
         if self.last_cancelled == Some(session_id) {
             return Ok(());

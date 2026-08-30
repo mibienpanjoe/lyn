@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+pub(crate) mod audio;
 pub(crate) mod clipboard;
 
 #[cfg(not(target_os = "linux"))]

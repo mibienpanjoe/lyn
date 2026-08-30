@@ -10,13 +10,15 @@ use crate::{
         CancelCaptureSessionInput, CancelCaptureSessionResult, CaptureSession, ContextCandidate,
         ContextProviderKind, ContextResolution, ContextSelection, ContextSourceKind,
         ContextSourceOption, ListCaptureContextSourcesInput, ListCaptureContextSourcesResult,
-        SaveCaptureResult, SaveImageCaptureInput, SaveTextCaptureInput,
+        RecordingState, SaveCaptureResult, SaveImageCaptureInput, SaveTextCaptureInput,
         SelectCaptureContextSourceInput, StageClipboardImageInput, StagedMedia,
+        StartAudioRecordingInput, StopAudioRecordingInput,
     },
     error::{AppError, CommandResult, ErrorCode, ErrorDetailKey, ErrorDetailValue, ErrorDetails},
-    media::{images, staging::MediaStore},
+    media::{audio, images, staging::MediaStore},
     platform::{
         InvocationContext,
+        audio::{AudioInputError, AudioInputPlatform, NativeAudioInputPlatform},
         clipboard::{ClipboardError, ClipboardImagePlatform, NativeClipboardPlatform},
     },
     storage::{Database, captures::CaptureRepository, contexts::ContextRepository},
@@ -24,6 +26,113 @@ use crate::{
 
 pub(crate) const MAX_TEXT_BODY_BYTES: usize = 1024 * 1024;
 const MAX_CONTEXT_SOURCE_QUERY_CHARS: usize = 100;
+
+#[tauri::command]
+pub(crate) fn start_audio_recording(
+    input: serde_json::Value,
+    service: State<'_, Mutex<CaptureSessionService>>,
+    audio_input: State<'_, Mutex<NativeAudioInputPlatform>>,
+) -> CommandResult<RecordingState> {
+    start_audio_recording_value(input, service.inner(), audio_input.inner())
+}
+
+fn start_audio_recording_value<Audio: AudioInputPlatform>(
+    input: serde_json::Value,
+    service: &Mutex<CaptureSessionService>,
+    audio_input: &Mutex<Audio>,
+) -> CommandResult<RecordingState> {
+    let Ok(input) = serde_json::from_value::<StartAudioRecordingInput>(input) else {
+        return CommandResult::failure(validation_error());
+    };
+    let Ok(mut service) = service.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    if service.active_session().map(|session| session.session_id) != Some(input.session_id) {
+        return CommandResult::failure(stale_session_error());
+    }
+    let Ok(mut audio_input) = audio_input.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    if let Err(error) = audio_input.start(input.input_device_id.as_deref()) {
+        return CommandResult::failure(audio_input_error(error));
+    }
+    match service.start_recording(input.session_id) {
+        Ok(session) => CommandResult::success(session.recording_state),
+        Err(_) => {
+            let _ = audio_input.stop();
+            CommandResult::failure(audio_recording_error())
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) fn stop_audio_recording(
+    input: serde_json::Value,
+    service: State<'_, Mutex<CaptureSessionService>>,
+    media_store: State<'_, Mutex<MediaStore>>,
+    audio_input: State<'_, Mutex<NativeAudioInputPlatform>>,
+) -> CommandResult<StagedMedia> {
+    stop_audio_recording_value(
+        input,
+        service.inner(),
+        media_store.inner(),
+        audio_input.inner(),
+    )
+}
+
+fn stop_audio_recording_value<Audio: AudioInputPlatform>(
+    input: serde_json::Value,
+    service: &Mutex<CaptureSessionService>,
+    media_store: &Mutex<MediaStore>,
+    audio_input: &Mutex<Audio>,
+) -> CommandResult<StagedMedia> {
+    let Ok(input) = serde_json::from_value::<StopAudioRecordingInput>(input) else {
+        return CommandResult::failure(validation_error());
+    };
+    let Ok(mut service) = service.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    if service.active_session().map(|session| session.session_id) != Some(input.session_id) {
+        return CommandResult::failure(stale_session_error());
+    }
+    let recorded = match audio_input
+        .lock()
+        .ok()
+        .and_then(|mut input| input.stop().ok())
+    {
+        Some(recorded) => recorded,
+        None => {
+            let _ = service.reset_recording(input.session_id);
+            return CommandResult::failure(audio_recording_error());
+        }
+    };
+    let (wav, duration_ms) = match audio::encode_mono_pcm_wav(
+        &recorded.samples,
+        recorded.sample_rate,
+        recorded.channels,
+    ) {
+        Ok(encoded) => encoded,
+        Err(_) => {
+            let _ = service.reset_recording(input.session_id);
+            return CommandResult::failure(audio_recording_error());
+        }
+    };
+    let staged = match media_store.lock().ok().and_then(|mut media| {
+        media
+            .stage_audio_wav(input.session_id, &wav, duration_ms)
+            .ok()
+    }) {
+        Some(staged) => staged,
+        None => {
+            let _ = service.reset_recording(input.session_id);
+            return CommandResult::failure(media_stage_error());
+        }
+    };
+    match service.stop_recording(input.session_id, staged.clone()) {
+        Ok(_) => CommandResult::success(staged),
+        Err(_) => CommandResult::failure(audio_recording_error()),
+    }
+}
 
 #[tauri::command]
 pub(crate) fn list_capture_context_sources(
@@ -760,6 +869,34 @@ fn media_stage_error() -> AppError {
     }
 }
 
+fn audio_input_error(error: AudioInputError) -> AppError {
+    let (code, message) = match error {
+        AudioInputError::DeviceUnavailable => (
+            ErrorCode::AudioDeviceUnavailable,
+            "No supported microphone is available",
+        ),
+        _ => (
+            ErrorCode::AudioRecordingFailed,
+            "Audio recording could not be started",
+        ),
+    };
+    AppError {
+        code,
+        message: message.to_owned(),
+        retryable: true,
+        details: ErrorDetails::default(),
+    }
+}
+
+fn audio_recording_error() -> AppError {
+    AppError {
+        code: ErrorCode::AudioRecordingFailed,
+        message: "Audio recording could not be completed".to_owned(),
+        retryable: true,
+        details: ErrorDetails::default(),
+    }
+}
+
 fn internal_error() -> AppError {
     AppError {
         code: ErrorCode::InternalError,
@@ -790,13 +927,14 @@ mod tests {
         contract::{
             CancelCaptureSessionInput, CaptureSessionId, ContextCandidate, ContextProviderKind,
             ContextResolution, ContextSelection, ListCaptureContextSourcesInput, MediaKind,
-            MediaMimeType, SaveImageCaptureInput, SaveTextCaptureInput,
+            MediaMimeType, RecordingState, SaveImageCaptureInput, SaveTextCaptureInput,
             SelectCaptureContextSourceInput,
         },
         error::{CommandResult, ErrorCode},
         media::staging::MediaStore,
         platform::{
             WindowCorrelationToken,
+            audio::{AudioInputError, AudioInputPlatform, RecordedAudio},
             clipboard::{ClipboardError, ClipboardImage, ClipboardImagePlatform},
         },
         storage::{Database, contexts::ContextRepository},
@@ -807,7 +945,7 @@ mod tests {
         get_active_capture_session_value, list_capture_context_sources_value,
         save_image_capture_value, save_text_capture_value, save_text_capture_with_registry_value,
         select_capture_context_source_value, select_capture_context_source_with_registry_value,
-        stage_clipboard_image_value,
+        stage_clipboard_image_value, start_audio_recording_value, stop_audio_recording_value,
     };
 
     struct FakeClipboard(Result<ClipboardImage, ClipboardError>);
@@ -816,6 +954,102 @@ mod tests {
         fn read_image(&mut self) -> Result<ClipboardImage, ClipboardError> {
             self.0.clone()
         }
+    }
+
+    struct FakeAudioInput {
+        start_result: Result<(), AudioInputError>,
+        stop_result: Result<RecordedAudio, AudioInputError>,
+    }
+
+    impl AudioInputPlatform for FakeAudioInput {
+        fn start(&mut self, _input_device_id: Option<&str>) -> Result<(), AudioInputError> {
+            self.start_result
+        }
+
+        fn stop(&mut self) -> Result<RecordedAudio, AudioInputError> {
+            self.stop_result.clone()
+        }
+    }
+
+    #[test]
+    fn recording_start_and_stop_stage_valid_session_owned_wav() {
+        let directory = tempdir().unwrap();
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        let media = Mutex::new(MediaStore::open(directory.path()).unwrap());
+        let audio_input = Mutex::new(FakeAudioInput {
+            start_result: Ok(()),
+            stop_result: Ok(RecordedAudio {
+                samples: vec![0.25; 1_600],
+                sample_rate: 16_000,
+                channels: 1,
+            }),
+        });
+
+        let started = start_audio_recording_value(
+            json!({ "sessionId": session.session_id, "inputDeviceId": null }),
+            &service,
+            &audio_input,
+        );
+        let stopped = stop_audio_recording_value(
+            json!({ "sessionId": session.session_id }),
+            &service,
+            &media,
+            &audio_input,
+        );
+
+        assert!(matches!(
+            started,
+            CommandResult::Success {
+                data: RecordingState::Recording { .. },
+                ..
+            }
+        ));
+        let CommandResult::Success { data: staged, .. } = stopped else {
+            panic!("recording stop failed")
+        };
+        assert_eq!(staged.duration_ms, Some(100));
+        assert_eq!(staged.mime_type, MediaMimeType::AudioWav);
+        let (wav, _) = media
+            .lock()
+            .unwrap()
+            .staged_preview(staged.staged_media_id)
+            .unwrap();
+        let reader = hound::WavReader::new(std::io::Cursor::new(wav)).unwrap();
+        assert_eq!(
+            (reader.spec().sample_rate, reader.spec().channels),
+            (16_000, 1)
+        );
+    }
+
+    #[test]
+    fn unavailable_microphone_keeps_the_session_idle_and_other_capture_types_usable() {
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        let audio_input = Mutex::new(FakeAudioInput {
+            start_result: Err(AudioInputError::DeviceUnavailable),
+            stop_result: Err(AudioInputError::NotRecording),
+        });
+
+        let result = start_audio_recording_value(
+            json!({ "sessionId": session.session_id, "inputDeviceId": null }),
+            &service,
+            &audio_input,
+        );
+
+        let CommandResult::Failure { error, .. } = result else {
+            panic!("unavailable microphone succeeded")
+        };
+        assert_eq!(error.code, ErrorCode::AudioDeviceUnavailable);
+        assert_eq!(
+            service
+                .lock()
+                .unwrap()
+                .active_session()
+                .unwrap()
+                .recording_state,
+            RecordingState::Idle
+        );
     }
 
     #[test]

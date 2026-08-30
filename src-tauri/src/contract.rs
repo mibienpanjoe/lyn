@@ -427,6 +427,27 @@ pub struct SaveImageCaptureInput {
     pub caption: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StartAudioRecordingInput {
+    pub session_id: CaptureSessionId,
+    pub input_device_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StopAudioRecordingInput {
+    pub session_id: CaptureSessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SaveAudioCaptureInput {
+    pub session_id: CaptureSessionId,
+    pub staged_media_id: StagedMediaId,
+    pub caption: Option<String>,
+}
+
 pub fn typescript_bindings() -> String {
     let config = Config::default().with_large_int("number");
     let declarations = [
@@ -480,6 +501,9 @@ pub fn typescript_bindings() -> String {
         SaveTextCaptureInput::decl(&config),
         StageClipboardImageInput::decl(&config),
         SaveImageCaptureInput::decl(&config),
+        StartAudioRecordingInput::decl(&config),
+        StopAudioRecordingInput::decl(&config),
+        SaveAudioCaptureInput::decl(&config),
     ]
     .map(|declaration| format!("export {declaration}"));
     format!(

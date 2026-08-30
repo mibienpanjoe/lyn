@@ -99,3 +99,9 @@ export type SaveTextCaptureInput = { sessionId: CaptureSessionId, textBody: stri
 export type StageClipboardImageInput = { sessionId: CaptureSessionId, };
 
 export type SaveImageCaptureInput = { sessionId: CaptureSessionId, stagedMediaId: StagedMediaId, caption: string | null, };
+
+export type StartAudioRecordingInput = { sessionId: CaptureSessionId, inputDeviceId: string | null, };
+
+export type StopAudioRecordingInput = { sessionId: CaptureSessionId, };
+
+export type SaveAudioCaptureInput = { sessionId: CaptureSessionId, stagedMediaId: StagedMediaId, caption: string | null, };

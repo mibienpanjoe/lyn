@@ -63,6 +63,9 @@ pub(crate) struct FinalizedMedia {
     pub(crate) relative_path: String,
     pub(crate) byte_size: u64,
     pub(crate) checksum: String,
+    pub(crate) duration_ms: Option<u64>,
+    pub(crate) width_px: Option<u32>,
+    pub(crate) height_px: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -79,6 +82,7 @@ struct StagedAsset {
     path: PathBuf,
     byte_size: u64,
     checksum: String,
+    duration_ms: Option<u64>,
     width_px: Option<u32>,
     height_px: Option<u32>,
 }
@@ -130,6 +134,7 @@ impl MediaStore {
             path,
             byte_size: bytes.len() as u64,
             checksum: checksum(bytes),
+            duration_ms: None,
             width_px: None,
             height_px: None,
         };
@@ -169,6 +174,26 @@ impl MediaStore {
         Ok(staged)
     }
 
+    pub(crate) fn stage_audio_wav(
+        &mut self,
+        session_id: CaptureSessionId,
+        bytes: &[u8],
+        duration_ms: u64,
+    ) -> Result<StagedMedia, StagingError> {
+        if duration_ms == 0 {
+            return Err(StagingError::InvalidMedia);
+        }
+        let mut staged =
+            self.stage_bytes(session_id, MediaKind::Audio, MediaMimeType::AudioWav, bytes)?;
+        let asset = self
+            .staged
+            .get_mut(&staged.staged_media_id)
+            .ok_or(StagingError::UnknownStagedMedia)?;
+        asset.duration_ms = Some(duration_ms);
+        staged.duration_ms = Some(duration_ms);
+        Ok(staged)
+    }
+
     pub(crate) fn finalize(
         &mut self,
         staged_media_id: StagedMediaId,
@@ -205,6 +230,9 @@ impl MediaStore {
             relative_path,
             byte_size: asset.byte_size,
             checksum: asset.checksum,
+            duration_ms: asset.duration_ms,
+            width_px: asset.width_px,
+            height_px: asset.height_px,
         })
     }
 

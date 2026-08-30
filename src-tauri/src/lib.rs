@@ -79,6 +79,9 @@ pub fn run() {
             app.manage(Mutex::new(database));
             app.manage(Mutex::new(media_store));
             app.manage(Mutex::new(platform::clipboard::NativeClipboardPlatform));
+            app.manage(Mutex::new(
+                platform::audio::NativeAudioInputPlatform::default(),
+            ));
             app.manage(Mutex::new(context::DirectorySelectionRegistry::default()));
             app.manage(Mutex::new(
                 context::session_registry::ContextSourceRegistry::default(),
@@ -102,6 +105,8 @@ pub fn run() {
             commands::capture::save_text_capture,
             commands::capture::stage_clipboard_image,
             commands::capture::save_image_capture,
+            commands::capture::start_audio_recording,
+            commands::capture::stop_audio_recording,
             commands::context::pick_project_directory,
             commands::context::create_context,
             commands::context::list_contexts,
