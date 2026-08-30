@@ -14,10 +14,10 @@
       {
         "label": "main",
         "title": "Lyn",
-        "width": 560,
-        "height": 240,
-        "minWidth": 360,
-        "minHeight": 168,
+        "width": 640,
+        "height": 380,
+        "minWidth": 520,
+        "minHeight": 300,
         "resizable": true
       }
     ],

@@ -101,7 +101,7 @@ textarea:focus-visible {
 .capture-popup {
   display: grid;
   grid-template-areas: 'context' 'chooser' 'input' 'preview' 'voice' 'error' 'actions';
-  width: min(100%, 560px);
+  width: min(100%, 620px);
   min-height: 168px;
   overflow: hidden;
   border-radius: var(--radius-popup);
