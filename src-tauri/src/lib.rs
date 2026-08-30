@@ -19,18 +19,19 @@ mod storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state != ShortcutState::Pressed {
-                        return;
-                    }
-                    invoke_capture_popup(app);
-                })
-                .build(),
-        )
+    let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app, _shortcut, event| {
+                if event.state != ShortcutState::Pressed {
+                    return;
+                }
+                invoke_capture_popup(app);
+            })
+            .build(),
+    );
+    builder
         .setup(|app| {
             let database_path = app.path().app_data_dir()?.join("lyn.db");
             let database = storage::Database::open(database_path)?;
@@ -78,7 +79,8 @@ fn invoke_capture_popup(app: &tauri::AppHandle) {
         .state::<Mutex<capture::session::CaptureSessionService>>()
         .lock()
         .ok()
-        .map(|mut service| service.get_or_prepare());
+        .map(|mut service| service.get_or_prepare())
+        .map(|session| resolve_invocation_context(app, session, foreground));
     if platform.show_capture_popup().is_err() {
         return;
     }
@@ -89,6 +91,109 @@ fn invoke_capture_popup(app: &tauri::AppHandle) {
             serde_json::json!({ "sessionId": session.session_id }),
         );
     }
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_invocation_context(
+    app: &tauri::AppHandle,
+    session: contract::CaptureSession,
+    foreground: Option<platform::ForegroundWindowIdentity>,
+) -> contract::CaptureSession {
+    use context::resolver::{InvocationAssociations, ResolutionOutcome, classify, resolve};
+    use contract::{ContextCandidate, ContextProviderKind, ContextResolution, ContextSelection};
+
+    let foreground_window = foreground.map(|identity| identity.window);
+    let associations = InvocationAssociations {
+        foreground_window,
+        related_processes: &[],
+        related_sessions: &[],
+        inferred_windows: &[],
+    };
+    let outcome = {
+        let registry_state = app.state::<Mutex<context::session_registry::ContextSourceRegistry>>();
+        let Ok(mut registry) = registry_state.lock() else {
+            return session;
+        };
+        let candidates: Vec<_> = registry
+            .live_sources(std::time::Instant::now())
+            .into_iter()
+            .filter_map(|source| {
+                classify(
+                    source.source_id(),
+                    source.provider(),
+                    source.window(),
+                    source.process(),
+                    source.session(),
+                    &associations,
+                )
+            })
+            .collect();
+        resolve(
+            &candidates,
+            &[
+                ContextProviderKind::Vscode,
+                ContextProviderKind::Shell,
+                ContextProviderKind::ForegroundWindow,
+            ],
+        )
+    };
+
+    let resolution = match outcome {
+        ResolutionOutcome::Required => return session,
+        ResolutionOutcome::Ambiguous => ContextResolution::Ambiguous {
+            candidate: (),
+            selection: (),
+        },
+        ResolutionOutcome::Resolved(source_id) => {
+            let source = {
+                let registry_state =
+                    app.state::<Mutex<context::session_registry::ContextSourceRegistry>>();
+                let Ok(mut registry) = registry_state.lock() else {
+                    return session;
+                };
+                let Some(source) = registry.get(source_id, std::time::Instant::now()) else {
+                    return session;
+                };
+                (
+                    source.context().clone(),
+                    source.identity().project_key.clone(),
+                    source.identity().project_path.clone(),
+                    source.identity().branch_name.clone(),
+                    source.provider(),
+                )
+            };
+            let context = {
+                let database_state = app.state::<Mutex<storage::Database>>();
+                let Ok(database) = database_state.lock() else {
+                    return session;
+                };
+                let Ok(context) = storage::contexts::ContextRepository::new(database.connection())
+                    .ensure_project(source.0.id, &source.0.name, source.1.as_deref(), &source.2)
+                else {
+                    return session;
+                };
+                context
+            };
+            ContextResolution::Resolved {
+                candidate: ContextCandidate {
+                    context,
+                    branch_name: source.3,
+                    provider: source.4,
+                    requires_confirmation: false,
+                },
+                selection: Some(ContextSelection::LiveSource { source_id }),
+            }
+        }
+    };
+    app.state::<Mutex<capture::session::CaptureSessionService>>()
+        .lock()
+        .ok()
+        .and_then(|mut service| {
+            service
+                .set_context_resolution(session.session_id, resolution)
+                .ok()
+        })
+        .unwrap_or(session)
 }
 
 #[cfg(all(desktop, not(target_os = "linux")))]

@@ -2,6 +2,9 @@
 
 use std::fmt;
 
+#[cfg(not(target_os = "linux"))]
+use tauri::Manager;
+
 #[cfg(target_os = "linux")]
 pub(crate) mod x11;
 
@@ -43,6 +46,49 @@ pub(crate) trait CaptureWindowPlatform {
         &mut self,
         identity: ForegroundWindowIdentity,
     ) -> Result<(), PlatformError>;
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) struct UnsupportedCaptureWindowPlatform {
+    app: tauri::AppHandle,
+}
+
+#[cfg(not(target_os = "linux"))]
+impl UnsupportedCaptureWindowPlatform {
+    pub(crate) fn new(app: tauri::AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+impl CaptureWindowPlatform for UnsupportedCaptureWindowPlatform {
+    fn capture_foreground(&mut self) -> Result<ForegroundWindowIdentity, PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+
+    fn show_capture_popup(&mut self) -> Result<(), PlatformError> {
+        let window = self
+            .app
+            .get_webview_window("main")
+            .ok_or(PlatformError::Unsupported)?;
+        window.show().map_err(|_| PlatformError::FocusFailed)?;
+        window.set_focus().map_err(|_| PlatformError::FocusFailed)
+    }
+
+    fn hide_capture_popup(&mut self) -> Result<(), PlatformError> {
+        self.app
+            .get_webview_window("main")
+            .ok_or(PlatformError::Unsupported)?
+            .hide()
+            .map_err(|_| PlatformError::FocusFailed)
+    }
+
+    fn restore_foreground(
+        &mut self,
+        _identity: ForegroundWindowIdentity,
+    ) -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
 }
 
 #[derive(Default)]

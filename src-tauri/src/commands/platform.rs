@@ -23,7 +23,7 @@ pub(crate) fn dismiss_capture_popup(
     let mut platform = crate::platform::x11::X11CaptureWindowPlatform::new(app);
 
     #[cfg(not(target_os = "linux"))]
-    let mut platform = UnsupportedCaptureWindowPlatform::new(app);
+    let mut platform = crate::platform::UnsupportedCaptureWindowPlatform::new(app);
 
     let Ok(mut invocation) = invocation.lock() else {
         return CommandResult::failure(internal_error());

@@ -1,5 +1,4 @@
 //! Deterministic invocation-bound context evidence ranking.
-#![allow(dead_code, reason = "resolver API is connected to commands in T16")]
 
 use crate::{
     context::provider::CorrelationToken,
@@ -39,10 +38,6 @@ impl ResolutionCandidate {
             provider,
             quality,
         }
-    }
-
-    pub(crate) fn source_id(self) -> ContextSourceId {
-        self.source_id
     }
 }
 
@@ -142,7 +137,7 @@ mod tests {
                 &[unrelated, exact],
                 &[ContextProviderKind::Vscode, ContextProviderKind::Shell],
             ),
-            ResolutionOutcome::Resolved(exact.source_id())
+            ResolutionOutcome::Resolved(exact.source_id)
         );
     }
 
@@ -202,7 +197,7 @@ mod tests {
                 &[exact_shell, related_vscode],
                 &[ContextProviderKind::Vscode, ContextProviderKind::Shell],
             ),
-            ResolutionOutcome::Resolved(exact_shell.source_id())
+            ResolutionOutcome::Resolved(exact_shell.source_id)
         );
 
         let related_shell = candidate(
@@ -214,7 +209,7 @@ mod tests {
                 &[related_shell, related_vscode],
                 &[ContextProviderKind::Vscode, ContextProviderKind::Shell],
             ),
-            ResolutionOutcome::Resolved(related_vscode.source_id())
+            ResolutionOutcome::Resolved(related_vscode.source_id)
         );
     }
 
@@ -265,7 +260,7 @@ mod tests {
                     &candidates,
                     &[ContextProviderKind::Shell, ContextProviderKind::Vscode]
                 ),
-                ResolutionOutcome::Resolved(exact.source_id())
+                ResolutionOutcome::Resolved(exact.source_id)
             );
         }
     }
