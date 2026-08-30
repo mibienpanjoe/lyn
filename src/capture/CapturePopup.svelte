@@ -288,7 +288,7 @@
     return `${minutes}:${seconds}`;
   }
 
-  async function stageImage() {
+  async function stageImage(silentUnsupported = false) {
     if (!session || isStagingImage) return;
     isStagingImage = true;
     error = null;
@@ -296,24 +296,36 @@
       const stagedMedia = await client.stageClipboardImage(session.sessionId);
       session = { ...session, stagedMedia };
     } catch (caught) {
-      error = toAppError(
+      const stagedError = toAppError(
         caught,
         'The clipboard image could not be prepared. Try copying it again.',
       );
+      if (
+        silentUnsupported &&
+        stagedError.code === 'UNSUPPORTED_CLIPBOARD_CONTENT'
+      )
+        return;
+      error = stagedError;
     } finally {
       isStagingImage = false;
     }
   }
 
   function handlePaste(event: ClipboardEvent) {
-    if (
-      Array.from(event.clipboardData?.items ?? []).some((item) =>
+    const clipboard = event.clipboardData;
+    const advertisesImage =
+      Array.from(clipboard?.items ?? []).some((item) =>
         item.type.startsWith('image/'),
-      )
-    ) {
+      ) ||
+      Array.from(clipboard?.types ?? []).some((type) =>
+        type.startsWith('image/'),
+      );
+    if (advertisesImage) {
       event.preventDefault();
-      void stageImage();
     }
+    // WebKitGTK may omit image items/types. Rust owns clipboard decoding, so
+    // probe it on every paste and silently fall through for ordinary text.
+    void stageImage(true);
   }
 
   async function cancel() {
@@ -379,7 +391,10 @@
         />
         <figcaption>
           <span>Screenshot ready</span>
-          <button type="button" disabled={isStagingImage} onclick={stageImage}
+          <button
+            type="button"
+            disabled={isStagingImage}
+            onclick={() => stageImage()}
             >{isStagingImage ? 'Replacing…' : 'Replace'}</button
           >
         </figcaption>

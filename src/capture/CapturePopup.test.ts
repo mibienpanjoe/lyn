@@ -185,6 +185,48 @@ describe('quick-capture popup', () => {
     expect(dismiss).toHaveBeenCalledOnce();
   });
 
+  it('checks the native clipboard when WebKit omits pasted image items', async () => {
+    const client = createClient();
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    const input = screen.getByRole('textbox', { name: 'Capture text' });
+    await waitFor(() => expect(client.getActiveSession).toHaveBeenCalled());
+
+    await fireEvent.paste(input, {
+      clipboardData: { items: [], types: [], files: [] },
+    });
+
+    expect(
+      await screen.findByRole('img', { name: 'Screenshot ready to save' }),
+    ).toBeVisible();
+    expect(client.stageClipboardImage).toHaveBeenCalledWith('session-1');
+  });
+
+  it('silently preserves ordinary paste when the native clipboard has no image', async () => {
+    const unsupported: AppError = {
+      code: 'UNSUPPORTED_CLIPBOARD_CONTENT',
+      message: 'The clipboard does not contain a supported image',
+      retryable: true,
+      details: {},
+    };
+    const client = createClient({
+      stageClipboardImage: vi
+        .fn()
+        .mockRejectedValue(new CaptureCommandError(unsupported)),
+    });
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    const input = screen.getByRole('textbox', { name: 'Capture text' });
+    await waitFor(() => expect(client.getActiveSession).toHaveBeenCalled());
+
+    await fireEvent.paste(input, {
+      clipboardData: { items: [], types: ['text/plain'], files: [] },
+    });
+
+    await waitFor(() =>
+      expect(client.stageClipboardImage).toHaveBeenCalledWith('session-1'),
+    );
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('keeps the screenshot preview and caption when image save fails', async () => {
     const failure: AppError = {
       code: 'MEDIA_FINALIZE_FAILED',
