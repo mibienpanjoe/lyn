@@ -413,6 +413,12 @@ pub struct SaveTextCaptureInput {
     pub text_body: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StageClipboardImageInput {
+    pub session_id: CaptureSessionId,
+}
+
 pub fn typescript_bindings() -> String {
     let config = Config::default().with_large_int("number");
     let declarations = [
@@ -464,6 +470,7 @@ pub fn typescript_bindings() -> String {
         CaptureDetail::decl(&config),
         Page::<String>::decl(&config),
         SaveTextCaptureInput::decl(&config),
+        StageClipboardImageInput::decl(&config),
     ]
     .map(|declaration| format!("export {declaration}"));
     format!(

@@ -43,6 +43,7 @@ pub fn run() {
             media_store.reconcile(&referenced_paths)?;
             app.manage(Mutex::new(database));
             app.manage(Mutex::new(media_store));
+            app.manage(Mutex::new(platform::clipboard::NativeClipboardPlatform));
             app.manage(Mutex::new(context::DirectorySelectionRegistry::default()));
             app.manage(Mutex::new(
                 context::session_registry::ContextSourceRegistry::default(),
@@ -64,6 +65,7 @@ pub fn run() {
             commands::capture::list_capture_context_sources,
             commands::capture::select_capture_context_source,
             commands::capture::save_text_capture,
+            commands::capture::stage_clipboard_image,
             commands::context::pick_project_directory,
             commands::context::create_context,
             commands::context::list_contexts,

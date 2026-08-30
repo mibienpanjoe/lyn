@@ -11,9 +11,14 @@ use crate::{
         ContextProviderKind, ContextResolution, ContextSelection, ContextSourceKind,
         ContextSourceOption, ListCaptureContextSourcesInput, ListCaptureContextSourcesResult,
         SaveCaptureResult, SaveTextCaptureInput, SelectCaptureContextSourceInput,
+        StageClipboardImageInput, StagedMedia,
     },
     error::{AppError, CommandResult, ErrorCode, ErrorDetailKey, ErrorDetailValue, ErrorDetails},
-    platform::InvocationContext,
+    media::{images, staging::MediaStore},
+    platform::{
+        InvocationContext,
+        clipboard::{ClipboardError, ClipboardImagePlatform, NativeClipboardPlatform},
+    },
     storage::{Database, captures::CaptureRepository, contexts::ContextRepository},
 };
 
@@ -40,6 +45,64 @@ pub(crate) fn list_capture_context_sources(
         registry.inner(),
         foreground,
     )
+}
+
+#[tauri::command]
+pub(crate) fn stage_clipboard_image(
+    input: serde_json::Value,
+    service: State<'_, Mutex<CaptureSessionService>>,
+    media_store: State<'_, Mutex<MediaStore>>,
+    clipboard: State<'_, Mutex<NativeClipboardPlatform>>,
+) -> CommandResult<StagedMedia> {
+    stage_clipboard_image_value(
+        input,
+        service.inner(),
+        media_store.inner(),
+        clipboard.inner(),
+    )
+}
+
+fn stage_clipboard_image_value<Clipboard>(
+    input: serde_json::Value,
+    service: &Mutex<CaptureSessionService>,
+    media_store: &Mutex<MediaStore>,
+    clipboard: &Mutex<Clipboard>,
+) -> CommandResult<StagedMedia>
+where
+    Clipboard: ClipboardImagePlatform,
+{
+    let Ok(input) = serde_json::from_value::<StageClipboardImageInput>(input) else {
+        return CommandResult::failure(validation_error());
+    };
+    let Ok(mut service) = service.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    if service.active_session().map(|session| session.session_id) != Some(input.session_id) {
+        return CommandResult::failure(stale_session_error());
+    }
+    let image = match clipboard.lock() {
+        Ok(mut clipboard) => match clipboard.read_image() {
+            Ok(image) => image,
+            Err(ClipboardError::UnsupportedContent) => {
+                return CommandResult::failure(unsupported_clipboard_error());
+            }
+            Err(ClipboardError::Unavailable) => {
+                return CommandResult::failure(clipboard_unavailable_error());
+            }
+        },
+        Err(_) => return CommandResult::failure(internal_error()),
+    };
+    let Ok(mut media_store) = media_store.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    let staged = match images::stage_clipboard_image(&mut media_store, input.session_id, image) {
+        Ok(staged) => staged,
+        Err(_) => return CommandResult::failure(media_stage_error()),
+    };
+    match service.set_staged_media(input.session_id, staged.clone()) {
+        Ok(_) => CommandResult::success(staged),
+        Err(SessionStateError::StaleSession) => CommandResult::failure(stale_session_error()),
+    }
 }
 
 fn list_capture_context_sources_value(
@@ -555,6 +618,33 @@ fn stale_session_error() -> AppError {
     }
 }
 
+fn unsupported_clipboard_error() -> AppError {
+    AppError {
+        code: ErrorCode::UnsupportedClipboardContent,
+        message: "The clipboard does not contain a supported image".to_owned(),
+        retryable: true,
+        details: ErrorDetails::default(),
+    }
+}
+
+fn clipboard_unavailable_error() -> AppError {
+    AppError {
+        code: ErrorCode::PermissionDenied,
+        message: "The clipboard is unavailable".to_owned(),
+        retryable: true,
+        details: ErrorDetails::default(),
+    }
+}
+
+fn media_stage_error() -> AppError {
+    AppError {
+        code: ErrorCode::MediaStageFailed,
+        message: "The image could not be staged".to_owned(),
+        retryable: true,
+        details: ErrorDetails::default(),
+    }
+}
+
 fn internal_error() -> AppError {
     AppError {
         code: ErrorCode::InternalError,
@@ -572,6 +662,7 @@ mod tests {
     };
 
     use serde_json::json;
+    use tempfile::tempdir;
 
     use crate::{
         capture::session::CaptureSessionService,
@@ -586,7 +677,11 @@ mod tests {
             ListCaptureContextSourcesInput, SaveTextCaptureInput, SelectCaptureContextSourceInput,
         },
         error::{CommandResult, ErrorCode},
-        platform::WindowCorrelationToken,
+        media::staging::MediaStore,
+        platform::{
+            WindowCorrelationToken,
+            clipboard::{ClipboardError, ClipboardImage, ClipboardImagePlatform},
+        },
         storage::{Database, contexts::ContextRepository},
     };
 
@@ -595,7 +690,80 @@ mod tests {
         get_active_capture_session_value, list_capture_context_sources_value,
         save_text_capture_value, save_text_capture_with_registry_value,
         select_capture_context_source_value, select_capture_context_source_with_registry_value,
+        stage_clipboard_image_value,
     };
+
+    struct FakeClipboard(Result<ClipboardImage, ClipboardError>);
+
+    impl ClipboardImagePlatform for FakeClipboard {
+        fn read_image(&mut self) -> Result<ClipboardImage, ClipboardError> {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn image_staging_uses_the_native_port_and_preserves_only_opaque_session_media() {
+        let directory = tempdir().unwrap();
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        let media = Mutex::new(MediaStore::open(directory.path()).unwrap());
+        let clipboard = Mutex::new(FakeClipboard(Ok(ClipboardImage {
+            width: 1,
+            height: 1,
+            rgba: vec![1, 2, 3, 255],
+        })));
+
+        let result = stage_clipboard_image_value(
+            serde_json::to_value(crate::contract::StageClipboardImageInput {
+                session_id: session.session_id,
+            })
+            .unwrap(),
+            &service,
+            &media,
+            &clipboard,
+        );
+
+        let CommandResult::Success { data: staged, .. } = result else {
+            panic!("image staging failed")
+        };
+        assert_eq!(staged.width_px, Some(1));
+        assert!(
+            !serde_json::to_string(&staged)
+                .unwrap()
+                .contains(&directory.path().display().to_string())
+        );
+        assert_eq!(
+            service
+                .lock()
+                .unwrap()
+                .active_session()
+                .unwrap()
+                .staged_media,
+            Some(staged)
+        );
+    }
+
+    #[test]
+    fn unsupported_clipboard_content_leaves_the_active_session_unchanged() {
+        let directory = tempdir().unwrap();
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        let media = Mutex::new(MediaStore::open(directory.path()).unwrap());
+        let clipboard = Mutex::new(FakeClipboard(Err(ClipboardError::UnsupportedContent)));
+
+        let result = stage_clipboard_image_value(
+            json!({ "sessionId": session.session_id }),
+            &service,
+            &media,
+            &clipboard,
+        );
+
+        let CommandResult::Failure { error, .. } = result else {
+            panic!("unsupported clipboard succeeded")
+        };
+        assert_eq!(error.code, ErrorCode::UnsupportedClipboardContent);
+        assert_eq!(service.lock().unwrap().active_session().unwrap(), session);
+    }
 
     #[test]
     fn repeated_get_returns_the_same_active_session() {

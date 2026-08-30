@@ -95,3 +95,5 @@ export type CaptureDetail = { id: CaptureId, kind: CaptureKind, context: Context
 export type Page<T> = { items: Array<T>, nextCursor: string | null, };
 
 export type SaveTextCaptureInput = { sessionId: CaptureSessionId, textBody: string, };
+
+export type StageClipboardImageInput = { sessionId: CaptureSessionId, };

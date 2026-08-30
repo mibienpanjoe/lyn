@@ -79,6 +79,8 @@ struct StagedAsset {
     path: PathBuf,
     byte_size: u64,
     checksum: String,
+    width_px: Option<u32>,
+    height_px: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -128,6 +130,8 @@ impl MediaStore {
             path,
             byte_size: bytes.len() as u64,
             checksum: checksum(bytes),
+            width_px: None,
+            height_px: None,
         };
         self.staged.insert(staged_media_id, asset);
         Ok(StagedMedia {
@@ -140,6 +144,29 @@ impl MediaStore {
             width_px: None,
             height_px: None,
         })
+    }
+
+    pub(crate) fn stage_image_png(
+        &mut self,
+        session_id: CaptureSessionId,
+        bytes: &[u8],
+        width_px: u32,
+        height_px: u32,
+    ) -> Result<StagedMedia, StagingError> {
+        if width_px == 0 || height_px == 0 {
+            return Err(StagingError::InvalidMedia);
+        }
+        let mut staged =
+            self.stage_bytes(session_id, MediaKind::Image, MediaMimeType::ImagePng, bytes)?;
+        let asset = self
+            .staged
+            .get_mut(&staged.staged_media_id)
+            .ok_or(StagingError::UnknownStagedMedia)?;
+        asset.width_px = Some(width_px);
+        asset.height_px = Some(height_px);
+        staged.width_px = Some(width_px);
+        staged.height_px = Some(height_px);
+        Ok(staged)
     }
 
     pub(crate) fn finalize(
@@ -224,7 +251,10 @@ impl MediaStore {
     }
 
     #[cfg(test)]
-    fn staged_bytes(&self, staged_media_id: StagedMediaId) -> Result<Vec<u8>, StagingError> {
+    pub(crate) fn staged_bytes(
+        &self,
+        staged_media_id: StagedMediaId,
+    ) -> Result<Vec<u8>, StagingError> {
         let asset = self
             .staged
             .get(&staged_media_id)
