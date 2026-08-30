@@ -369,28 +369,14 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <main class="capture-shell" aria-label="Quick capture">
-  <section class="capture-popup">
-    <label class="sr-only" for="capture-text">Capture text</label>
-    <textarea
-      bind:this={draftInput}
-      bind:value={draft}
-      class="capture-input"
-      id="capture-text"
-      name="capture-text"
-      placeholder="Type or paste anything…"
-      aria-describedby={error ? 'capture-error' : undefined}
-      oncompositionstart={() => (isComposing = true)}
-      oncompositionend={() => (isComposing = false)}
-      onpaste={handlePaste}></textarea>
-
+  <section
+    class="capture-popup"
+    class:media-mode={session?.stagedMedia != null}
+  >
     {#if session?.stagedMedia?.kind === 'image'}
       <figure class="image-preview">
-        <img
-          src={session.stagedMedia.previewUri}
-          alt="Screenshot ready to save"
-        />
         <figcaption>
-          <span>Screenshot ready</span>
+          <span>Screenshot preview</span>
           <button
             type="button"
             disabled={isStagingImage}
@@ -398,49 +384,81 @@
             >{isStagingImage ? 'Replacing…' : 'Replace'}</button
           >
         </figcaption>
+        <div class="image-preview-frame">
+          <img
+            src={session.stagedMedia.previewUri}
+            alt="Screenshot ready to save"
+          />
+        </div>
       </figure>
     {/if}
 
-    <section class="voice-controls" aria-label="Voice capture">
-      <button
-        type="button"
-        class:recording={session?.recordingState.state === 'recording'}
-        disabled={!session ||
-          isRecordingAction ||
-          session.stagedMedia?.kind === 'image'}
-        aria-pressed={session?.recordingState.state === 'recording'}
-        onclick={toggleRecording}
-      >
-        <span class="record-dot" aria-hidden="true"></span>
-        {session?.recordingState.state === 'recording'
-          ? isRecordingAction
-            ? 'Stopping…'
-            : 'Stop recording'
-          : isRecordingAction
-            ? 'Starting…'
-            : session?.stagedMedia?.kind === 'audio'
-              ? 'Record again'
-              : 'Record voice'}
-      </button>
+    <label
+      class:sr-only={session?.stagedMedia == null}
+      class="capture-label"
+      for="capture-text"
+      >{session?.stagedMedia?.kind === 'image'
+        ? 'Screenshot caption (optional)'
+        : session?.stagedMedia?.kind === 'audio'
+          ? 'Voice caption (optional)'
+          : 'Capture text'}</label
+    >
+    <textarea
+      bind:this={draftInput}
+      bind:value={draft}
+      class="capture-input"
+      id="capture-text"
+      name="capture-text"
+      placeholder={session?.stagedMedia?.kind === 'image'
+        ? 'Add a note about this screenshot…'
+        : session?.stagedMedia?.kind === 'audio'
+          ? 'Add a note about this voice recording…'
+          : 'Type or paste anything…'}
+      aria-describedby={error ? 'capture-error' : undefined}
+      oncompositionstart={() => (isComposing = true)}
+      oncompositionend={() => (isComposing = false)}
+      onpaste={handlePaste}></textarea>
 
-      {#if session?.stagedMedia?.kind === 'audio'}
-        <span class="voice-duration"
-          >{formatDuration(session.stagedMedia.durationMs)}</span
-        >
+    {#if session?.stagedMedia?.kind !== 'image'}
+      <section class="voice-controls" aria-label="Voice capture">
         <button
           type="button"
-          class="playback-button"
-          aria-pressed={isPlaying}
-          onclick={togglePlayback}
-          >{isPlaying ? 'Stop playback' : 'Play'}</button
+          class:recording={session?.recordingState.state === 'recording'}
+          disabled={!session || isRecordingAction}
+          aria-pressed={session?.recordingState.state === 'recording'}
+          onclick={toggleRecording}
         >
-      {/if}
-      {#if session?.recordingState.state === 'recording'}
-        <span class="recording-status" role="status" aria-live="polite"
-          >Recording voice note</span
-        >
-      {/if}
-    </section>
+          <span class="record-dot" aria-hidden="true"></span>
+          {session?.recordingState.state === 'recording'
+            ? isRecordingAction
+              ? 'Stopping…'
+              : 'Stop recording'
+            : isRecordingAction
+              ? 'Starting…'
+              : session?.stagedMedia?.kind === 'audio'
+                ? 'Record again'
+                : 'Record voice'}
+        </button>
+
+        {#if session?.stagedMedia?.kind === 'audio'}
+          <span class="voice-duration"
+            >{formatDuration(session.stagedMedia.durationMs)}</span
+          >
+          <button
+            type="button"
+            class="playback-button"
+            aria-pressed={isPlaying}
+            onclick={togglePlayback}
+            >{isPlaying ? 'Stop playback' : 'Play'}</button
+          >
+        {/if}
+        {#if session?.recordingState.state === 'recording'}
+          <span class="recording-status" role="status" aria-live="polite"
+            >Recording voice note</span
+          >
+        {/if}
+      </section>
+    {/if}
 
     <ContextIndicator
       bind:button={contextButton}

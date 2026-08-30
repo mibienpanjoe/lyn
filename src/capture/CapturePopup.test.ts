@@ -172,6 +172,18 @@ describe('quick-capture popup', () => {
     ).toHaveAttribute('src', 'lyn-media://staged/staged-image-1');
     expect(client.stageClipboardImage).toHaveBeenCalledWith('session-1');
     expect(input).toHaveValue('  Manual caption  ');
+    expect(
+      screen.getByRole('textbox', { name: 'Screenshot caption (optional)' }),
+    ).toHaveAttribute('placeholder', 'Add a note about this screenshot…');
+    expect(screen.getByText('Screenshot preview')).toBeVisible();
+    expect(
+      screen.queryByRole('button', { name: 'Record voice' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen
+        .getByRole('img', { name: 'Screenshot ready to save' })
+        .compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
 
     await fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() =>
