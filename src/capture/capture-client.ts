@@ -65,10 +65,14 @@ export function createCaptureClient(call: Invoke = invoke): CaptureClient {
       return result.contexts;
     },
     createStandaloneContext: async (name) => {
-      const result = await command<CreateContextResult>(call, 'create_context', {
-        kind: 'standalone',
-        name,
-      });
+      const result = await command<CreateContextResult>(
+        call,
+        'create_context',
+        {
+          kind: 'standalone',
+          name,
+        },
+      );
       return result.context;
     },
     selectContext: (sessionId, contextId) =>

@@ -6,10 +6,7 @@ import type {
   ContextRef,
   SaveCaptureResult,
 } from '../lib/ipc-types';
-import {
-  CaptureCommandError,
-  createCaptureClient,
-} from './capture-client';
+import { CaptureCommandError, createCaptureClient } from './capture-client';
 
 const context: ContextRef = {
   id: 'context-1',
@@ -67,10 +64,7 @@ describe('capture client', () => {
 
     expect(invoke.mock.calls).toEqual([
       ['get_active_capture_session', { input: {} }],
-      [
-        'list_contexts',
-        { input: { kind: null, query: null, limit: 100 } },
-      ],
+      ['list_contexts', { input: { kind: null, query: null, limit: 100 } }],
       [
         'select_capture_context_source',
         {
@@ -101,14 +95,8 @@ describe('capture client', () => {
     await client.cancel(session.sessionId);
 
     expect(invoke.mock.calls).toEqual([
-      [
-        'create_context',
-        { input: { kind: 'standalone', name: 'Inbox' } },
-      ],
-      [
-        'cancel_capture_session',
-        { input: { sessionId: 'session-1' } },
-      ],
+      ['create_context', { input: { kind: 'standalone', name: 'Inbox' } }],
+      ['cancel_capture_session', { input: { sessionId: 'session-1' } }],
     ]);
   });
 
