@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 import type {
   AppError,
+  AudioPlaybackResult,
   CancelCaptureSessionResult,
   CaptureSession,
   CommandResult,
@@ -16,6 +17,7 @@ import type {
   ListContextsResult,
   SaveCaptureResult,
   StagedMedia,
+  RecordingState,
 } from '../lib/ipc-types';
 
 type Invoke = <T>(
@@ -45,6 +47,21 @@ export interface CaptureClient {
   ): Promise<SaveCaptureResult>;
   stageClipboardImage(sessionId: CaptureSessionId): Promise<StagedMedia>;
   saveImage(
+    sessionId: CaptureSessionId,
+    stagedMediaId: string,
+    caption: string | null,
+  ): Promise<SaveCaptureResult>;
+  startAudioRecording(
+    sessionId: CaptureSessionId,
+    inputDeviceId?: string | null,
+  ): Promise<RecordingState>;
+  stopAudioRecording(sessionId: CaptureSessionId): Promise<StagedMedia>;
+  playStagedAudio(
+    sessionId: CaptureSessionId,
+    stagedMediaId: string,
+  ): Promise<AudioPlaybackResult>;
+  stopAudioPlayback(playbackTargetId: string): Promise<AudioPlaybackResult>;
+  saveAudio(
     sessionId: CaptureSessionId,
     stagedMediaId: string,
     caption: string | null,
@@ -126,6 +143,28 @@ export function createCaptureClient(call: Invoke = invoke): CaptureClient {
       command<StagedMedia>(call, 'stage_clipboard_image', { sessionId }),
     saveImage: (sessionId, stagedMediaId, caption) =>
       command<SaveCaptureResult>(call, 'save_image_capture', {
+        sessionId,
+        stagedMediaId,
+        caption,
+      }),
+    startAudioRecording: (sessionId, inputDeviceId = null) =>
+      command<RecordingState>(call, 'start_audio_recording', {
+        sessionId,
+        inputDeviceId,
+      }),
+    stopAudioRecording: (sessionId) =>
+      command<StagedMedia>(call, 'stop_audio_recording', { sessionId }),
+    playStagedAudio: (sessionId, stagedMediaId) =>
+      command<AudioPlaybackResult>(call, 'play_staged_audio', {
+        sessionId,
+        stagedMediaId,
+      }),
+    stopAudioPlayback: (playbackTargetId) =>
+      command<AudioPlaybackResult>(call, 'stop_audio_playback', {
+        playbackTargetId,
+      }),
+    saveAudio: (sessionId, stagedMediaId, caption) =>
+      command<SaveCaptureResult>(call, 'save_audio_capture', {
         sessionId,
         stagedMediaId,
         caption,

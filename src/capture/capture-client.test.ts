@@ -148,6 +148,51 @@ describe('capture client', () => {
     ]);
   });
 
+  it('uses typed session-scoped voice recording, playback, and save inputs', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      ok: true,
+      data: { state: 'recording', elapsedMs: 0 },
+    });
+    const client = createCaptureClient(invoke);
+
+    await client.startAudioRecording('session-1');
+    await client.stopAudioRecording('session-1');
+    await client.playStagedAudio('session-1', 'staged-audio-1');
+    await client.stopAudioPlayback('staged-audio-1');
+    await client.saveAudio('session-1', 'staged-audio-1', 'caption');
+
+    expect(invoke.mock.calls).toEqual([
+      [
+        'start_audio_recording',
+        { input: { sessionId: 'session-1', inputDeviceId: null } },
+      ],
+      ['stop_audio_recording', { input: { sessionId: 'session-1' } }],
+      [
+        'play_staged_audio',
+        {
+          input: {
+            sessionId: 'session-1',
+            stagedMediaId: 'staged-audio-1',
+          },
+        },
+      ],
+      [
+        'stop_audio_playback',
+        { input: { playbackTargetId: 'staged-audio-1' } },
+      ],
+      [
+        'save_audio_capture',
+        {
+          input: {
+            sessionId: 'session-1',
+            stagedMediaId: 'staged-audio-1',
+            caption: 'caption',
+          },
+        },
+      ],
+    ]);
+  });
+
   it('lists and selects opaque live context sources', async () => {
     const sourceResult = {
       liveSources: [],

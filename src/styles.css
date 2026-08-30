@@ -100,7 +100,7 @@ textarea:focus-visible {
 
 .capture-popup {
   display: grid;
-  grid-template-areas: 'context' 'chooser' 'input' 'preview' 'error' 'actions';
+  grid-template-areas: 'context' 'chooser' 'input' 'preview' 'voice' 'error' 'actions';
   width: min(100%, 560px);
   min-height: 168px;
   overflow: hidden;
@@ -350,6 +350,65 @@ textarea:focus-visible {
 
 .image-preview button:hover:not(:disabled) {
   background: var(--color-surface-subtle);
+}
+
+.voice-controls {
+  grid-area: voice;
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-5) var(--space-3);
+}
+
+.voice-controls button {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-control);
+  background: transparent;
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    transform 150ms ease-out;
+}
+
+.voice-controls button:hover:not(:disabled) {
+  background: var(--color-surface-subtle);
+}
+
+.voice-controls button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.voice-controls button.recording {
+  border-color: var(--color-error);
+  color: var(--color-error);
+  background: var(--color-error-soft);
+}
+
+.record-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--color-error);
+}
+
+.voice-duration,
+.recording-status {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.recording-status {
+  margin-left: auto;
+  color: var(--color-error);
+}
+
+.playback-button {
+  color: var(--color-accent);
 }
 
 .capture-error {

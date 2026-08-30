@@ -86,6 +86,33 @@ function createClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
       capturedAt: '2026-08-29T10:00:00Z',
       enrichmentScheduled: false,
     }),
+    startAudioRecording: vi.fn().mockResolvedValue({
+      state: 'recording',
+      elapsedMs: 0,
+    }),
+    stopAudioRecording: vi.fn().mockResolvedValue({
+      stagedMediaId: 'staged-audio-1',
+      kind: 'audio',
+      previewUri: 'lyn-media://staged/staged-audio-1',
+      mimeType: 'audio/wav',
+      byteSize: 3200,
+      durationMs: 1250,
+      widthPx: null,
+      heightPx: null,
+    }),
+    playStagedAudio: vi.fn().mockResolvedValue({
+      playing: true,
+      durationMs: 1250,
+    }),
+    stopAudioPlayback: vi.fn().mockResolvedValue({
+      playing: false,
+      durationMs: null,
+    }),
+    saveAudio: vi.fn().mockResolvedValue({
+      captureId: 'capture-audio-1',
+      capturedAt: '2026-08-29T10:00:00Z',
+      enrichmentScheduled: false,
+    }),
     cancel: vi.fn().mockResolvedValue({ cancelled: true }),
     dismissPopup: vi.fn().mockResolvedValue({
       dismissed: true,
@@ -183,6 +210,72 @@ describe('quick-capture popup', () => {
       screen.getByRole('img', { name: 'Screenshot ready to save' }),
     ).toBeVisible();
     expect(input).toHaveValue('Keep caption');
+  });
+
+  it('records, plays, stops, and saves a voice note with its exact caption', async () => {
+    const client = createClient();
+    const dismiss = vi.fn();
+    render(CapturePopup, { client, dismiss });
+    const input = screen.getByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(input, { target: { value: '  Voice caption  ' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Record voice' }));
+    expect(client.startAudioRecording).toHaveBeenCalledWith('session-1');
+    expect(await screen.findByRole('status', { name: '' })).toHaveTextContent(
+      'Recording voice note',
+    );
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Stop recording' }),
+    );
+    expect(client.stopAudioRecording).toHaveBeenCalledWith('session-1');
+    expect(await screen.findByText('0:01')).toBeVisible();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    expect(client.playStagedAudio).toHaveBeenCalledWith(
+      'session-1',
+      'staged-audio-1',
+    );
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Stop playback' }),
+    );
+    expect(client.stopAudioPlayback).toHaveBeenCalledWith('staged-audio-1');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(client.saveAudio).toHaveBeenCalledWith(
+        'session-1',
+        'staged-audio-1',
+        '  Voice caption  ',
+      ),
+    );
+    expect(client.saveText).not.toHaveBeenCalled();
+    expect(dismiss).toHaveBeenCalledOnce();
+  });
+
+  it('preserves a staged voice note and caption when audio save fails', async () => {
+    const failure: AppError = {
+      code: 'STORAGE_WRITE_FAILED',
+      message: 'The voice note could not be saved',
+      retryable: true,
+      details: {},
+    };
+    const client = createClient({
+      saveAudio: vi.fn().mockRejectedValue(new CaptureCommandError(failure)),
+    });
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    const input = screen.getByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(input, { target: { value: 'Keep voice caption' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Record voice' }));
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Stop recording' }),
+    );
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not');
+    expect(screen.getByRole('button', { name: 'Play' })).toBeVisible();
+    expect(input).toHaveValue('Keep voice caption');
   });
 
   it('leaves Shift+Enter to insert a newline without saving', async () => {

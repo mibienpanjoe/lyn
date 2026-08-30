@@ -35,6 +35,8 @@
   let error = $state<AppError | null>(null);
   let isSaving = $state(false);
   let isStagingImage = $state(false);
+  let isRecordingAction = $state(false);
+  let isPlaying = $state(false);
   let isCreatingContext = $state(false);
   let isComposing = $state(false);
   let cancelRequested = $state(false);
@@ -50,6 +52,7 @@
       error = null;
       chooserOpen = false;
       sourceStale = false;
+      isPlaying = false;
       void refreshSources();
       void tick().then(() => draftInput?.focus());
     });
@@ -199,6 +202,12 @@
           session.stagedMedia.stagedMediaId,
           draft,
         );
+      } else if (session.stagedMedia?.kind === 'audio') {
+        await client.saveAudio(
+          session.sessionId,
+          session.stagedMedia.stagedMediaId,
+          draft,
+        );
       } else {
         await client.saveText(session.sessionId, draft);
       }
@@ -215,6 +224,68 @@
     } finally {
       isSaving = false;
     }
+  }
+
+  async function toggleRecording() {
+    if (!session || isRecordingAction || session.stagedMedia?.kind === 'image')
+      return;
+    isRecordingAction = true;
+    error = null;
+    try {
+      if (session.recordingState.state === 'recording') {
+        const stagedMedia = await client.stopAudioRecording(session.sessionId);
+        session = {
+          ...session,
+          stagedMedia,
+          recordingState: {
+            state: 'stopped',
+            elapsedMs: stagedMedia.durationMs ?? 0,
+            stagedMediaId: stagedMedia.stagedMediaId,
+          },
+        };
+      } else {
+        const recordingState = await client.startAudioRecording(
+          session.sessionId,
+        );
+        session = { ...session, stagedMedia: null, recordingState };
+        isPlaying = false;
+      }
+    } catch (caught) {
+      error = toAppError(
+        caught,
+        'Voice recording could not be completed. Try again.',
+      );
+    } finally {
+      isRecordingAction = false;
+    }
+  }
+
+  async function togglePlayback() {
+    const staged = session?.stagedMedia;
+    if (!session || staged?.kind !== 'audio') return;
+    error = null;
+    try {
+      if (isPlaying) {
+        await client.stopAudioPlayback(staged.stagedMediaId);
+        isPlaying = false;
+      } else {
+        const result = await client.playStagedAudio(
+          session.sessionId,
+          staged.stagedMediaId,
+        );
+        isPlaying = result.playing;
+      }
+    } catch (caught) {
+      isPlaying = false;
+      error = toAppError(caught, 'Voice note playback failed. Try again.');
+    }
+  }
+
+  function formatDuration(durationMs: number | null) {
+    const totalSeconds = Math.max(0, Math.round((durationMs ?? 0) / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = String(totalSeconds % 60).padStart(2, '0');
+    return `${minutes}:${seconds}`;
   }
 
   async function stageImage() {
@@ -314,6 +385,47 @@
         </figcaption>
       </figure>
     {/if}
+
+    <section class="voice-controls" aria-label="Voice capture">
+      <button
+        type="button"
+        class:recording={session?.recordingState.state === 'recording'}
+        disabled={!session ||
+          isRecordingAction ||
+          session.stagedMedia?.kind === 'image'}
+        aria-pressed={session?.recordingState.state === 'recording'}
+        onclick={toggleRecording}
+      >
+        <span class="record-dot" aria-hidden="true"></span>
+        {session?.recordingState.state === 'recording'
+          ? isRecordingAction
+            ? 'Stopping…'
+            : 'Stop recording'
+          : isRecordingAction
+            ? 'Starting…'
+            : session?.stagedMedia?.kind === 'audio'
+              ? 'Record again'
+              : 'Record voice'}
+      </button>
+
+      {#if session?.stagedMedia?.kind === 'audio'}
+        <span class="voice-duration"
+          >{formatDuration(session.stagedMedia.durationMs)}</span
+        >
+        <button
+          type="button"
+          class="playback-button"
+          aria-pressed={isPlaying}
+          onclick={togglePlayback}
+          >{isPlaying ? 'Stop playback' : 'Play'}</button
+        >
+      {/if}
+      {#if session?.recordingState.state === 'recording'}
+        <span class="recording-status" role="status" aria-live="polite"
+          >Recording voice note</span
+        >
+      {/if}
+    </section>
 
     <ContextIndicator
       bind:button={contextButton}
