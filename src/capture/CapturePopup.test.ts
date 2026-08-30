@@ -51,6 +51,11 @@ function createClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
       enrichmentScheduled: false,
     }),
     cancel: vi.fn().mockResolvedValue({ cancelled: true }),
+    dismissPopup: vi.fn().mockResolvedValue({
+      dismissed: true,
+      focusRestored: true,
+    }),
+    onSessionReady: vi.fn().mockResolvedValue(vi.fn()),
     ...overrides,
   };
 }

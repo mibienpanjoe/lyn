@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, tick } from 'svelte';
 
   import type { AppError, CaptureSession, ContextRef } from '../lib/ipc-types';
@@ -14,10 +13,7 @@
     dismiss?: () => Promise<void> | void;
   }
 
-  let {
-    client = captureClient,
-    dismiss = () => getCurrentWindow().close(),
-  }: Props = $props();
+  let { client = captureClient, dismiss }: Props = $props();
 
   let draft = $state('');
   let session = $state<CaptureSession | null>(null);
@@ -42,6 +38,17 @@
   onMount(() => {
     draftInput?.focus();
     void initialise();
+    const unlisten = client.onSessionReady((readySession) => {
+      session = readySession;
+      draft = '';
+      error = null;
+      chooserOpen = false;
+      void client.listContexts().then((saved) => (contexts = saved));
+      void tick().then(() => draftInput?.focus());
+    });
+    return () => {
+      void unlisten.then((removeListener) => removeListener());
+    };
   });
 
   async function initialise() {
@@ -144,7 +151,7 @@
     error = null;
     try {
       await client.saveText(session.sessionId, draft);
-      await dismiss();
+      await (dismiss?.() ?? client.dismissPopup());
     } catch (caught) {
       error = toAppError(caught, 'The capture could not be saved. Try again.');
       await tick();
@@ -161,7 +168,7 @@
     }
     try {
       await client.cancel(session.sessionId);
-      await dismiss();
+      await (dismiss?.() ?? client.dismissPopup());
     } catch (caught) {
       error = toAppError(
         caught,

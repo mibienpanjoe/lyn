@@ -88,15 +88,21 @@ describe('capture client', () => {
     const invoke = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, data: { context } })
-      .mockResolvedValueOnce({ ok: true, data: { cancelled: true } });
+      .mockResolvedValueOnce({ ok: true, data: { cancelled: true } })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { dismissed: true, focusRestored: true },
+      });
     const client = createCaptureClient(invoke);
 
     await client.createStandaloneContext('Inbox');
     await client.cancel(session.sessionId);
+    await client.dismissPopup();
 
     expect(invoke.mock.calls).toEqual([
       ['create_context', { input: { kind: 'standalone', name: 'Inbox' } }],
       ['cancel_capture_session', { input: { sessionId: 'session-1' } }],
+      ['dismiss_capture_popup', { input: {} }],
     ]);
   });
 

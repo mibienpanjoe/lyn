@@ -316,6 +316,13 @@ pub struct CancelCaptureSessionResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DismissCapturePopupResult {
+    pub dismissed: bool,
+    pub focus_restored: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SelectCaptureContextSourceInput {
     pub session_id: CaptureSessionId,
@@ -431,6 +438,7 @@ pub fn typescript_bindings() -> String {
         CaptureSession::decl(&config),
         CancelCaptureSessionInput::decl(&config),
         CancelCaptureSessionResult::decl(&config),
+        DismissCapturePopupResult::decl(&config),
         SelectCaptureContextSourceInput::decl(&config),
         SaveCaptureResult::decl(&config),
         MediaSummary::decl(&config),

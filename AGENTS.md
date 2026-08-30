@@ -4,7 +4,7 @@
 
 Lyn has a Phase 0 Svelte/Tauri shell; `README.md` is the entry point. Read `docs/project_overview.md`, then `01_requirements_prd.md` through `07_visual_identity.md`. Preserve requirement, invariant, and error IDs across documents.
 
-Svelte 5/TypeScript UI lives under `src/`; the Tauri/Rust core and narrow capability manifest live under `src-tauri/`. Ordered SQLite migrations live under `src-tauri/migrations/` and must remain immutable after release. Keep presentation and IPC clients in `src/`; storage, capture-session state, context detection, media, and OS integration belong in Rust. Capture-session transitions live in `src-tauri/src/capture/session.rs`; command gateways live under `src-tauri/src/commands/`, with parameterized context/capture persistence isolated under `src-tauri/src/storage/`.
+Svelte 5/TypeScript UI lives under `src/`; the Tauri/Rust core and narrow capability manifest live under `src-tauri/`. Ordered SQLite migrations live under `src-tauri/migrations/` and must remain immutable after release. Keep presentation and IPC clients in `src/`; storage, capture-session state, context detection, media, and OS integration belong in Rust. Capture-session transitions live in `src-tauri/src/capture/session.rs`; command gateways live under `src-tauri/src/commands/`, parameterized context/capture persistence stays under `src-tauri/src/storage/`, and platform-specific shortcut/focus adapters stay behind `src-tauri/src/platform/` ports.
 
 ## Build, Test, and Development Commands
 

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 import type {
   AppError,
@@ -9,6 +10,7 @@ import type {
   ContextRef,
   CaptureSessionId,
   CreateContextResult,
+  DismissCapturePopupResult,
   ListContextsResult,
   SaveCaptureResult,
 } from '../lib/ipc-types';
@@ -31,6 +33,10 @@ export interface CaptureClient {
     textBody: string,
   ): Promise<SaveCaptureResult>;
   cancel(sessionId: CaptureSessionId): Promise<CancelCaptureSessionResult>;
+  dismissPopup(): Promise<DismissCapturePopupResult>;
+  onSessionReady(
+    listener: (session: CaptureSession) => void,
+  ): Promise<UnlistenFn>;
 }
 
 export class CaptureCommandError extends Error {
@@ -89,6 +95,16 @@ export function createCaptureClient(call: Invoke = invoke): CaptureClient {
       command<CancelCaptureSessionResult>(call, 'cancel_capture_session', {
         sessionId,
       }),
+    dismissPopup: () =>
+      command<DismissCapturePopupResult>(call, 'dismiss_capture_popup', {}),
+    onSessionReady: (listener) => {
+      if (!('__TAURI_INTERNALS__' in window)) {
+        return Promise.resolve(() => undefined);
+      }
+      return listen<CaptureSession>('capture://session-ready', (event) =>
+        listener(event.payload),
+      );
+    },
   };
 }
 

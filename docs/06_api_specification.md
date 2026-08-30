@@ -281,6 +281,18 @@ Cancel the session and remove only its staged media.
 
 **Errors:** `VALIDATION_ERROR`, `STALE_SESSION`, `INTERNAL_ERROR` when cleanup is deferred. A deferred cleanup error MUST NOT create a capture. The implemented state machine queues cleanup by the cancelled session and staged-media identifiers; the Media Service worker that performs filesystem cleanup remains a later slice.
 
+### `dismiss_capture_popup`
+
+Hide the capture popup after a successful save or cancellation and attempt to restore the invocation-bound foreground window. The native correlation token remains transient and Rust-only.
+
+**Input:** `{}`
+
+**Success:** `CommandResult<{ dismissed: true; focusRestored: boolean }>`
+
+`focusRestored` is false when the popup was opened directly or the first supported platform cannot safely reactivate the recorded window. Dismissal remains successful in that recoverable case.
+
+**Errors:** `VALIDATION_ERROR`, `INTERNAL_ERROR` when the popup cannot be hidden.
+
 ### `save_text_capture`
 
 Commit a titleless text capture.
