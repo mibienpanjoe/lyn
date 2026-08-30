@@ -80,6 +80,25 @@ impl CaptureSessionService {
         Ok(session.clone())
     }
 
+    pub(crate) fn discard_staged_media(
+        &mut self,
+        session_id: CaptureSessionId,
+        staged_media_id: StagedMediaId,
+    ) -> Result<CaptureSession, SessionStateError> {
+        let session = self.active_mut(session_id)?;
+        if session
+            .staged_media
+            .as_ref()
+            .map(|media| media.staged_media_id)
+            != Some(staged_media_id)
+        {
+            return Err(SessionStateError::StaleSession);
+        }
+        session.staged_media = None;
+        session.recording_state = RecordingState::Idle;
+        Ok(session.clone())
+    }
+
     pub(crate) fn start_recording(
         &mut self,
         session_id: CaptureSessionId,
@@ -298,6 +317,30 @@ mod tests {
             RecordingState::Recording { .. }
         ));
         assert!(restarted.staged_media.is_some());
+    }
+
+    #[test]
+    fn discarding_media_returns_to_text_without_changing_context() {
+        let mut service = CaptureSessionService::default();
+        let session = service.get_or_prepare();
+        let staged = staged_image();
+        service
+            .set_context_resolution(session.session_id, resolved_context())
+            .unwrap();
+        service
+            .set_staged_media(session.session_id, staged.clone())
+            .unwrap();
+
+        let cleared = service
+            .discard_staged_media(session.session_id, staged.staged_media_id)
+            .unwrap();
+
+        assert_eq!(cleared.staged_media, None);
+        assert_eq!(cleared.recording_state, RecordingState::Idle);
+        assert!(matches!(
+            cleared.context_resolution,
+            ContextResolution::Resolved { .. }
+        ));
     }
 
     #[test]

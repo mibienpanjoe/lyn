@@ -341,6 +341,18 @@ Read the current clipboard through Platform Service, encode supported image data
 
 The frontend does not send raw clipboard bytes or a source path through IPC.
 
+### `discard_staged_media`
+
+Remove the exact session-owned staged image or audio asset and return the active session to text-capture state without changing its draft or selected context.
+
+**Input:** `{ sessionId: string; stagedMediaId: string }`
+
+**Success:** `CommandResult<CaptureSession>` with `stagedMedia = null` and `recordingState.state = "idle"`.
+
+**Errors:** `VALIDATION_ERROR`, `MEDIA_NOT_FOUND`, `STALE_SESSION`, `INTERNAL_ERROR`.
+
+The command accepts only an opaque staged-media identifier owned by the active session. It cannot remove canonical media or another session's staging.
+
 ### `save_image_capture`
 
 Finalize and commit the staged PNG.
@@ -778,6 +790,7 @@ No concrete model distributor is selected in the source overview. A release MUST
 | Session | `cancel_capture_session` | Capture Service | Staging cleanup |
 | Capture | `save_text_capture` | Capture Service | Yes |
 | Screenshot | `stage_clipboard_image` | Media Service | Staging only |
+| Media | `discard_staged_media` | Capture Service + Media Service | Staging cleanup |
 | Screenshot | `save_image_capture` | Capture Service | Yes |
 | Voice | `start_audio_recording` | Media Service | Staging only |
 | Voice | `stop_audio_recording` | Media Service | Staging only |

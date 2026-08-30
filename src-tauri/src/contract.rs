@@ -421,6 +421,13 @@ pub struct StageClipboardImageInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DiscardStagedMediaInput {
+    pub session_id: CaptureSessionId,
+    pub staged_media_id: StagedMediaId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SaveImageCaptureInput {
     pub session_id: CaptureSessionId,
     pub staged_media_id: StagedMediaId,
@@ -520,6 +527,7 @@ pub fn typescript_bindings() -> String {
         Page::<String>::decl(&config),
         SaveTextCaptureInput::decl(&config),
         StageClipboardImageInput::decl(&config),
+        DiscardStagedMediaInput::decl(&config),
         SaveImageCaptureInput::decl(&config),
         StartAudioRecordingInput::decl(&config),
         StopAudioRecordingInput::decl(&config),

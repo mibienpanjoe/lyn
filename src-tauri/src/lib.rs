@@ -107,6 +107,7 @@ pub fn run() {
             commands::capture::select_capture_context_source,
             commands::capture::save_text_capture,
             commands::capture::stage_clipboard_image,
+            commands::capture::discard_staged_media,
             commands::capture::save_image_capture,
             commands::capture::start_audio_recording,
             commands::capture::stop_audio_recording,

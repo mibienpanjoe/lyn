@@ -9,11 +9,11 @@ use crate::{
     contract::{
         AudioPlaybackResult, CancelCaptureSessionInput, CancelCaptureSessionResult, CaptureSession,
         ContextCandidate, ContextProviderKind, ContextResolution, ContextSelection,
-        ContextSourceKind, ContextSourceOption, ListCaptureContextSourcesInput,
-        ListCaptureContextSourcesResult, PlayStagedAudioInput, RecordingState,
-        SaveAudioCaptureInput, SaveCaptureResult, SaveImageCaptureInput, SaveTextCaptureInput,
-        SelectCaptureContextSourceInput, StageClipboardImageInput, StagedMedia,
-        StartAudioRecordingInput, StopAudioPlaybackInput, StopAudioRecordingInput,
+        ContextSourceKind, ContextSourceOption, DiscardStagedMediaInput,
+        ListCaptureContextSourcesInput, ListCaptureContextSourcesResult, PlayStagedAudioInput,
+        RecordingState, SaveAudioCaptureInput, SaveCaptureResult, SaveImageCaptureInput,
+        SaveTextCaptureInput, SelectCaptureContextSourceInput, StageClipboardImageInput,
+        StagedMedia, StartAudioRecordingInput, StopAudioPlaybackInput, StopAudioRecordingInput,
     },
     error::{AppError, CommandResult, ErrorCode, ErrorDetailKey, ErrorDetailValue, ErrorDetails},
     media::{audio, images, staging::MediaStore},
@@ -278,6 +278,49 @@ pub(crate) fn stage_clipboard_image(
         media_store.inner(),
         clipboard.inner(),
     )
+}
+
+#[tauri::command]
+pub(crate) fn discard_staged_media(
+    input: serde_json::Value,
+    service: State<'_, Mutex<CaptureSessionService>>,
+    media_store: State<'_, Mutex<MediaStore>>,
+) -> CommandResult<CaptureSession> {
+    discard_staged_media_value(input, service.inner(), media_store.inner())
+}
+
+fn discard_staged_media_value(
+    input: serde_json::Value,
+    service: &Mutex<CaptureSessionService>,
+    media_store: &Mutex<MediaStore>,
+) -> CommandResult<CaptureSession> {
+    let Ok(input) = serde_json::from_value::<DiscardStagedMediaInput>(input) else {
+        return CommandResult::failure(validation_error());
+    };
+    let Ok(mut service) = service.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    let matches_active_media = service
+        .active_session()
+        .filter(|session| session.session_id == input.session_id)
+        .and_then(|session| session.staged_media)
+        .is_some_and(|media| media.staged_media_id == input.staged_media_id);
+    if !matches_active_media {
+        return CommandResult::failure(media_not_found_error());
+    }
+    let Ok(mut media_store) = media_store.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    if media_store
+        .discard_staged(input.session_id, input.staged_media_id)
+        .is_err()
+    {
+        return CommandResult::failure(media_not_found_error());
+    }
+    match service.discard_staged_media(input.session_id, input.staged_media_id) {
+        Ok(session) => CommandResult::success(session),
+        Err(_) => CommandResult::failure(stale_session_error()),
+    }
 }
 
 #[tauri::command]
@@ -1180,10 +1223,10 @@ mod tests {
     };
 
     use super::{
-        cancel_capture_session_value, drain_staging_cleanup, get_active_capture_session_impl,
-        get_active_capture_session_value, list_capture_context_sources_value,
-        play_staged_audio_value, save_audio_capture_value, save_image_capture_value,
-        save_text_capture_value, save_text_capture_with_registry_value,
+        cancel_capture_session_value, discard_staged_media_value, drain_staging_cleanup,
+        get_active_capture_session_impl, get_active_capture_session_value,
+        list_capture_context_sources_value, play_staged_audio_value, save_audio_capture_value,
+        save_image_capture_value, save_text_capture_value, save_text_capture_with_registry_value,
         select_capture_context_source_value, select_capture_context_source_with_registry_value,
         stage_clipboard_image_value, start_audio_recording_value, stop_audio_playback_value,
         stop_audio_recording_value,
@@ -1779,6 +1822,45 @@ mod tests {
         drain_staging_cleanup(&service, &media);
 
         assert!(matches!(result, CommandResult::Success { .. }));
+        assert!(
+            media
+                .lock()
+                .unwrap()
+                .staged_preview(staged.staged_media_id)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn discarding_staged_media_removes_only_the_selected_asset() {
+        let directory = tempdir().unwrap();
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        let mut media = MediaStore::open(directory.path()).unwrap();
+        let staged = media
+            .stage_image_png(session.session_id, b"png", 1, 1)
+            .unwrap();
+        service
+            .lock()
+            .unwrap()
+            .set_staged_media(session.session_id, staged.clone())
+            .unwrap();
+        let media = Mutex::new(media);
+
+        let discarded = discard_staged_media_value(
+            json!({
+                "sessionId": session.session_id,
+                "stagedMediaId": staged.staged_media_id
+            }),
+            &service,
+            &media,
+        );
+
+        let CommandResult::Success { data: session, .. } = discarded else {
+            panic!("discard failed")
+        };
+        assert_eq!(session.staged_media, None);
+        assert_eq!(session.recording_state, RecordingState::Idle);
         assert!(
             media
                 .lock()
