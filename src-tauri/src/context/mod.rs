@@ -1,5 +1,7 @@
 //! Context providers and invocation-bound resolution.
 
+pub(crate) mod provider;
+
 use std::{
     collections::HashMap,
     fs,

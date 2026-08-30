@@ -676,3 +676,9 @@ Treat the IPC surface in [`06_api_specification.md`](06_api_specification.md) as
 **Status:** Accepted, 2026-08-28.
 
 Lyn records the OS window active before capture, correlates it with validated editor/terminal observations, and offers safe live-session choices when inference is wrong or ambiguous. Explicit selection applies only to the current capture and cannot discard draft content. A global “last active project,” persistent live-session records, and exposure of terminal/editor/agent content are rejected because they become incorrect and invasive under concurrent windows and agents.
+
+### ADR-009 — Exact local correlations define provider support
+
+**Status:** Accepted, 2026-08-30.
+
+On the first X11 target, foreground-window identity is available as an opaque correlation but does not identify a project by itself. VS Code windows and integrated terminals are supported only when a local integration supplies their exact owning-window and, for terminals, active-session relationship. External terminal tabs are unsupported without a terminal-specific active-tab integration. Missing relationships produce ambiguity rather than title parsing or global-recency inference. The accepted feasibility matrix and remaining live checks are recorded in [`08_context_provider_feasibility.md`](08_context_provider_feasibility.md).

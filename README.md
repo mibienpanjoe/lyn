@@ -12,7 +12,7 @@ Lyn captures titleless text notes, screenshots, and voice notes, associates them
 
 ## Status
 
-Implementation has started. Phase 0 provides a verified Svelte 5/Vite shell, a minimal Tauri 2/Rust desktop shell, narrow window capabilities, and frontend/Rust smoke-test harnesses. Phase 1 now includes Rust-owned shared IPC primitives, startup initialization of the canonical SQLite/FTS schema through ordered migrations, validated manual contexts, a single-active-session state machine, and durable titleless text capture with FTS projection. Project directories enter only through a native picker and an expiring one-use token; raw paths remain inside Rust. Media files, automatic context detection, the capture popup, and Library behavior remain proposed.
+Implementation has started. Phase 0 provides a verified Svelte 5/Vite shell, a minimal Tauri 2/Rust desktop shell, narrow window capabilities, and frontend/Rust smoke-test harnesses. Phase 1 now includes Rust-owned shared IPC primitives, startup initialization of the canonical SQLite/FTS schema through ordered migrations, validated manual contexts, a single-active-session state machine, durable titleless text capture with FTS projection, and the quick-capture popup. Project directories enter only through a native picker and an expiring one-use token; raw paths remain inside Rust. Phase 2 has invocation-bound X11 foreground capture, Git worktree identity, and an accepted provider feasibility boundary; automatic context resolution remains in progress. Media files and Library behavior remain proposed.
 
 The first implementation baseline is Pop!_OS 22.04 LTS (Ubuntu-compatible, x86_64, X11), Node 24.12.0 with pnpm 10.28.0, and Rust 1.96.1. macOS, Windows, Wayland, and packaging support remain unverified and are not yet claimed.
 
@@ -45,5 +45,6 @@ pnpm tauri build --no-bundle
 - [System architecture](docs/05_architecture.md)
 - [Typed Tauri IPC specification](docs/06_api_specification.md)
 - [Visual identity](docs/07_visual_identity.md)
+- [Context provider feasibility](docs/08_context_provider_feasibility.md)
 
 The implemented shell uses Tauri 2, Rust, Svelte 5, TypeScript, Vite, and bundled SQLite through `rusqlite`. Rust owns the shared domain and IPC primitives, generated TypeScript bindings, database initialization, canonical schema, transactional migrations, context and text-capture repositories, native project-directory selection, and capture-session lifecycle. Lyn-owned media file storage remains planned for a later slice.
