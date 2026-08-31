@@ -93,6 +93,8 @@ pub fn run() {
                 capture::session::CaptureSessionService::default(),
             ));
             app.manage(Mutex::new(platform::InvocationContext::default()));
+            #[cfg(target_os = "linux")]
+            context::vscode_provider::start(app.handle().clone())?;
             #[cfg(desktop)]
             {
                 // Settings persistence replaces this initial default in T27.

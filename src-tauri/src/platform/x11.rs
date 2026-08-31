@@ -51,7 +51,7 @@ impl CaptureWindowPlatform for X11CaptureWindowPlatform {
     }
 }
 
-fn active_window() -> Result<u32, PlatformError> {
+pub(crate) fn active_window() -> Result<u32, PlatformError> {
     let (connection, screen_number) =
         x11rb::connect(None).map_err(|_| PlatformError::Unsupported)?;
     let root = connection
