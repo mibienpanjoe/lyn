@@ -1,10 +1,10 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.5, 2026-08-29
+Version: v1.6, 2026-08-31
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
-Contract status: **Shared primitives, manual contexts, capture-session lifecycle, and durable text save are implemented; remaining media, live-source, Library, settings, and enrichment commands are proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
+Contract status: **Shared primitives, manual and live contexts, capture-session lifecycle, durable text/media save, and popup window controls are implemented; remaining Library, settings, and enrichment commands are proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
 
 ## Conventions
 
@@ -293,6 +293,18 @@ Hide the capture popup after a successful save or cancellation and attempt to re
 `focusRestored` is false when the popup was opened directly or the first supported platform cannot safely reactivate the recorded window. Dismissal remains successful in that recoverable case.
 
 **Errors:** `VALIDATION_ERROR`, `INTERNAL_ERROR` when the popup cannot be hidden.
+
+### `set_capture_popup_layout`
+
+Resize the native capture window for the current presentation state without exposing arbitrary window dimensions to the frontend.
+
+**Input:** `{ layout: "compact" | "chooser" | "media" }`
+
+**Success:** `CommandResult<{ layout: "compact" | "chooser" | "media" }>`
+
+Rust maps each semantic state to a bounded logical height and preserves the current logical width. The frontend requests `chooser` while context selection is open, `media` while screenshot or voice media is staged, and `compact` otherwise. A resize failure is recoverable and MUST NOT modify or cancel the active capture session.
+
+**Errors:** `INTERNAL_ERROR` when the native window cannot be resized.
 
 ### `save_text_capture`
 
@@ -788,6 +800,7 @@ No concrete model distributor is selected in the source overview. A release MUST
 | Session | `list_capture_context_sources` | Context Resolver | No |
 | Session | `select_capture_context_source` | Capture Service + Context Resolver | Session only |
 | Session | `cancel_capture_session` | Capture Service | Staging cleanup |
+| Window | `set_capture_popup_layout` | Platform Service | Native window only |
 | Capture | `save_text_capture` | Capture Service | Yes |
 | Screenshot | `stage_clipboard_image` | Media Service | Staging only |
 | Media | `discard_staged_media` | Capture Service + Media Service | Staging cleanup |
