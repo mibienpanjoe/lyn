@@ -127,6 +127,34 @@ function createClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
 }
 
 describe('quick-capture popup', () => {
+  it('keeps required context and optional media actions visually quiet', async () => {
+    const client = createClient({
+      getActiveSession: vi.fn().mockResolvedValue(requiredSession),
+    });
+    const { container } = render(CapturePopup, {
+      client,
+      dismiss: vi.fn(),
+    });
+
+    const context = await screen.findByRole('button', {
+      name: 'Choose context',
+    });
+    expect(context).toHaveClass('context-attention');
+    expect(context).not.toHaveClass('context-required');
+    expect(context.querySelector('.context-status-dot')).toBeInTheDocument();
+
+    expect(screen.getByRole('button', { name: 'Screenshot' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Voice' })).toBeVisible();
+    expect(container.querySelector('.lucide-image')).toBeInTheDocument();
+    expect(container.querySelector('.lucide-mic')).toBeInTheDocument();
+
+    const keys = Array.from(container.querySelectorAll('.keyboard-hint kbd'));
+    expect(keys.map((key) => key.textContent)).toEqual(['⇧', 'Enter', 'Enter']);
+    expect(screen.getByText('New line')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeVisible();
+    expect((await axe.run(container)).violations).toEqual([]);
+  });
+
   it('adapts the native window between compact, chooser, and media layouts', async () => {
     const client = createClient();
     render(CapturePopup, { client, dismiss: vi.fn() });
@@ -147,9 +175,7 @@ describe('quick-capture popup', () => {
       expect(client.setPopupLayout).toHaveBeenLastCalledWith('compact'),
     );
 
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Paste screenshot' }),
-    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Screenshot' }));
     await waitFor(() =>
       expect(client.setPopupLayout).toHaveBeenLastCalledWith('media'),
     );
@@ -159,7 +185,7 @@ describe('quick-capture popup', () => {
       expect(client.setPopupLayout).toHaveBeenLastCalledWith('compact'),
     );
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Record voice' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Voice' }));
     await fireEvent.click(
       await screen.findByRole('button', { name: 'Stop recording' }),
     );
@@ -172,6 +198,30 @@ describe('quick-capture popup', () => {
     );
     await waitFor(() =>
       expect(client.setPopupLayout).toHaveBeenLastCalledWith('compact'),
+    );
+  });
+
+  it('grows the compact window when inline failure feedback appears', async () => {
+    const storageError: AppError = {
+      code: 'STORAGE_WRITE_FAILED',
+      message: 'The capture could not be saved',
+      retryable: true,
+      details: {},
+    };
+    const client = createClient({
+      saveText: vi
+        .fn()
+        .mockRejectedValue(new CaptureCommandError(storageError)),
+    });
+    render(CapturePopup, { client, dismiss: vi.fn() });
+
+    const input = screen.getByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(input, { target: { value: 'Keep this note' } });
+    await fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(await screen.findByRole('alert')).toBeVisible();
+    await waitFor(() =>
+      expect(client.setPopupLayout).toHaveBeenLastCalledWith('error'),
     );
   });
 
@@ -227,7 +277,7 @@ describe('quick-capture popup', () => {
     ).toHaveAttribute('placeholder', 'Add a note about this screenshot…');
     expect(screen.getByText('Screenshot preview')).toBeVisible();
     expect(
-      screen.queryByRole('button', { name: 'Record voice' }),
+      screen.queryByRole('button', { name: 'Voice' }),
     ).not.toBeInTheDocument();
     expect(
       screen
@@ -330,7 +380,7 @@ describe('quick-capture popup', () => {
       'Continue as text',
     );
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Record voice' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Voice' })).toBeVisible();
   });
 
   it('silently preserves ordinary paste when the native clipboard has no image', async () => {
@@ -393,7 +443,7 @@ describe('quick-capture popup', () => {
     const input = screen.getByRole('textbox', { name: 'Capture text' });
     await fireEvent.input(input, { target: { value: '  Voice caption  ' } });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Record voice' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Voice' }));
     expect(client.startAudioRecording).toHaveBeenCalledWith('session-1');
     expect(await screen.findByRole('status', { name: '' })).toHaveTextContent(
       'Recording voice note',
@@ -432,7 +482,7 @@ describe('quick-capture popup', () => {
     render(CapturePopup, { client, dismiss: vi.fn() });
     const input = screen.getByRole('textbox', { name: 'Capture text' });
     await fireEvent.input(input, { target: { value: 'Use as text instead' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Record voice' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Voice' }));
     await fireEvent.click(
       screen.getByRole('button', { name: 'Stop recording' }),
     );
@@ -468,7 +518,7 @@ describe('quick-capture popup', () => {
     render(CapturePopup, { client, dismiss: vi.fn() });
     const input = screen.getByRole('textbox', { name: 'Capture text' });
     await fireEvent.input(input, { target: { value: 'Keep voice caption' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Record voice' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Voice' }));
     await fireEvent.click(
       screen.getByRole('button', { name: 'Stop recording' }),
     );

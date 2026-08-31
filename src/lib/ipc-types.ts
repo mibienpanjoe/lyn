@@ -40,7 +40,7 @@ export type ContextSourceKind = "vscode_window" | "integrated_terminal" | "exter
 
 export type MediaKind = "image" | "audio";
 
-export type CapturePopupLayout = "compact" | "chooser" | "media";
+export type CapturePopupLayout = "compact" | "error" | "chooser" | "media";
 
 export type MediaMimeType = "image/png" | "audio/wav";
 

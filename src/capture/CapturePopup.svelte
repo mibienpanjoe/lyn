@@ -1,4 +1,6 @@
 <script lang="ts">
+  import ImageIcon from '@lucide/svelte/icons/image';
+  import MicIcon from '@lucide/svelte/icons/mic';
   import { onMount, tick } from 'svelte';
 
   import type {
@@ -46,7 +48,13 @@
   let draftInput = $state<HTMLTextAreaElement>();
   let contextButton = $state<HTMLButtonElement>();
   const popupLayout = $derived<CapturePopupLayout>(
-    chooserOpen ? 'chooser' : session?.stagedMedia ? 'media' : 'compact',
+    chooserOpen
+      ? 'chooser'
+      : session?.stagedMedia
+        ? 'media'
+        : error
+          ? 'error'
+          : 'compact',
   );
 
   $effect(() => {
@@ -470,23 +478,31 @@
         onpaste={handlePaste}></textarea>
 
       {#if session?.stagedMedia?.kind !== 'image'}
-        <section class="voice-controls" aria-label="Voice capture">
+        <section class="voice-controls" aria-label="Capture options">
           {#if session?.stagedMedia == null}
             <button
               type="button"
+              class="media-trigger"
               disabled={!session || isStagingImage}
               onclick={() => stageImage()}
-              >{isStagingImage ? 'Pasting…' : 'Paste screenshot'}</button
             >
+              <ImageIcon size={16} strokeWidth={1.5} aria-hidden="true" />
+              {isStagingImage ? 'Pasting…' : 'Screenshot'}
+            </button>
           {/if}
           <button
             type="button"
+            class="media-trigger"
             class:recording={session?.recordingState.state === 'recording'}
             disabled={!session || isRecordingAction}
             aria-pressed={session?.recordingState.state === 'recording'}
             onclick={toggleRecording}
           >
-            <span class="record-dot" aria-hidden="true"></span>
+            {#if session?.recordingState.state === 'recording'}
+              <span class="record-dot" aria-hidden="true"></span>
+            {:else}
+              <MicIcon size={16} strokeWidth={1.5} aria-hidden="true" />
+            {/if}
             {session?.recordingState.state === 'recording'
               ? isRecordingAction
                 ? 'Stopping…'
@@ -495,7 +511,7 @@
                 ? 'Starting…'
                 : session?.stagedMedia?.kind === 'audio'
                   ? 'Record again'
-                  : 'Record voice'}
+                  : 'Voice'}
           </button>
 
           {#if session?.stagedMedia?.kind === 'audio'}
@@ -560,8 +576,12 @@
     {#if !chooserOpen}
       <footer class="capture-actions">
         <p class="keyboard-hint">
-          <span><kbd>Shift</kbd> + <kbd>Enter</kbd> newline</span>
-          <span><kbd>Enter</kbd> save</span>
+          <span aria-label="Shift Enter: New line">
+            <kbd aria-hidden="true">⇧</kbd><kbd>Enter</kbd><span
+              class="hint-label">New line</span
+            >
+          </span>
+          <span><kbd>Enter</kbd><span class="hint-label">Save</span></span>
         </p>
         <div class="action-buttons">
           <button type="button" class="cancel-button" onclick={cancel}

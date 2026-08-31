@@ -146,6 +146,7 @@ pub enum MediaKind {
 #[serde(rename_all = "snake_case")]
 pub enum CapturePopupLayout {
     Compact,
+    Error,
     Chooser,
     Media,
 }

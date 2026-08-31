@@ -25,6 +25,7 @@
   --color-accent-hover: #205747;
   --color-accent-soft: #e3f0ea;
   --color-on-accent: #ffffff;
+  --color-warning: #9a5b13;
   --color-error: #b4232c;
   --color-error-soft: #fbe7e8;
   --shadow-surface:
@@ -161,8 +162,16 @@ textarea:focus-visible {
   background: var(--color-surface-subtle);
 }
 
-.context-control.context-required {
-  color: var(--color-error);
+.context-control.context-attention .context-label {
+  color: var(--color-text-muted);
+}
+
+.context-status-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-warning);
 }
 
 .context-icon,
@@ -331,23 +340,21 @@ textarea:focus-visible {
   font-weight: 500;
 }
 
-.context-create button,
-.save-button {
+.context-create button {
   border: 1px solid transparent;
   background: var(--color-accent);
   color: var(--color-on-accent);
   transition: background-color 150ms ease-out;
 }
 
-.context-create button:hover:not(:disabled),
-.save-button:hover:not(:disabled) {
+.context-create button:hover:not(:disabled) {
   background: var(--color-accent-hover);
 }
 
 .capture-input {
   grid-area: input;
   width: 100%;
-  min-height: 92px;
+  min-height: 66px;
   resize: none;
   padding: var(--space-4) var(--space-5) var(--space-3);
   border: 0;
@@ -442,15 +449,15 @@ textarea:focus-visible {
 .voice-controls {
   grid-area: voice;
   display: flex;
-  min-height: 44px;
+  min-height: 32px;
   align-items: center;
-  gap: var(--space-2);
-  margin: 0 var(--space-5) var(--space-3);
+  gap: var(--space-1);
+  margin: 0 var(--space-5) var(--space-1);
 }
 
 .voice-controls button {
-  min-height: 36px;
-  padding: 7px 12px;
+  min-height: 32px;
+  padding: 5px 8px;
   border: 1px solid var(--color-input-border);
   border-radius: var(--radius-control);
   background: transparent;
@@ -458,6 +465,18 @@ textarea:focus-visible {
     background-color 150ms ease-out,
     border-color 150ms ease-out,
     transform 150ms ease-out;
+}
+
+.voice-controls .media-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-color: transparent;
+  color: var(--color-text-muted);
+}
+
+.media-trigger svg {
+  flex: 0 0 auto;
 }
 
 .voice-controls button:hover:not(:disabled) {
@@ -523,12 +542,11 @@ textarea:focus-visible {
 .capture-actions {
   grid-area: actions;
   display: flex;
-  min-height: 52px;
+  min-height: 44px;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3) var(--space-3) var(--space-5);
-  border-top: 1px solid var(--color-divider);
+  padding: var(--space-1) var(--space-3) 6px var(--space-5);
 }
 
 .keyboard-hint,
@@ -545,9 +563,22 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.keyboard-hint > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 kbd {
+  min-width: 18px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-divider);
+  border-radius: 4px;
+  background: var(--color-surface-subtle);
   font-family: inherit;
   font-size: inherit;
+  line-height: 17px;
+  text-align: center;
 }
 
 .action-buttons {
@@ -555,8 +586,11 @@ kbd {
 }
 
 .cancel-button {
-  border: 1px solid var(--color-input-border);
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
   background: transparent;
+  color: var(--color-text-muted);
   transition: background-color 150ms ease-out;
 }
 
@@ -564,12 +598,28 @@ kbd {
   background: var(--color-surface-subtle);
 }
 
+.save-button {
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  transition:
+    background-color 150ms ease-out,
+    color 150ms ease-out;
+}
+
+.save-button:hover:not(:disabled) {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
 @media (max-width: 439px) {
   .capture-shell {
     place-items: start center;
   }
 
-  .keyboard-hint span:first-child,
+  .keyboard-hint > span:first-child,
   .cancel-button {
     display: none;
   }
@@ -594,6 +644,7 @@ kbd {
     --color-accent-hover: #8dd2b8;
     --color-accent-soft: #18372d;
     --color-on-accent: #102018;
+    --color-warning: #e5a44f;
     --color-error: #ff858b;
     --color-error-soft: #3c191c;
     --shadow-surface: 0 0 0 1px oklch(1 0 0 / 8%);
