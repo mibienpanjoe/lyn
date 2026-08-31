@@ -94,7 +94,9 @@ pub fn run() {
             ));
             app.manage(Mutex::new(platform::InvocationContext::default()));
             #[cfg(target_os = "linux")]
-            context::vscode_provider::start(app.handle().clone())?;
+            // Context providers enrich capture, but must never make core capture unavailable.
+            // A missing or unusable runtime socket therefore disables only this provider.
+            let _ = context::vscode_provider::start(app.handle().clone());
             #[cfg(desktop)]
             {
                 // Settings persistence replaces this initial default in T27.
