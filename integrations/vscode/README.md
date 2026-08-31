@@ -9,12 +9,12 @@ send editor contents, terminal commands or output, window titles, clipboard
 data, or agent conversations. Remote and multi-root workspaces are not selected
 automatically.
 
-Start Lyn before VS Code so the local provider socket is available. Package and
-install the extension from the repository root:
+Package and install the extension from the repository root:
 
 ```sh
 pnpm provider:vscode:package
 code --install-extension /tmp/lyn-context-provider.vsix --force
 ```
 
-Reload VS Code windows after installation.
+Reload existing VS Code windows after installation. While Lyn is running, the
+extension reconnects to its local socket automatically.

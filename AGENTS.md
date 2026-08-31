@@ -4,7 +4,7 @@
 
 Lyn has a Svelte/Tauri implementation; `README.md` is the entry point. Read `docs/project_overview.md`, then `01_requirements_prd.md` through `08_context_provider_feasibility.md`. Preserve requirement, invariant, and error IDs across documents.
 
-Svelte 5/TypeScript UI lives under `src/`; the Tauri/Rust core and narrow capability manifest live under `src-tauri/`. Ordered SQLite migrations live under `src-tauri/migrations/` and must remain immutable after release. Keep presentation and IPC clients in `src/`; storage, capture-session state, context detection, media, and OS integration belong in Rust. Capture-session transitions live in `src-tauri/src/capture/session.rs`; provider observations and their ephemeral registry live under `src-tauri/src/context/`; command gateways live under `src-tauri/src/commands/`, parameterized context/capture persistence stays under `src-tauri/src/storage/`, and platform-specific shortcut/focus/audio adapters stay behind `src-tauri/src/platform/` ports. Recoverable media staging is in `src-tauri/src/media/staging.rs`; PNG/WAV normalization stays under `src-tauri/src/media/`, and startup reconciliation reads durable media references through `src-tauri/src/storage/media_assets.rs`. Staged previews resolve through the read-only `lyn-media://` protocol by opaque ID; none of these boundaries may expose raw filesystem paths to the UI.
+Svelte 5/TypeScript UI lives under `src/`; the Tauri/Rust core and narrow capability manifest live under `src-tauri/`. The separately packaged local VS Code provider lives under `integrations/vscode/`; it may report focus state and local workspace folders only through the private Rust-owned socket. Ordered SQLite migrations live under `src-tauri/migrations/` and must remain immutable after release. Keep presentation and IPC clients in `src/`; storage, capture-session state, context detection, media, and OS integration belong in Rust. Capture-session transitions live in `src-tauri/src/capture/session.rs`; provider observations and their ephemeral registry live under `src-tauri/src/context/`; command gateways live under `src-tauri/src/commands/`, parameterized context/capture persistence stays under `src-tauri/src/storage/`, and platform-specific shortcut/focus/audio adapters stay behind `src-tauri/src/platform/` ports. Recoverable media staging is in `src-tauri/src/media/staging.rs`; PNG/WAV normalization stays under `src-tauri/src/media/`, and startup reconciliation reads durable media references through `src-tauri/src/storage/media_assets.rs`. Staged previews resolve through the read-only `lyn-media://` protocol by opaque ID; none of these boundaries may expose raw filesystem paths to the UI.
 
 ## Build, Test, and Development Commands
 
@@ -16,6 +16,8 @@ Use Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, and the documented Tauri system pre
 - `pnpm format:check` — check frontend/config formatting.
 - `pnpm check` — run Svelte and TypeScript checks.
 - `pnpm test` — run frontend component/accessibility tests once.
+- `pnpm provider:vscode:test` — run the VS Code provider's dependency-free Node contract tests.
+- `pnpm provider:vscode:package` — create `/tmp/lyn-context-provider.vsix` for local installation.
 - `pnpm icons` — regenerate platform icons from the tracked SVG master.
 - `cargo fmt --check --manifest-path src-tauri/Cargo.toml` — check Rust formatting.
 - `cargo test --manifest-path src-tauri/Cargo.toml` — run Rust tests.

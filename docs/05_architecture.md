@@ -543,6 +543,8 @@ The overview does not establish the first supported operating system. Release do
 ## Project Structure
 
 ```text
+integrations/vscode/       # Separately packaged local workspace provider
+
 src/
 ├── capture/
 │   ├── components/
@@ -563,13 +565,10 @@ src-tauri/src/
 ├── commands/             # Command Gateway only
 ├── capture/              # Capture Service
 ├── context/              # Context Resolver and providers
+│   ├── provider.rs
+│   ├── resolver.rs
 │   ├── session_registry.rs
-│   ├── shell.rs
-│   ├── vscode.rs
-│   ├── foreground.rs
-│   ├── manual.rs
-│   ├── git.rs
-│   └── worktree.rs
+│   └── vscode_provider.rs
 ├── storage/              # Storage Service
 │   ├── db.rs
 │   ├── migrations.rs
@@ -584,6 +583,10 @@ src-tauri/src/
 ├── enrichment/           # Enrichment Service
 ├── intelligence/         # Local Speech Adapter
 ├── platform/             # Narrow OS ports/adapters
+│   ├── audio.rs
+│   ├── clipboard.rs
+│   ├── playback.rs
+│   └── x11.rs
 ├── error.rs
 └── lib.rs
 ```
@@ -682,3 +685,5 @@ Lyn records the OS window active before capture, correlates it with validated ed
 **Status:** Accepted, 2026-08-30.
 
 On the first X11 target, foreground-window identity is available as an opaque correlation but does not identify a project by itself. VS Code windows and integrated terminals are supported only when a local integration supplies their exact owning-window and, for terminals, active-session relationship. External terminal tabs are unsupported without a terminal-specific active-tab integration. Missing relationships produce ambiguity rather than title parsing or global-recency inference. The accepted feasibility matrix and remaining live checks are recorded in [`08_context_provider_feasibility.md`](08_context_provider_feasibility.md).
+
+The delivered VS Code workspace integration uses an always-active local UI extension because focus changes must be observed before capture invocation. It sends bounded workspace/focus observations to a `0600` Unix socket inside the user-private XDG runtime directory. Rust accepts a focused report only while the active X11 window has a supported VS Code class, replaces stale correlations for the same extension window, and treats broker startup failure as provider unavailability rather than a core-capture failure. Integrated-terminal session correlation remains a separate provider task.
