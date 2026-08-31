@@ -240,7 +240,7 @@ Microservices, cloud services, frontend-owned SQL, and a generic plugin runtime 
 
 1. Register/unregister the configured global shortcut.
 2. Record the foreground window identity before showing Lyn, then preserve it for return-to-work behavior.
-3. Resize the popup through bounded compact, chooser, and media layout states while preserving its current logical width.
+3. Resize the popup through bounded compact, audio, error, chooser, and screenshot-media layout states while preserving its current logical width.
 4. Read supported clipboard content on explicit paste intent.
 5. Provide minimal, opaque foreground-window correlation evidence.
 6. Stream microphone samples through CPAL and play audio through Rodio where supported.

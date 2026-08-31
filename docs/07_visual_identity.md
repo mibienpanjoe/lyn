@@ -261,9 +261,10 @@ Example: a 14px popup with a text surface inset by 6px uses an 8px inner radius.
 - Default content width: 560px.
 - Supported responsive range: 360–680px.
 - Initial text-only native inner height: 210px, with an approximately 190px popup surface.
+- Completed-audio native inner height: 300px; playback and replacement controls remain grouped directly below the optional caption.
 - Inline-error native inner height: 280px so failure feedback never covers the draft or actions.
 - Context-chooser native inner height: 460px; only the result list scrolls when needed.
-- Expanded screenshot/voice native inner height: 560px with bounded media previews.
+- Expanded screenshot native inner height: 560px with a bounded image preview.
 - Outer padding: 6px shell inset plus 14–20px content spacing.
 - The popup is one visual surface, not a stack of cards.
 
