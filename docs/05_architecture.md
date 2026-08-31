@@ -511,6 +511,7 @@ Search input
 | Tauri 2 | Desktop lifecycle, windows, capabilities, global shortcut integration, and Command Gateway transport. |
 | Rust | All core services, validation, context/Git inspection, storage, media, platform adapters, and optional intelligence coordination. |
 | Svelte 5 + TypeScript + Vite | Frontend Shell and typed IPC client bindings. |
+| `@lucide/svelte` | Tree-shaken 16px outline icons for quiet frontend actions. |
 | SQLite + `rusqlite` | Storage Service canonical data, migrations, settings, and transactions. |
 | SQLite FTS5 | Library Service full-text projection and search. |
 | Local filesystem | Media Service screenshots/audio and Local Speech Adapter models. |

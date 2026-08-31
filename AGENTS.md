@@ -36,7 +36,7 @@ Packaging remains disabled until distribution requirements are accepted and veri
 
 Write concise Markdown with descriptive headings and relative links. Keep numbered filenames stable. Never present proposed designs as implemented or verified.
 
-Use `rustfmt` and Prettier. Use `snake_case` for Rust modules/functions, `PascalCase` for Rust types and Svelte components, and kebab-case for TypeScript utility files. Preserve typed Tauri IPC; the frontend must not access SQLite or arbitrary filesystem paths.
+Use `rustfmt` and Prettier. Use `snake_case` for Rust modules/functions, `PascalCase` for Rust types and Svelte components, and kebab-case for TypeScript utility files. Import individual outline icons from `@lucide/svelte/icons/*`; keep visible labels on capture actions and match icon stroke to adjacent text. Preserve typed Tauri IPC; the frontend must not access SQLite or arbitrary filesystem paths.
 
 ## Testing Guidelines
 

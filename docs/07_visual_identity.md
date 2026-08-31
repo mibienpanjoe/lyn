@@ -1,6 +1,6 @@
 # Lyn — Visual Identity and Interface System
 
-Version: v1.1, 2026-08-28
+Version: v1.2, 2026-08-31
 
 Derived from: [`01_requirements_prd.md`](01_requirements_prd.md), [`02_requirements_srs.md`](02_requirements_srs.md), and [`05_architecture.md`](05_architecture.md)
 
@@ -260,8 +260,10 @@ Example: a 14px popup with a text surface inset by 6px uses an 8px inner radius.
 
 - Default content width: 560px.
 - Supported responsive range: 360–680px.
-- Initial text-only minimum height: 168px.
-- Expanded screenshot/voice height: content-driven up to 440px, then internal scrolling.
+- Initial text-only native inner height: 210px, with an approximately 190px popup surface.
+- Inline-error native inner height: 280px so failure feedback never covers the draft or actions.
+- Context-chooser native inner height: 460px; only the result list scrolls when needed.
+- Expanded screenshot/voice native inner height: 560px with bounded media previews.
 - Outer padding: 6px shell inset plus 14–20px content spacing.
 - The popup is one visual surface, not a stack of cards.
 
@@ -306,7 +308,7 @@ The outline MUST be pure black in light mode and pure white in dark mode, not a 
 
 ## 6. Icon System
 
-Use one outline SVG icon family with a native 16px or 20px grid. Lucide for Svelte is the proposed implementation because it is consistent and tree-shakable; adopting it is a dependency decision, not a claim that it is installed.
+Use one outline SVG icon family with a native 16px or 20px grid. `@lucide/svelte` is the implemented family because it is consistent, supports Svelte 5, and tree-shakes individual icon imports.
 
 Rules:
 
@@ -352,9 +354,12 @@ Core concepts:
 
 - Context row: 12px text, one line, 8px vertical/14px horizontal inset.
 - Context name uses primary text; branch uses muted text and a separator.
+- Missing context uses muted text plus a small warning dot; red remains reserved for actual failures and active recording status.
 - Text area: 15px/22px, visually borderless inside the popup, minimum three lines.
 - Placeholder: “Type or paste anything…”; it is not a label substitute for assistive technology.
-- Bottom action row is secondary. Screenshot and Voice are quiet/ghost controls, not competing primary buttons.
+- Screenshot and Voice use 16px Lucide `Image` and `Mic` icons with short labels and quiet ghost styling; they do not compete with the default text capture.
+- Bottom action row is visually open rather than a divided modal footer. Cancel is a muted ghost action and Save uses a soft accent surface.
+- Keyboard hints use compact keycaps and the concise visible forms `⇧ Enter New line` and `Enter Save`.
 - “Enter to save” may be shown as a keyboard hint; saving still uses actual keyboard behavior and an accessible Save control when pointer users need it.
 - The context row is always an operable control. Missing, ambiguous, or stale context expands an inline chooser without discarding or covering entered content.
 - Save error appears inline above the action row with a concise message and Retry; focus moves to the error summary only when required to make it discoverable.

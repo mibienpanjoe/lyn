@@ -1,6 +1,6 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.6, 2026-08-31
+Version: v1.7, 2026-08-31
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
@@ -298,11 +298,11 @@ Hide the capture popup after a successful save or cancellation and attempt to re
 
 Resize the native capture window for the current presentation state without exposing arbitrary window dimensions to the frontend.
 
-**Input:** `{ layout: "compact" | "chooser" | "media" }`
+**Input:** `{ layout: "compact" | "error" | "chooser" | "media" }`
 
-**Success:** `CommandResult<{ layout: "compact" | "chooser" | "media" }>`
+**Success:** `CommandResult<{ layout: "compact" | "error" | "chooser" | "media" }>`
 
-Rust maps each semantic state to a bounded logical height and preserves the current logical width. The frontend requests `chooser` while context selection is open, `media` while screenshot or voice media is staged, and `compact` otherwise. A resize failure is recoverable and MUST NOT modify or cancel the active capture session.
+Rust maps each semantic state to a bounded logical height and preserves the current logical width. The frontend requests `chooser` while context selection is open, `media` while screenshot or voice media is staged, `error` when inline failure feedback expands an otherwise text-only capture, and `compact` otherwise. A resize failure is recoverable and MUST NOT modify or cancel the active capture session.
 
 **Errors:** `INTERNAL_ERROR` when the native window cannot be resized.
 
