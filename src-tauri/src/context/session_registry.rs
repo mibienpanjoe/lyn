@@ -123,7 +123,7 @@ impl ContextSourceRegistry {
         let identity = inspect_project_directory(&canonical_directory).ok()?;
         let application_name = application_name(observation.source_kind());
         let context_name = safe_directory_name(&canonical_directory);
-        let label = safe_label(&context_name, identity.branch_name.as_deref());
+        let label = context_name.clone();
 
         if let Some(source_id) = self
             .sources
@@ -263,18 +263,6 @@ fn safe_directory_name(directory: &Path) -> String {
     } else {
         safe
     }
-}
-
-fn safe_label(context_name: &str, branch_name: Option<&str>) -> String {
-    let candidate = match branch_name {
-        Some(branch) => format!("{context_name} · {branch}"),
-        None => context_name.to_owned(),
-    };
-    candidate
-        .chars()
-        .filter(|character| !character.is_control())
-        .take(MAX_SAFE_LABEL_CHARS)
-        .collect()
 }
 
 #[cfg(test)]

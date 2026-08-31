@@ -401,117 +401,120 @@
   <section
     class="capture-popup"
     class:media-mode={session?.stagedMedia != null}
+    class:chooser-open={chooserOpen}
   >
-    {#if session?.stagedMedia?.kind === 'image'}
-      <figure class="image-preview">
-        <figcaption>
-          <span>Screenshot preview</span>
-          <div class="media-actions">
-            <button
-              type="button"
-              disabled={isStagingImage || isDiscardingMedia}
-              onclick={() => stageImage()}
-              >{isStagingImage ? 'Pasting…' : 'Paste new image'}</button
-            >
-            <button
-              type="button"
-              disabled={isStagingImage || isDiscardingMedia}
-              onclick={discardMedia}
-              >{isDiscardingMedia ? 'Removing…' : 'Remove image'}</button
-            >
+    {#if !chooserOpen}
+      {#if session?.stagedMedia?.kind === 'image'}
+        <figure class="image-preview">
+          <figcaption>
+            <span>Screenshot preview</span>
+            <div class="media-actions">
+              <button
+                type="button"
+                disabled={isStagingImage || isDiscardingMedia}
+                onclick={() => stageImage()}
+                >{isStagingImage ? 'Pasting…' : 'Paste new image'}</button
+              >
+              <button
+                type="button"
+                disabled={isStagingImage || isDiscardingMedia}
+                onclick={discardMedia}
+                >{isDiscardingMedia ? 'Removing…' : 'Remove image'}</button
+              >
+            </div>
+          </figcaption>
+          <div class="image-preview-frame">
+            <img
+              src={session.stagedMedia.previewUri}
+              alt="Screenshot ready to save"
+            />
           </div>
-        </figcaption>
-        <div class="image-preview-frame">
-          <img
-            src={session.stagedMedia.previewUri}
-            alt="Screenshot ready to save"
-          />
-        </div>
-        {#if mediaNotice}
-          <p class="media-notice" role="status">{mediaNotice}</p>
-        {/if}
-      </figure>
-    {/if}
+          {#if mediaNotice}
+            <p class="media-notice" role="status">{mediaNotice}</p>
+          {/if}
+        </figure>
+      {/if}
 
-    <label
-      class:sr-only={session?.stagedMedia == null}
-      class="capture-label"
-      for="capture-text"
-      >{session?.stagedMedia?.kind === 'image'
-        ? 'Screenshot caption (optional)'
-        : session?.stagedMedia?.kind === 'audio'
-          ? 'Voice caption (optional)'
-          : 'Capture text'}</label
-    >
-    <textarea
-      bind:this={draftInput}
-      bind:value={draft}
-      class="capture-input"
-      id="capture-text"
-      name="capture-text"
-      placeholder={session?.stagedMedia?.kind === 'image'
-        ? 'Add a note about this screenshot…'
-        : session?.stagedMedia?.kind === 'audio'
-          ? 'Add a note about this voice recording…'
-          : 'Type or paste anything…'}
-      aria-describedby={error ? 'capture-error' : undefined}
-      oncompositionstart={() => (isComposing = true)}
-      oncompositionend={() => (isComposing = false)}
-      onpaste={handlePaste}></textarea>
+      <label
+        class:sr-only={session?.stagedMedia == null}
+        class="capture-label"
+        for="capture-text"
+        >{session?.stagedMedia?.kind === 'image'
+          ? 'Screenshot caption (optional)'
+          : session?.stagedMedia?.kind === 'audio'
+            ? 'Voice caption (optional)'
+            : 'Capture text'}</label
+      >
+      <textarea
+        bind:this={draftInput}
+        bind:value={draft}
+        class="capture-input"
+        id="capture-text"
+        name="capture-text"
+        placeholder={session?.stagedMedia?.kind === 'image'
+          ? 'Add a note about this screenshot…'
+          : session?.stagedMedia?.kind === 'audio'
+            ? 'Add a note about this voice recording…'
+            : 'Type or paste anything…'}
+        aria-describedby={error ? 'capture-error' : undefined}
+        oncompositionstart={() => (isComposing = true)}
+        oncompositionend={() => (isComposing = false)}
+        onpaste={handlePaste}></textarea>
 
-    {#if session?.stagedMedia?.kind !== 'image'}
-      <section class="voice-controls" aria-label="Voice capture">
-        {#if session?.stagedMedia == null}
+      {#if session?.stagedMedia?.kind !== 'image'}
+        <section class="voice-controls" aria-label="Voice capture">
+          {#if session?.stagedMedia == null}
+            <button
+              type="button"
+              disabled={!session || isStagingImage}
+              onclick={() => stageImage()}
+              >{isStagingImage ? 'Pasting…' : 'Paste screenshot'}</button
+            >
+          {/if}
           <button
             type="button"
-            disabled={!session || isStagingImage}
-            onclick={() => stageImage()}
-            >{isStagingImage ? 'Pasting…' : 'Paste screenshot'}</button
+            class:recording={session?.recordingState.state === 'recording'}
+            disabled={!session || isRecordingAction}
+            aria-pressed={session?.recordingState.state === 'recording'}
+            onclick={toggleRecording}
           >
-        {/if}
-        <button
-          type="button"
-          class:recording={session?.recordingState.state === 'recording'}
-          disabled={!session || isRecordingAction}
-          aria-pressed={session?.recordingState.state === 'recording'}
-          onclick={toggleRecording}
-        >
-          <span class="record-dot" aria-hidden="true"></span>
-          {session?.recordingState.state === 'recording'
-            ? isRecordingAction
-              ? 'Stopping…'
-              : 'Stop recording'
-            : isRecordingAction
-              ? 'Starting…'
-              : session?.stagedMedia?.kind === 'audio'
-                ? 'Record again'
-                : 'Record voice'}
-        </button>
+            <span class="record-dot" aria-hidden="true"></span>
+            {session?.recordingState.state === 'recording'
+              ? isRecordingAction
+                ? 'Stopping…'
+                : 'Stop recording'
+              : isRecordingAction
+                ? 'Starting…'
+                : session?.stagedMedia?.kind === 'audio'
+                  ? 'Record again'
+                  : 'Record voice'}
+          </button>
 
-        {#if session?.stagedMedia?.kind === 'audio'}
-          <span class="voice-duration"
-            >{formatDuration(session.stagedMedia.durationMs)}</span
-          >
-          <button
-            type="button"
-            class="playback-button"
-            aria-pressed={isPlaying}
-            onclick={togglePlayback}
-            >{isPlaying ? 'Stop playback' : 'Play'}</button
-          >
-          <button
-            type="button"
-            disabled={isDiscardingMedia}
-            onclick={discardMedia}
-            >{isDiscardingMedia ? 'Removing…' : 'Remove recording'}</button
-          >
-        {/if}
-        {#if session?.recordingState.state === 'recording'}
-          <span class="recording-status" role="status" aria-live="polite"
-            >Recording voice note</span
-          >
-        {/if}
-      </section>
+          {#if session?.stagedMedia?.kind === 'audio'}
+            <span class="voice-duration"
+              >{formatDuration(session.stagedMedia.durationMs)}</span
+            >
+            <button
+              type="button"
+              class="playback-button"
+              aria-pressed={isPlaying}
+              onclick={togglePlayback}
+              >{isPlaying ? 'Stop playback' : 'Play'}</button
+            >
+            <button
+              type="button"
+              disabled={isDiscardingMedia}
+              onclick={discardMedia}
+              >{isDiscardingMedia ? 'Removing…' : 'Remove recording'}</button
+            >
+          {/if}
+          {#if session?.recordingState.state === 'recording'}
+            <span class="recording-status" role="status" aria-live="polite"
+              >Recording voice note</span
+            >
+          {/if}
+        </section>
+      {/if}
     {/if}
 
     <ContextIndicator
@@ -531,6 +534,7 @@
         onselectlive={(source) => void selectLiveSource(source)}
         onselectsaved={(context) => void selectContext(context)}
         oncreate={createContext}
+        onclose={() => void closeChooser()}
       />
     {/if}
 
@@ -545,24 +549,26 @@
       </div>
     {/if}
 
-    <footer class="capture-actions">
-      <p class="keyboard-hint">
-        <span><kbd>Shift</kbd> + <kbd>Enter</kbd> newline</span>
-        <span><kbd>Enter</kbd> save</span>
-      </p>
-      <div class="action-buttons">
-        <button type="button" class="cancel-button" onclick={cancel}
-          >Cancel</button
-        >
-        <button
-          type="button"
-          class="save-button"
-          disabled={!session || isSaving}
-          onclick={save}
-        >
-          {isSaving ? 'Saving…' : 'Save'}
-        </button>
-      </div>
-    </footer>
+    {#if !chooserOpen}
+      <footer class="capture-actions">
+        <p class="keyboard-hint">
+          <span><kbd>Shift</kbd> + <kbd>Enter</kbd> newline</span>
+          <span><kbd>Enter</kbd> save</span>
+        </p>
+        <div class="action-buttons">
+          <button type="button" class="cancel-button" onclick={cancel}
+            >Cancel</button
+          >
+          <button
+            type="button"
+            class="save-button"
+            disabled={!session || isSaving}
+            onclick={save}
+          >
+            {isSaving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </footer>
+    {/if}
   </section>
 </main>

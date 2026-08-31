@@ -10,6 +10,7 @@
     onselectlive: (source: ContextSourceOption) => void;
     onselectsaved: (context: ContextRef) => void;
     oncreate: (name: string) => Promise<boolean>;
+    onclose: () => void;
   }
 
   let {
@@ -20,6 +21,7 @@
     onselectlive,
     onselectsaved,
     oncreate,
+    onclose,
   }: Props = $props();
   let query = $state('');
   let contextName = $state('');
@@ -49,16 +51,21 @@
   class="context-chooser"
   aria-label="Choose context"
 >
-  <label class="sr-only" for="context-search">Search contexts</label>
-  <input
-    bind:this={searchInput}
-    bind:value={query}
-    id="context-search"
-    class="context-search"
-    type="search"
-    placeholder="Search contexts"
-    autocomplete="off"
-  />
+  <div class="chooser-toolbar">
+    <label class="sr-only" for="context-search">Search contexts</label>
+    <input
+      bind:this={searchInput}
+      bind:value={query}
+      id="context-search"
+      class="context-search"
+      type="search"
+      placeholder="Search contexts"
+      autocomplete="off"
+    />
+    <button class="chooser-close" type="button" onclick={onclose}
+      >Back to note</button
+    >
+  </div>
 
   {#if loading}
     <p class="chooser-status" role="status">Loading contexts…</p>
@@ -70,6 +77,7 @@
           <button
             class="context-option"
             type="button"
+            aria-label={`Use live context ${source.label}${source.branchName ? `, branch ${source.branchName}` : ''}${source.isForeground ? ', current window' : ''}`}
             onclick={() => onselectlive(source)}
           >
             <span class="option-copy">

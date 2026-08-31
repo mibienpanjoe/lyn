@@ -121,6 +121,13 @@ textarea:focus-visible {
     'actions';
 }
 
+.capture-popup.chooser-open,
+.capture-popup.media-mode.chooser-open {
+  grid-template-areas: 'context' 'chooser' 'error';
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: min(420px, calc(100vh - 12px));
+}
+
 .context-control {
   grid-area: context;
   display: flex;
@@ -184,6 +191,17 @@ textarea:focus-visible {
   overflow-y: auto;
 }
 
+.chooser-open .context-chooser {
+  max-height: none;
+  border-bottom: 0;
+}
+
+.chooser-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
 .chooser-label,
 .context-create label {
   display: block;
@@ -205,6 +223,28 @@ textarea:focus-visible {
   border-radius: var(--radius-control);
   background: var(--color-surface);
   color: var(--color-text);
+}
+
+.chooser-close {
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 500;
+  transition:
+    background-color 150ms ease-out,
+    transform 150ms ease-out;
+}
+
+.chooser-close:hover {
+  background: var(--color-surface-subtle);
+}
+
+.chooser-close:active {
+  transform: scale(0.96);
 }
 
 .chooser-status {

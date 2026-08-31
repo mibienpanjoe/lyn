@@ -33,7 +33,7 @@ const liveSource: ContextSourceOption = {
   kind: 'integrated_terminal',
   provider: 'vscode',
   applicationName: 'VS Code',
-  label: 'Lyn · main',
+  label: 'Lyn',
   context: { id: 'context-lyn', kind: 'project', name: 'Lyn' },
   branchName: 'main',
   isForeground: true,
@@ -563,7 +563,6 @@ describe('quick-capture popup', () => {
     const client = createClient();
     const dismiss = vi.fn();
     render(CapturePopup, { client, dismiss });
-    const input = screen.getByRole('textbox', { name: 'Capture text' });
     const contextButton = await screen.findByRole('button', {
       name: 'Context Inbox. Change context',
     });
@@ -572,13 +571,19 @@ describe('quick-capture popup', () => {
     expect(
       screen.getByRole('region', { name: 'Choose context' }),
     ).toBeVisible();
-    await fireEvent.keyDown(input, { key: 'Escape' });
+    await fireEvent.keyDown(
+      screen.getByRole('searchbox', { name: 'Search contexts' }),
+      { key: 'Escape' },
+    );
     expect(
       screen.queryByRole('region', { name: 'Choose context' }),
     ).not.toBeInTheDocument();
     expect(client.cancel).not.toHaveBeenCalled();
 
-    await fireEvent.keyDown(input, { key: 'Escape' });
+    await fireEvent.keyDown(
+      screen.getByRole('textbox', { name: 'Capture text' }),
+      { key: 'Escape' },
+    );
     await waitFor(() =>
       expect(client.cancel).toHaveBeenCalledWith('session-1'),
     );
@@ -616,7 +621,11 @@ describe('quick-capture popup', () => {
     expect(
       screen.queryByRole('button', { name: 'Use context Inbox' }),
     ).not.toBeInTheDocument();
-    await fireEvent.click(screen.getByRole('button', { name: /Lyn · main/ }));
+    await fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Use live context Lyn, branch main, current window',
+      }),
+    );
 
     await waitFor(() =>
       expect(client.selectLiveSource).toHaveBeenCalledWith(
@@ -626,6 +635,46 @@ describe('quick-capture popup', () => {
     );
     expect(draft).toHaveValue('Draft stays');
     expect((await axe.run(container)).violations).toEqual([]);
+  });
+
+  it('uses a focused chooser mode and returns to the unchanged note', async () => {
+    const client = createClient({
+      getActiveSession: vi.fn().mockResolvedValue(requiredSession),
+      listContextSources: vi.fn().mockResolvedValue({
+        liveSources: [liveSource],
+        savedContexts: [inbox],
+      }),
+    });
+    const { container } = render(CapturePopup, {
+      client,
+      dismiss: vi.fn(),
+    });
+    const draft = screen.getByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(draft, { target: { value: 'Keep this draft' } });
+
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Choose context' }),
+    );
+
+    expect(container.querySelector('.capture-popup')).toHaveClass(
+      'chooser-open',
+    );
+    expect(
+      screen.queryByRole('textbox', { name: 'Capture text' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Save' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back to note' })).toBeVisible();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to note' }));
+
+    expect(container.querySelector('.capture-popup')).not.toHaveClass(
+      'chooser-open',
+    );
+    expect(screen.getByRole('textbox', { name: 'Capture text' })).toHaveValue(
+      'Keep this draft',
+    );
   });
 
   it('keeps the chooser and draft available when a live source becomes stale', async () => {
@@ -651,7 +700,11 @@ describe('quick-capture popup', () => {
     await fireEvent.click(
       await screen.findByRole('button', { name: 'Choose context' }),
     );
-    await fireEvent.click(screen.getByRole('button', { name: /Lyn · main/ }));
+    await fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Use live context Lyn, branch main, current window',
+      }),
+    );
 
     expect(await screen.findByRole('alert')).toHaveTextContent('stale');
     expect(

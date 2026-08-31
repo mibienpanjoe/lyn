@@ -611,6 +611,11 @@ fn list_capture_context_sources_value(
                 query.as_ref().is_none_or(|query| {
                     source.label().to_lowercase().contains(query)
                         || source.application_name().to_lowercase().contains(query)
+                        || source
+                            .identity()
+                            .branch_name
+                            .as_ref()
+                            .is_some_and(|branch| branch.to_lowercase().contains(query))
                 })
             })
             .take(usize::from(input.limit))
