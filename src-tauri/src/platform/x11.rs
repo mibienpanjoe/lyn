@@ -12,6 +12,13 @@ pub(crate) struct X11CaptureWindowPlatform {
     app: AppHandle,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContextWindowKind {
+    Vscode,
+    GnomeTerminal,
+    Kitty,
+}
+
 impl X11CaptureWindowPlatform {
     pub(crate) fn new(app: AppHandle) -> Self {
         Self { app }
@@ -78,6 +85,15 @@ pub(crate) fn active_window() -> Result<u32, PlatformError> {
 }
 
 pub(crate) fn active_vscode_window() -> Result<u32, PlatformError> {
+    let (window, kind) = active_context_window()?;
+    if kind == ContextWindowKind::Vscode {
+        Ok(window)
+    } else {
+        Err(PlatformError::Unsupported)
+    }
+}
+
+pub(crate) fn active_context_window() -> Result<(u32, ContextWindowKind), PlatformError> {
     let (connection, _) = x11rb::connect(None).map_err(|_| PlatformError::Unsupported)?;
     let window = active_window()?;
     let window_class = connection
@@ -86,22 +102,31 @@ pub(crate) fn active_vscode_window() -> Result<u32, PlatformError> {
         .reply()
         .map_err(|_| PlatformError::Unsupported)?
         .value;
-    if is_vscode_window_class(&window_class) {
-        Ok(window)
-    } else {
-        Err(PlatformError::Unsupported)
-    }
+    context_window_kind(&window_class)
+        .map(|kind| (window, kind))
+        .ok_or(PlatformError::Unsupported)
 }
 
-fn is_vscode_window_class(window_class: &[u8]) -> bool {
+fn context_window_kind(window_class: &[u8]) -> Option<ContextWindowKind> {
     window_class
         .split(|byte| *byte == 0)
         .filter(|part| !part.is_empty())
-        .any(|part| {
-            part.eq_ignore_ascii_case(b"code")
+        .find_map(|part| {
+            if part.eq_ignore_ascii_case(b"code")
                 || part.eq_ignore_ascii_case(b"code-insiders")
                 || part.eq_ignore_ascii_case(b"codium")
                 || part.eq_ignore_ascii_case(b"vscodium")
+            {
+                Some(ContextWindowKind::Vscode)
+            } else if part.eq_ignore_ascii_case(b"gnome-terminal")
+                || part.eq_ignore_ascii_case(b"gnome-terminal-server")
+            {
+                Some(ContextWindowKind::GnomeTerminal)
+            } else if part.eq_ignore_ascii_case(b"kitty") {
+                Some(ContextWindowKind::Kitty)
+            } else {
+                None
+            }
         })
 }
 
@@ -141,14 +166,44 @@ fn activate_window(window: u32) -> Result<(), PlatformError> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_vscode_window_class;
+    use super::{ContextWindowKind, context_window_kind};
 
     #[test]
     fn accepts_supported_vscode_window_classes_only() {
-        assert!(is_vscode_window_class(b"code\0code\0"));
-        assert!(is_vscode_window_class(b"code-insiders\0Code-insiders\0"));
-        assert!(is_vscode_window_class(b"codium\0VSCodium\0"));
-        assert!(!is_vscode_window_class(b"lyn\0Lyn\0"));
-        assert!(!is_vscode_window_class(b"terminal\0kitty\0"));
+        assert_eq!(
+            context_window_kind(b"code\0code\0"),
+            Some(ContextWindowKind::Vscode)
+        );
+        assert_eq!(
+            context_window_kind(b"code-insiders\0Code-insiders\0"),
+            Some(ContextWindowKind::Vscode)
+        );
+        assert_eq!(
+            context_window_kind(b"codium\0VSCodium\0"),
+            Some(ContextWindowKind::Vscode)
+        );
+        assert_ne!(
+            context_window_kind(b"terminal\0kitty\0"),
+            Some(ContextWindowKind::Vscode)
+        );
+        assert_eq!(context_window_kind(b"lyn\0Lyn\0"), None);
+    }
+
+    #[test]
+    fn classifies_only_supported_context_window_classes() {
+        assert_eq!(
+            context_window_kind(b"code\0Code\0"),
+            Some(ContextWindowKind::Vscode)
+        );
+        assert_eq!(
+            context_window_kind(b"gnome-terminal-server\0Gnome-terminal\0"),
+            Some(ContextWindowKind::GnomeTerminal)
+        );
+        assert_eq!(
+            context_window_kind(b"kitty\0kitty\0"),
+            Some(ContextWindowKind::Kitty)
+        );
+        assert_eq!(context_window_kind(b"lyn\0Lyn\0"), None);
+        assert_eq!(context_window_kind(b"\0"), None);
     }
 }
