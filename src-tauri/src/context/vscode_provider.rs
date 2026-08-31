@@ -216,7 +216,12 @@ mod tests {
     use uuid::Uuid;
 
     use crate::{
-        context::session_registry::ContextSourceRegistry, platform::WindowCorrelationToken,
+        context::{
+            resolver::{InvocationAssociations, ResolutionOutcome, classify, resolve},
+            session_registry::ContextSourceRegistry,
+        },
+        contract::ContextProviderKind,
+        platform::WindowCorrelationToken,
     };
 
     use super::{VscodeObservationMessage, WindowState, apply_message};
@@ -267,6 +272,59 @@ mod tests {
                 source.window() == Some(WindowCorrelationToken::from_native(202))
             })
         );
+    }
+
+    #[test]
+    fn focused_workspace_resolves_only_for_its_invocation_window() {
+        let directory = tempdir().unwrap();
+        let mut registry = ContextSourceRegistry::default();
+        let mut windows = HashMap::new();
+        let now = Instant::now();
+        let window = WindowCorrelationToken::from_native(303);
+
+        assert!(apply_message(
+            &mut registry,
+            &mut windows,
+            message(directory.path(), WindowState::Focused),
+            Some(303),
+            now,
+        ));
+
+        let sources = registry.live_sources(now);
+        let source = sources[0];
+        let exact = classify(
+            source.source_id(),
+            source.provider(),
+            source.window(),
+            source.process(),
+            source.session(),
+            &InvocationAssociations {
+                foreground_window: Some(window),
+                related_processes: &[],
+                related_sessions: &[],
+                inferred_windows: &[],
+            },
+        )
+        .unwrap();
+        let unrelated = classify(
+            source.source_id(),
+            source.provider(),
+            source.window(),
+            source.process(),
+            source.session(),
+            &InvocationAssociations {
+                foreground_window: Some(WindowCorrelationToken::from_native(404)),
+                related_processes: &[],
+                related_sessions: &[],
+                inferred_windows: &[],
+            },
+        );
+
+        assert_eq!(
+            resolve(&[exact], &[ContextProviderKind::Vscode]),
+            ResolutionOutcome::Resolved(source.source_id())
+        );
+        assert!(unrelated.is_none());
     }
 
     #[test]
