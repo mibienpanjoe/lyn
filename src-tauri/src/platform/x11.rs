@@ -77,6 +77,34 @@ pub(crate) fn active_window() -> Result<u32, PlatformError> {
         .ok_or(PlatformError::Unsupported)
 }
 
+pub(crate) fn active_vscode_window() -> Result<u32, PlatformError> {
+    let (connection, _) = x11rb::connect(None).map_err(|_| PlatformError::Unsupported)?;
+    let window = active_window()?;
+    let window_class = connection
+        .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64)
+        .map_err(|_| PlatformError::Unsupported)?
+        .reply()
+        .map_err(|_| PlatformError::Unsupported)?
+        .value;
+    if is_vscode_window_class(&window_class) {
+        Ok(window)
+    } else {
+        Err(PlatformError::Unsupported)
+    }
+}
+
+fn is_vscode_window_class(window_class: &[u8]) -> bool {
+    window_class
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .any(|part| {
+            part.eq_ignore_ascii_case(b"code")
+                || part.eq_ignore_ascii_case(b"code-insiders")
+                || part.eq_ignore_ascii_case(b"codium")
+                || part.eq_ignore_ascii_case(b"vscodium")
+        })
+}
+
 fn activate_window(window: u32) -> Result<(), PlatformError> {
     let (connection, screen_number) =
         x11rb::connect(None).map_err(|_| PlatformError::FocusFailed)?;
@@ -109,4 +137,18 @@ fn activate_window(window: u32) -> Result<(), PlatformError> {
         .check()
         .map_err(|_| PlatformError::FocusFailed)?;
     connection.flush().map_err(|_| PlatformError::FocusFailed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_vscode_window_class;
+
+    #[test]
+    fn accepts_supported_vscode_window_classes_only() {
+        assert!(is_vscode_window_class(b"code\0code\0"));
+        assert!(is_vscode_window_class(b"code-insiders\0Code-insiders\0"));
+        assert!(is_vscode_window_class(b"codium\0VSCodium\0"));
+        assert!(!is_vscode_window_class(b"lyn\0Lyn\0"));
+        assert!(!is_vscode_window_class(b"terminal\0kitty\0"));
+    }
 }

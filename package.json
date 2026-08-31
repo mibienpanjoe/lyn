@@ -13,7 +13,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "provider:vscode:test": "node integrations/vscode/observation.test.cjs",
+    "provider:vscode:test": "node integrations/vscode/observation-tests.cjs",
     "provider:vscode:package": "pnpm --dir integrations/vscode exec vsce package --out /tmp/lyn-context-provider.vsix --allow-star-activation --allow-missing-repository --skip-license --no-dependencies",
     "icons": "tauri icon src-tauri/icons/lyn-icon.svg",
     "tauri": "tauri"

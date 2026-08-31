@@ -79,7 +79,7 @@ fn run(listener: UnixListener, app: AppHandle) {
                     continue;
                 };
                 let active_window = (message.state == WindowState::Focused)
-                    .then(crate::platform::x11::active_window)
+                    .then(crate::platform::x11::active_vscode_window)
                     .and_then(Result::ok);
                 let registry_state = app.state::<std::sync::Mutex<ContextSourceRegistry>>();
                 let Ok(mut registry) = registry_state.lock() else {
@@ -133,13 +133,31 @@ fn apply_message(
         return false;
     }
 
+    let mut removed_previous_window = false;
     let window = match message.state {
         WindowState::Focused => {
             let Some(active_window) = active_window else {
                 return false;
             };
             let window = WindowCorrelationToken::from_native(u64::from(active_window));
-            windows.insert(message.instance_id, window);
+            if let Some(previous) = windows.insert(message.instance_id, window)
+                && previous != window
+            {
+                registry.register(
+                    ProviderObservation::new(
+                        ContextProviderKind::Vscode,
+                        ProviderSourceKind::VscodeWindow,
+                        Some(previous),
+                        None,
+                        None,
+                        PathBuf::from("/"),
+                        now,
+                        ObservationLiveness::Ended,
+                    ),
+                    now,
+                );
+                removed_previous_window = true;
+            }
             window
         }
         WindowState::Unfocused | WindowState::Ended => {
@@ -160,22 +178,21 @@ fn apply_message(
         .first()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"));
-    let changed = registry
-        .register(
-            ProviderObservation::new(
-                ContextProviderKind::Vscode,
-                ProviderSourceKind::VscodeWindow,
-                Some(window),
-                None,
-                None,
-                directory,
-                now,
-                liveness,
-            ),
+    let registered = registry.register(
+        ProviderObservation::new(
+            ContextProviderKind::Vscode,
+            ProviderSourceKind::VscodeWindow,
+            Some(window),
+            None,
+            None,
+            directory,
             now,
-        )
-        .is_some()
-        || liveness == ObservationLiveness::Ended;
+            liveness,
+        ),
+        now,
+    );
+    let changed =
+        removed_previous_window || registered.is_some() || liveness == ObservationLiveness::Ended;
     if message.state == WindowState::Ended {
         windows.remove(&message.instance_id);
     }
@@ -325,6 +342,37 @@ mod tests {
             ResolutionOutcome::Resolved(source.source_id())
         );
         assert!(unrelated.is_none());
+    }
+
+    #[test]
+    fn remapping_one_extension_window_removes_its_previous_correlation() {
+        let directory = tempdir().unwrap();
+        let instance_id = Uuid::new_v4();
+        let mut registry = ContextSourceRegistry::default();
+        let mut windows = HashMap::new();
+        let now = Instant::now();
+        let focused = || VscodeObservationMessage {
+            version: 1,
+            instance_id,
+            state: WindowState::Focused,
+            workspace_folders: vec![directory.path().display().to_string()],
+        };
+
+        apply_message(&mut registry, &mut windows, focused(), Some(11), now);
+        apply_message(
+            &mut registry,
+            &mut windows,
+            focused(),
+            Some(22),
+            now + std::time::Duration::from_secs(1),
+        );
+
+        let sources = registry.live_sources(now + std::time::Duration::from_secs(1));
+        assert_eq!(sources.len(), 1);
+        assert_eq!(
+            sources[0].window(),
+            Some(WindowCorrelationToken::from_native(22))
+        );
     }
 
     #[test]

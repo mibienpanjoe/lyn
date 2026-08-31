@@ -4,7 +4,7 @@ const vscode = require('vscode');
 
 const { createObservation, providerSocketPath } = require('./observation.cjs');
 
-const HEARTBEAT_INTERVAL_MS = 10_000;
+const HEARTBEAT_INTERVAL_MS = 2_000;
 const SOCKET_TIMEOUT_MS = 750;
 
 let activeProvider;
