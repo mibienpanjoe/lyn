@@ -3,7 +3,7 @@
   "displayName": "Lyn Context Provider",
   "description": "Supplies invocation-bound VS Code workspace identity to the local Lyn desktop app.",
   "publisher": "mibienpanjoe",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "engines": {
     "vscode": "^1.96.0"
   },
