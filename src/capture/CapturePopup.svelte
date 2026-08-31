@@ -50,11 +50,13 @@
   const popupLayout = $derived<CapturePopupLayout>(
     chooserOpen
       ? 'chooser'
-      : session?.stagedMedia
+      : session?.stagedMedia?.kind === 'image'
         ? 'media'
-        : error
-          ? 'error'
-          : 'compact',
+        : session?.stagedMedia?.kind === 'audio'
+          ? 'audio'
+          : error
+            ? 'error'
+            : 'compact',
   );
 
   $effect(() => {

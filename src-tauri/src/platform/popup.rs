@@ -3,6 +3,7 @@ use tauri::{LogicalSize, WebviewWindow};
 use crate::contract::CapturePopupLayout;
 
 const COMPACT_HEIGHT: f64 = 210.0;
+const AUDIO_HEIGHT: f64 = 300.0;
 const ERROR_HEIGHT: f64 = 280.0;
 const CHOOSER_HEIGHT: f64 = 460.0;
 const MEDIA_HEIGHT: f64 = 560.0;
@@ -20,6 +21,7 @@ impl CapturePopupLayout {
     fn height(self) -> f64 {
         match self {
             Self::Compact => COMPACT_HEIGHT,
+            Self::Audio => AUDIO_HEIGHT,
             Self::Error => ERROR_HEIGHT,
             Self::Chooser => CHOOSER_HEIGHT,
             Self::Media => MEDIA_HEIGHT,
@@ -29,16 +31,18 @@ impl CapturePopupLayout {
 
 #[cfg(test)]
 mod tests {
-    use super::{CHOOSER_HEIGHT, COMPACT_HEIGHT, ERROR_HEIGHT, MEDIA_HEIGHT};
+    use super::{AUDIO_HEIGHT, CHOOSER_HEIGHT, COMPACT_HEIGHT, ERROR_HEIGHT, MEDIA_HEIGHT};
     use crate::contract::CapturePopupLayout;
 
     #[test]
-    fn semantic_layouts_map_to_bounded_increasing_heights() {
+    fn semantic_layouts_map_to_bounded_heights() {
         assert_eq!(COMPACT_HEIGHT, 210.0);
         assert_eq!(CapturePopupLayout::Compact.height(), COMPACT_HEIGHT);
+        assert_eq!(CapturePopupLayout::Audio.height(), AUDIO_HEIGHT);
         assert_eq!(CapturePopupLayout::Error.height(), ERROR_HEIGHT);
         assert_eq!(CapturePopupLayout::Chooser.height(), CHOOSER_HEIGHT);
         assert_eq!(CapturePopupLayout::Media.height(), MEDIA_HEIGHT);
+        assert!(COMPACT_HEIGHT < AUDIO_HEIGHT);
         assert!(COMPACT_HEIGHT < ERROR_HEIGHT);
         assert!(ERROR_HEIGHT < CHOOSER_HEIGHT);
         assert!(CHOOSER_HEIGHT < MEDIA_HEIGHT);

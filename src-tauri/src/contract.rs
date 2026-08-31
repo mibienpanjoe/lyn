@@ -147,6 +147,7 @@ pub enum MediaKind {
 pub enum CapturePopupLayout {
     Compact,
     Error,
+    Audio,
     Chooser,
     Media,
 }

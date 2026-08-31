@@ -155,7 +155,7 @@ describe('quick-capture popup', () => {
     expect((await axe.run(container)).violations).toEqual([]);
   });
 
-  it('adapts the native window between compact, chooser, and media layouts', async () => {
+  it('adapts the native window between compact, chooser, image, and audio layouts', async () => {
     const client = createClient();
     render(CapturePopup, { client, dismiss: vi.fn() });
 
@@ -190,7 +190,7 @@ describe('quick-capture popup', () => {
       await screen.findByRole('button', { name: 'Stop recording' }),
     );
     await waitFor(() =>
-      expect(client.setPopupLayout).toHaveBeenLastCalledWith('media'),
+      expect(client.setPopupLayout).toHaveBeenLastCalledWith('audio'),
     );
 
     await fireEvent.click(
