@@ -3,6 +3,7 @@
 
   import type {
     AppError,
+    CapturePopupLayout,
     CaptureSession,
     ContextRef,
     ContextSourceOption,
@@ -44,6 +45,13 @@
   let cancelRequested = $state(false);
   let draftInput = $state<HTMLTextAreaElement>();
   let contextButton = $state<HTMLButtonElement>();
+  const popupLayout = $derived<CapturePopupLayout>(
+    chooserOpen ? 'chooser' : session?.stagedMedia ? 'media' : 'compact',
+  );
+
+  $effect(() => {
+    void client.setPopupLayout(popupLayout).catch(() => undefined);
+  });
 
   onMount(() => {
     draftInput?.focus();

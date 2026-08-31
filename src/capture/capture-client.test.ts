@@ -106,6 +106,20 @@ describe('capture client', () => {
     ]);
   });
 
+  it('requests only a typed popup layout instead of arbitrary dimensions', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      ok: true,
+      data: { layout: 'media' },
+    });
+    const client = createCaptureClient(invoke);
+
+    await client.setPopupLayout('media');
+
+    expect(invoke).toHaveBeenCalledWith('set_capture_popup_layout', {
+      input: { layout: 'media' },
+    });
+  });
+
   it('uses opaque screenshot staging and save inputs', async () => {
     const staged = {
       stagedMediaId: 'staged-1',

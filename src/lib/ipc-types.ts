@@ -40,6 +40,8 @@ export type ContextSourceKind = "vscode_window" | "integrated_terminal" | "exter
 
 export type MediaKind = "image" | "audio";
 
+export type CapturePopupLayout = "compact" | "chooser" | "media";
+
 export type MediaMimeType = "image/png" | "audio/wav";
 
 export type EnrichmentStatus = "not_requested" | "pending" | "completed" | "skipped" | "failed";
@@ -81,6 +83,10 @@ export type CancelCaptureSessionInput = { sessionId: CaptureSessionId, };
 export type CancelCaptureSessionResult = { cancelled: boolean, };
 
 export type DismissCapturePopupResult = { dismissed: boolean, focusRestored: boolean, };
+
+export type SetCapturePopupLayoutInput = { layout: CapturePopupLayout, };
+
+export type SetCapturePopupLayoutResult = { layout: CapturePopupLayout, };
 
 export type SelectCaptureContextSourceInput = { sessionId: CaptureSessionId, selection: ContextSelection, };
 

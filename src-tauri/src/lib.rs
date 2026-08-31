@@ -122,6 +122,7 @@ pub fn run() {
             commands::context::create_context,
             commands::context::list_contexts,
             commands::platform::dismiss_capture_popup,
+            commands::platform::set_capture_popup_layout,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Lyn");

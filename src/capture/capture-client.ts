@@ -6,6 +6,7 @@ import type {
   AudioPlaybackResult,
   CancelCaptureSessionResult,
   CaptureSession,
+  CapturePopupLayout,
   CommandResult,
   ContextId,
   ContextRef,
@@ -16,6 +17,7 @@ import type {
   DismissCapturePopupResult,
   ListContextsResult,
   SaveCaptureResult,
+  SetCapturePopupLayoutResult,
   StagedMedia,
   RecordingState,
 } from '../lib/ipc-types';
@@ -70,6 +72,9 @@ export interface CaptureClient {
     stagedMediaId: string,
     caption: string | null,
   ): Promise<SaveCaptureResult>;
+  setPopupLayout(
+    layout: CapturePopupLayout,
+  ): Promise<SetCapturePopupLayoutResult>;
   cancel(sessionId: CaptureSessionId): Promise<CancelCaptureSessionResult>;
   dismissPopup(): Promise<DismissCapturePopupResult>;
   onSessionReady(
@@ -177,6 +182,10 @@ export function createCaptureClient(call: Invoke = invoke): CaptureClient {
         sessionId,
         stagedMediaId,
         caption,
+      }),
+    setPopupLayout: (layout) =>
+      command<SetCapturePopupLayoutResult>(call, 'set_capture_popup_layout', {
+        layout,
       }),
     cancel: (sessionId) =>
       command<CancelCaptureSessionResult>(call, 'cancel_capture_session', {

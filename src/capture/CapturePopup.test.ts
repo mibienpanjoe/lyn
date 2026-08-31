@@ -114,6 +114,7 @@ function createClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
       capturedAt: '2026-08-29T10:00:00Z',
       enrichmentScheduled: false,
     }),
+    setPopupLayout: vi.fn().mockResolvedValue({ layout: 'compact' }),
     cancel: vi.fn().mockResolvedValue({ cancelled: true }),
     dismissPopup: vi.fn().mockResolvedValue({
       dismissed: true,
@@ -126,6 +127,54 @@ function createClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
 }
 
 describe('quick-capture popup', () => {
+  it('adapts the native window between compact, chooser, and media layouts', async () => {
+    const client = createClient();
+    render(CapturePopup, { client, dismiss: vi.fn() });
+
+    await waitFor(() =>
+      expect(client.setPopupLayout).toHaveBeenCalledWith('compact'),
+    );
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Context Inbox. Change context' }),
+    );
+    await waitFor(() =>
+      expect(client.setPopupLayout).toHaveBeenLastCalledWith('chooser'),
+    );
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to note' }));
+    await waitFor(() =>
+      expect(client.setPopupLayout).toHaveBeenLastCalledWith('compact'),
+    );
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Paste screenshot' }),
+    );
+    await waitFor(() =>
+      expect(client.setPopupLayout).toHaveBeenLastCalledWith('media'),
+    );
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove image' }));
+    await waitFor(() =>
+      expect(client.setPopupLayout).toHaveBeenLastCalledWith('compact'),
+    );
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Record voice' }));
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Stop recording' }),
+    );
+    await waitFor(() =>
+      expect(client.setPopupLayout).toHaveBeenLastCalledWith('media'),
+    );
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Remove recording' }),
+    );
+    await waitFor(() =>
+      expect(client.setPopupLayout).toHaveBeenLastCalledWith('compact'),
+    );
+  });
+
   it('focuses the labelled capture input immediately', async () => {
     const client = createClient();
 

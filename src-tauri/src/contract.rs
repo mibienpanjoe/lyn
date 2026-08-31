@@ -143,6 +143,14 @@ pub enum MediaKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CapturePopupLayout {
+    Compact,
+    Chooser,
+    Media,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub enum MediaMimeType {
     #[serde(rename = "image/png")]
     ImagePng,
@@ -340,6 +348,18 @@ pub struct DismissCapturePopupResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetCapturePopupLayoutInput {
+    pub layout: CapturePopupLayout,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SetCapturePopupLayoutResult {
+    pub layout: CapturePopupLayout,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SelectCaptureContextSourceInput {
     pub session_id: CaptureSessionId,
     pub selection: ContextSelection,
@@ -498,6 +518,7 @@ pub fn typescript_bindings() -> String {
         ContextProviderKind::decl(&config),
         ContextSourceKind::decl(&config),
         MediaKind::decl(&config),
+        CapturePopupLayout::decl(&config),
         MediaMimeType::decl(&config),
         EnrichmentStatus::decl(&config),
         ContextRef::decl(&config),
@@ -519,6 +540,8 @@ pub fn typescript_bindings() -> String {
         CancelCaptureSessionInput::decl(&config),
         CancelCaptureSessionResult::decl(&config),
         DismissCapturePopupResult::decl(&config),
+        SetCapturePopupLayoutInput::decl(&config),
+        SetCapturePopupLayoutResult::decl(&config),
         SelectCaptureContextSourceInput::decl(&config),
         SaveCaptureResult::decl(&config),
         MediaSummary::decl(&config),
@@ -661,6 +684,12 @@ mod tests {
             session_id: session.session_id,
         };
         let cancel_result = CancelCaptureSessionResult { cancelled: true };
+        let popup_layout_input = SetCapturePopupLayoutInput {
+            layout: CapturePopupLayout::Media,
+        };
+        let popup_layout_result = SetCapturePopupLayoutResult {
+            layout: CapturePopupLayout::Media,
+        };
         let select_context_input = SelectCaptureContextSourceInput {
             session_id: session.session_id,
             selection: ContextSelection::SavedContext {
@@ -719,6 +748,8 @@ mod tests {
         round_trip(&session);
         round_trip(&cancel_input);
         round_trip(&cancel_result);
+        round_trip(&popup_layout_input);
+        round_trip(&popup_layout_result);
         round_trip(&select_context_input);
         round_trip(&media);
         round_trip(&summary);
@@ -754,6 +785,13 @@ mod tests {
         assert!(serde_json::from_value::<CaptureSessionId>(json!("not-a-uuid")).is_err());
         assert!(serde_json::from_value::<Timestamp>(json!("2026-08-28 10:30")).is_err());
         assert!(serde_json::from_value::<Timestamp>(json!("2026-08-28T10:30:00+01:00")).is_err());
+        assert!(serde_json::from_value::<CapturePopupLayout>(json!("600px")).is_err());
+    }
+
+    #[test]
+    fn popup_layout_input_rejects_arbitrary_dimensions() {
+        let forged = json!({ "layout": "media", "height": 9000 });
+        assert!(serde_json::from_value::<SetCapturePopupLayoutInput>(forged).is_err());
     }
 
     #[test]
