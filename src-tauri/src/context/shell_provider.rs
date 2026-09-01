@@ -510,7 +510,12 @@ fn apply_message(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, fs, time::Instant};
+    use std::{
+        collections::HashMap,
+        fs,
+        os::unix::fs::{MetadataExt, symlink},
+        time::Instant,
+    };
 
     use tempfile::tempdir;
     use uuid::Uuid;
@@ -526,7 +531,7 @@ mod tests {
 
     use super::{
         KittyObservationMessage, KittyState, ShellObservationMessage, ShellState,
-        apply_kitty_message, apply_message,
+        apply_kitty_message, apply_message, process_directory_at,
     };
 
     fn live_message(process_id: u32, window_id: u32) -> ShellObservationMessage {
@@ -740,6 +745,67 @@ mod tests {
                 .into_iter()
                 .map(str::to_owned)
                 .collect()
+        );
+    }
+
+    #[test]
+    fn one_shell_session_cannot_rebind_to_another_process_or_window() {
+        let directory = tempdir().unwrap();
+        let now = Instant::now();
+        let mut registry = ContextSourceRegistry::default();
+        let mut sessions = HashMap::new();
+        let mut message = live_message(1201, 91);
+        let session_id = message.session_id;
+
+        assert!(apply_message(
+            &mut registry,
+            &mut sessions,
+            message,
+            Some((91, ContextWindowKind::GnomeTerminal)),
+            Some(directory.path().to_path_buf()),
+            now,
+        ));
+        message = ShellObservationMessage {
+            version: 1,
+            session_id,
+            process_id: 1202,
+            window_id: 92,
+            state: ShellState::Live,
+        };
+        assert!(!apply_message(
+            &mut registry,
+            &mut sessions,
+            message,
+            Some((92, ContextWindowKind::GnomeTerminal)),
+            Some(directory.path().to_path_buf()),
+            now,
+        ));
+        assert_eq!(registry.live_sources(now).len(), 1);
+        assert_eq!(
+            registry.live_sources(now)[0].window(),
+            Some(WindowCorrelationToken::from_native(91))
+        );
+    }
+
+    #[test]
+    fn process_directory_requires_the_runtime_user_and_returns_no_client_path() {
+        let fixture = tempdir().unwrap();
+        let project = fixture.path().join("project");
+        let process = fixture.path().join("proc").join("1301");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&process).unwrap();
+        symlink(&project, process.join("cwd")).unwrap();
+        let uid = fs::metadata(&process).unwrap().uid();
+
+        assert_eq!(
+            process_directory_at(&fixture.path().join("proc"), 1301, uid).unwrap(),
+            project
+        );
+        assert_eq!(
+            process_directory_at(&fixture.path().join("proc"), 1301, uid.saturating_add(1))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::PermissionDenied
         );
     }
 }
