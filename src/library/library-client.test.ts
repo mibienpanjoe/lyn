@@ -34,4 +34,37 @@ describe('Library IPC client', () => {
       input: { mediaId: 'media-1' },
     });
   });
+
+  it('never passes raw FTS options through the search boundary', async () => {
+    const call = vi.fn().mockResolvedValue({
+      ok: true,
+      data: { items: [], nextCursor: null },
+    });
+    const client = createLibraryClient(call);
+
+    await client.searchCaptures(
+      'literal OR terms',
+      {
+        contextId: null,
+        branchName: null,
+        captureKinds: ['image'],
+        capturedFrom: null,
+        capturedTo: null,
+      },
+      null,
+    );
+
+    expect(call).toHaveBeenCalledWith('search_captures', {
+      input: {
+        query: 'literal OR terms',
+        contextId: null,
+        branchName: null,
+        captureKinds: ['image'],
+        capturedFrom: null,
+        capturedTo: null,
+        cursor: null,
+        limit: 50,
+      },
+    });
+  });
 });

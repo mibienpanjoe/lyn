@@ -8,10 +8,18 @@
   interface Props {
     captures: CaptureSummary[];
     selectedId?: string | null;
+    snippets?: Record<string, string>;
+    query?: string;
     onselect: (capture: CaptureSummary) => void;
   }
 
-  let { captures, selectedId = null, onselect }: Props = $props();
+  let {
+    captures,
+    selectedId = null,
+    snippets = {},
+    query = '',
+    onselect,
+  }: Props = $props();
   const groups = $derived(groupByLocalDay(captures));
 
   function groupByLocalDay(items: CaptureSummary[]) {
@@ -35,9 +43,38 @@
   }
 
   function accessibleLabel(capture: CaptureSummary) {
-    const content =
-      capture.textExcerpt ?? capture.caption ?? `${capture.kind} capture`;
+    const content = displayText(capture);
     return `${capture.kind} capture in ${capture.context.name} at ${time(capture.capturedAt)}. ${content}`;
+  }
+
+  function displayText(capture: CaptureSummary) {
+    return (
+      snippets[capture.id] ??
+      capture.textExcerpt ??
+      capture.caption ??
+      `${capture.kind} capture`
+    );
+  }
+
+  function highlightedParts(value: string) {
+    const terms = new Set(
+      query
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((term) => term.toLocaleLowerCase()),
+    );
+    if (!terms.size) return [{ value, match: false }];
+    const pattern = Array.from(terms)
+      .map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|');
+    return value
+      .split(new RegExp(`(${pattern})`, 'giu'))
+      .filter(Boolean)
+      .map((part) => ({
+        value: part,
+        match: terms.has(part.toLocaleLowerCase()),
+      }));
   }
 </script>
 
@@ -79,9 +116,10 @@
                   {/if}
                 </span>
                 <span class="capture-excerpt">
-                  {capture.textExcerpt ??
-                    capture.caption ??
-                    `${capture.kind} capture`}
+                  {#each highlightedParts(displayText(capture)) as part}
+                    {#if part.match}<mark>{part.value}</mark
+                      >{:else}{part.value}{/if}
+                  {/each}
                 </span>
               </span>
               {#if capture.kind === 'image' && capture.media?.available}

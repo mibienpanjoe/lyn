@@ -13,6 +13,7 @@ import type {
   ListContextsResult,
   OpenMediaResult,
   Page,
+  SearchResultItem,
   Timestamp,
 } from '../lib/ipc-types';
 
@@ -28,6 +29,10 @@ export interface CaptureFilters {
   capturedTo: Timestamp | null;
 }
 
+export interface SearchFilters extends CaptureFilters {
+  contextId: ContextId | null;
+}
+
 export interface LibraryClient {
   listContexts(): Promise<ContextRef[]>;
   listCaptures(
@@ -36,6 +41,11 @@ export interface LibraryClient {
     cursor?: string | null,
   ): Promise<Page<CaptureSummary>>;
   getCapture(captureId: string): Promise<CaptureDetail>;
+  searchCaptures(
+    query: string,
+    filters: SearchFilters,
+    cursor?: string | null,
+  ): Promise<Page<SearchResultItem>>;
   playMedia(mediaId: string): Promise<AudioPlaybackResult>;
   stopPlayback(playbackTargetId: string): Promise<AudioPlaybackResult>;
   openMedia(mediaId: string): Promise<OpenMediaResult>;
@@ -76,6 +86,17 @@ export function createLibraryClient(call: Invoke = invoke): LibraryClient {
       }),
     getCapture: (captureId) =>
       command<CaptureDetail>(call, 'get_capture', { captureId }),
+    searchCaptures: (query, filters, cursor = null) =>
+      command<Page<SearchResultItem>>(call, 'search_captures', {
+        query,
+        contextId: filters.contextId,
+        branchName: filters.branchName,
+        captureKinds: filters.captureKinds,
+        capturedFrom: filters.capturedFrom,
+        capturedTo: filters.capturedTo,
+        cursor,
+        limit: 50,
+      }),
     playMedia: (mediaId) =>
       command<AudioPlaybackResult>(call, 'play_media', { mediaId }),
     stopPlayback: (playbackTargetId) =>

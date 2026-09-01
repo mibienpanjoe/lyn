@@ -7,6 +7,7 @@ import type {
   CaptureSummary,
   ContextRef,
   LibraryScope,
+  SearchResultItem,
 } from '../lib/ipc-types';
 import LibraryPage from './LibraryPage.svelte';
 import type { LibraryClient } from './library-client';
@@ -66,6 +67,10 @@ function createClient(overrides: Partial<LibraryClient> = {}): LibraryClient {
     listContexts: vi.fn().mockResolvedValue([project, inbox]),
     listCaptures: vi.fn().mockResolvedValue({
       items: [textCapture, imageCapture],
+      nextCursor: null,
+    }),
+    searchCaptures: vi.fn().mockResolvedValue({
+      items: [],
       nextCursor: null,
     }),
     getCapture: vi
@@ -146,5 +151,94 @@ describe('responsive Library', () => {
 
     expect(await screen.findByText('Screenshot unavailable')).toBeVisible();
     expect(screen.getAllByText('Exact screenshot caption')).toHaveLength(2);
+  });
+
+  it('debounces literal search, highlights snippets, and applies accessible filters', async () => {
+    const searchCaptures = vi.fn().mockResolvedValue({
+      items: [
+        {
+          capture: textCapture,
+          matchedField: 'text_body',
+          snippet: 'First alpha result',
+        },
+      ],
+      nextCursor: null,
+    });
+    const client = createClient({ searchCaptures });
+    const { container } = render(LibraryPage, { client });
+    await screen.findByRole('button', { name: /text capture in Lyn/i });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    const search = screen.getByRole('searchbox', { name: 'Search captures' });
+    await fireEvent.input(search, { target: { value: 'alpha' } });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    await waitFor(() => expect(searchCaptures).toHaveBeenCalledOnce());
+    const highlight = await screen.findByText('alpha');
+    expect(highlight.tagName).toBe('MARK');
+
+    await fireEvent.click(screen.getByText('Filters'));
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Context' }), {
+      target: { value: project.id },
+    });
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'image' }));
+
+    await waitFor(() => {
+      const call = searchCaptures.mock.calls.at(-1);
+      expect(call?.[1].contextId).toBe(project.id);
+      expect(call?.[1].captureKinds).toEqual(['image']);
+    });
+    expect((await axe.run(container)).violations).toEqual([]);
+  });
+
+  it('ignores a stale search response after a newer query completes', async () => {
+    let resolveAlpha:
+      | ((value: { items: SearchResultItem[]; nextCursor: null }) => void)
+      | undefined;
+    const alpha = new Promise<{
+      items: SearchResultItem[];
+      nextCursor: null;
+    }>((resolve) => {
+      resolveAlpha = resolve;
+    });
+    const searchCaptures = vi.fn().mockImplementation((query: string) => {
+      if (query === 'alpha') return alpha;
+      return Promise.resolve({
+        items: [
+          {
+            capture: { ...textCapture, textExcerpt: 'beta result' },
+            matchedField: 'text_body',
+            snippet: 'beta result',
+          },
+        ],
+        nextCursor: null,
+      });
+    });
+    const client = createClient({ searchCaptures });
+    render(LibraryPage, { client });
+    await screen.findByRole('button', { name: /text capture in Lyn/i });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    const search = screen.getByRole('searchbox', { name: 'Search captures' });
+
+    await fireEvent.input(search, { target: { value: 'alpha' } });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await fireEvent.input(search, { target: { value: 'beta' } });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(await screen.findByText('beta')).toBeVisible();
+
+    resolveAlpha?.({
+      items: [
+        {
+          capture: { ...textCapture, textExcerpt: 'stale alpha' },
+          matchedField: 'text_body',
+          snippet: 'stale alpha',
+        },
+      ],
+      nextCursor: null,
+    });
+    await Promise.resolve();
+
+    expect(screen.getByText('beta')).toBeVisible();
+    expect(screen.queryByText('stale alpha')).not.toBeInTheDocument();
   });
 });

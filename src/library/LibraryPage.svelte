@@ -6,10 +6,13 @@
   import MenuIcon from '@lucide/svelte/icons/menu';
   import NotebookIcon from '@lucide/svelte/icons/notebook-tabs';
   import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
-  import { onMount, tick } from 'svelte';
+  import SearchIcon from '@lucide/svelte/icons/search';
+  import SlidersIcon from '@lucide/svelte/icons/sliders-horizontal';
+  import { onDestroy, onMount, tick } from 'svelte';
 
   import type {
     CaptureDetail,
+    CaptureKind,
     CaptureSummary,
     ContextRef,
     LibraryScope,
@@ -34,6 +37,13 @@
   let selected = $state<CaptureDetail | null>(null);
   let selectedSummaryId = $state<string | null>(null);
   let branchName = $state<string | null>(null);
+  let searchMode = $state(false);
+  let query = $state('');
+  let searchContextId = $state<string | null>(null);
+  let captureKinds = $state<CaptureKind[]>([]);
+  let capturedFromDate = $state('');
+  let capturedToDate = $state('');
+  let snippets = $state<Record<string, string>>({});
   let knownBranches = $state<string[]>([]);
   let loading = $state(true);
   let loadingMore = $state(false);
@@ -44,6 +54,8 @@
   let navigationOpen = $state(false);
   let listRequest = 0;
   let detailRequest = 0;
+  let searchInput = $state<HTMLInputElement>();
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
   const projects = $derived(
     contexts.filter((context) => context.kind === 'project'),
@@ -57,16 +69,20 @@
     return contexts.find((context) => context.id === contextId) ?? null;
   });
   const title = $derived(
-    scope.kind === 'recent'
-      ? 'Recent'
-      : scope.kind === 'all'
-        ? 'All captures'
-        : (activeContext?.name ?? 'Context'),
+    searchMode
+      ? 'Search'
+      : scope.kind === 'recent'
+        ? 'Recent'
+        : scope.kind === 'all'
+          ? 'All captures'
+          : (activeContext?.name ?? 'Context'),
   );
 
   onMount(() => {
     void initialise();
   });
+
+  onDestroy(() => clearTimeout(searchTimer));
 
   async function initialise() {
     loading = true;
@@ -80,6 +96,7 @@
   }
 
   async function chooseScope(nextScope: LibraryScope) {
+    searchMode = false;
     scope = nextScope;
     branchName = null;
     knownBranches = [];
@@ -87,6 +104,17 @@
     selectedSummaryId = null;
     navigationOpen = false;
     await loadCaptures(false);
+  }
+
+  async function chooseSearch() {
+    searchMode = true;
+    branchName = null;
+    selected = null;
+    selectedSummaryId = null;
+    navigationOpen = false;
+    await loadCaptures(false);
+    await tick();
+    searchInput?.focus();
   }
 
   async function changeBranch(event: Event) {
@@ -102,15 +130,42 @@
     else loading = true;
     error = null;
     try {
-      const page = await client.listCaptures(
-        scope,
-        { branchName },
-        append ? nextCursor : null,
-      );
+      const cursor = append ? nextCursor : null;
+      const searchQuery = query.trim();
+      const searchScope: LibraryScope = searchContextId
+        ? { kind: 'context', contextId: searchContextId }
+        : { kind: 'all' };
+      const filters = {
+        branchName,
+        captureKinds,
+        capturedFrom: capturedFromDate ? `${capturedFromDate}T00:00:00Z` : null,
+        capturedTo: capturedToDate ? `${capturedToDate}T23:59:59.999Z` : null,
+      };
+      const page =
+        searchMode && searchQuery
+          ? await client.searchCaptures(
+              searchQuery,
+              { ...filters, contextId: searchContextId },
+              cursor,
+            )
+          : await client.listCaptures(
+              searchMode ? searchScope : scope,
+              searchMode ? filters : { branchName },
+              cursor,
+            );
       if (request !== listRequest) return;
-      captures = append ? [...captures, ...page.items] : page.items;
+      const pageCaptures = page.items.map((item) =>
+        'capture' in item ? item.capture : item,
+      );
+      const pageSnippets = Object.fromEntries(
+        page.items.flatMap((item) =>
+          'capture' in item ? [[item.capture.id, item.snippet]] : [],
+        ),
+      );
+      captures = append ? [...captures, ...pageCaptures] : pageCaptures;
+      snippets = append ? { ...snippets, ...pageSnippets } : pageSnippets;
       nextCursor = page.nextCursor;
-      if (!branchName) {
+      if (!searchMode && !branchName) {
         knownBranches = Array.from(
           new Set(
             captures.flatMap((capture) =>
@@ -129,6 +184,42 @@
         loadingMore = false;
       }
     }
+  }
+
+  function scheduleSearch(event: Event) {
+    query = (event.currentTarget as HTMLInputElement).value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => void loadCaptures(false), 250);
+  }
+
+  function applySearchFilter() {
+    clearTimeout(searchTimer);
+    void loadCaptures(false);
+  }
+
+  function changeSearchContext(event: Event) {
+    searchContextId = (event.currentTarget as HTMLSelectElement).value || null;
+    applySearchFilter();
+  }
+
+  function changeSearchBranch(event: Event) {
+    branchName = (event.currentTarget as HTMLInputElement).value.trim() || null;
+    applySearchFilter();
+  }
+
+  function changeSearchDate(event: Event, boundary: 'from' | 'to') {
+    const value = (event.currentTarget as HTMLInputElement).value;
+    if (boundary === 'from') capturedFromDate = value;
+    else capturedToDate = value;
+    applySearchFilter();
+  }
+
+  function changeCaptureKind(event: Event, kind: CaptureKind) {
+    const checked = (event.currentTarget as HTMLInputElement).checked;
+    captureKinds = checked
+      ? [...captureKinds, kind]
+      : captureKinds.filter((candidate) => candidate !== kind);
+    applySearchFilter();
   }
 
   async function inspectCapture(capture: CaptureSummary) {
@@ -196,6 +287,7 @@
   }
 
   function isCurrent(candidate: LibraryScope) {
+    if (searchMode) return false;
     if (scope.kind !== candidate.kind) return false;
     return (
       scope.kind !== 'context' ||
@@ -225,6 +317,9 @@
         type="button"
         onclick={() => chooseScope({ kind: 'all' })}
         ><LayersIcon aria-hidden="true" />All captures</button
+      >
+      <button class:active={searchMode} type="button" onclick={chooseSearch}
+        ><SearchIcon aria-hidden="true" />Search</button
       >
 
       {#if projects.length}
@@ -284,6 +379,83 @@
       {/if}
     </header>
 
+    {#if searchMode}
+      <div class="search-panel">
+        <label class="search-field">
+          <span class="sr-only">Search captures</span>
+          <SearchIcon aria-hidden="true" />
+          <input
+            bind:this={searchInput}
+            type="search"
+            value={query}
+            maxlength="200"
+            placeholder="Search text and captions"
+            oninput={scheduleSearch}
+          />
+        </label>
+        <details class="search-filters">
+          <summary><SlidersIcon aria-hidden="true" />Filters</summary>
+          <div class="filter-grid">
+            <label>
+              <span>Context</span>
+              <select
+                value={searchContextId ?? ''}
+                onchange={changeSearchContext}
+              >
+                <option value="">All contexts</option>
+                {#each contexts as context (context.id)}
+                  <option value={context.id}>{context.name}</option>
+                {/each}
+              </select>
+            </label>
+            <label>
+              <span>Branch</span>
+              <input
+                type="text"
+                maxlength="255"
+                value={branchName ?? ''}
+                placeholder="Any branch"
+                onchange={changeSearchBranch}
+              />
+            </label>
+            <label>
+              <span>From</span>
+              <input
+                type="date"
+                value={capturedFromDate}
+                onchange={(event) => changeSearchDate(event, 'from')}
+              />
+            </label>
+            <label>
+              <span>To</span>
+              <input
+                type="date"
+                value={capturedToDate}
+                onchange={(event) => changeSearchDate(event, 'to')}
+              />
+            </label>
+            <fieldset>
+              <legend>Capture type</legend>
+              {#each ['text', 'image', 'audio'] as kind}
+                <label class="kind-filter">
+                  <input
+                    type="checkbox"
+                    checked={captureKinds.includes(kind as CaptureKind)}
+                    onchange={(event) =>
+                      changeCaptureKind(event, kind as CaptureKind)}
+                  />
+                  {kind}
+                </label>
+              {/each}
+            </fieldset>
+          </div>
+        </details>
+        <p class="search-scope-note">
+          Literal local search across note text and media captions.
+        </p>
+      </div>
+    {/if}
+
     {#if error}
       <div class="library-error" role="alert">
         <span>{error}</span>
@@ -298,16 +470,23 @@
         <p class="library-status">Loading captures…</p>
       {:else if captures.length === 0}
         <div class="library-empty">
-          <h2>Nothing captured yet</h2>
-          <p>
-            Use <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd> to save your first
-            note.
-          </p>
+          {#if searchMode && query.trim()}
+            <h2>No matches</h2>
+            <p>Try fewer words or adjust the filters.</p>
+          {:else}
+            <h2>Nothing captured yet</h2>
+            <p>
+              Use <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd> to save your first
+              note.
+            </p>
+          {/if}
         </div>
       {:else}
         <CaptureStream
           {captures}
           selectedId={selectedSummaryId}
+          {snippets}
+          query={searchMode ? query.trim() : ''}
           onselect={inspectCapture}
         />
         {#if nextCursor}
