@@ -427,6 +427,32 @@ pub struct Page<T> {
     pub next_cursor: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LibraryScope {
+    All,
+    Recent,
+    Context { context_id: ContextId },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ListCapturesInput {
+    pub scope: LibraryScope,
+    pub branch_name: Option<String>,
+    pub capture_kinds: Vec<CaptureKind>,
+    pub captured_from: Option<Timestamp>,
+    pub captured_to: Option<Timestamp>,
+    pub cursor: Option<String>,
+    pub limit: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GetCaptureInput {
+    pub capture_id: CaptureId,
+}
+
 /// First strict command input contract used by the durable text slice.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -550,6 +576,9 @@ pub fn typescript_bindings() -> String {
         CaptureSummary::decl(&config),
         CaptureDetail::decl(&config),
         Page::<String>::decl(&config),
+        LibraryScope::decl(&config),
+        ListCapturesInput::decl(&config),
+        GetCaptureInput::decl(&config),
         SaveTextCaptureInput::decl(&config),
         StageClipboardImageInput::decl(&config),
         DiscardStagedMediaInput::decl(&config),
@@ -729,6 +758,20 @@ mod tests {
         let create_context_result = CreateContextResult {
             context: context.clone(),
         };
+        let list_captures_input = ListCapturesInput {
+            scope: LibraryScope::Context {
+                context_id: context.id,
+            },
+            branch_name: Some("main".to_owned()),
+            capture_kinds: vec![CaptureKind::Text, CaptureKind::Image],
+            captured_from: None,
+            captured_to: None,
+            cursor: Some("opaque-cursor".to_owned()),
+            limit: 50,
+        };
+        let get_capture_input = GetCaptureInput {
+            capture_id: summary.id,
+        };
         let error = AppError {
             code: ErrorCode::ValidationError,
             message: "Invalid capture".to_owned(),
@@ -767,6 +810,8 @@ mod tests {
         round_trip(&list_capture_sources_result);
         round_trip(&create_context_input);
         round_trip(&create_context_result);
+        round_trip(&list_captures_input);
+        round_trip(&get_capture_input);
         round_trip(&CommandResult::<CaptureSession>::failure(error));
     }
 
@@ -827,6 +872,18 @@ mod tests {
             serde_json::from_value::<ListCaptureContextSourcesInput>(unknown_source_list_field)
                 .is_err()
         );
+
+        let unknown_library_field = json!({
+            "scope": { "kind": "all" },
+            "branchName": null,
+            "captureKinds": [],
+            "capturedFrom": null,
+            "capturedTo": null,
+            "cursor": null,
+            "limit": 50,
+            "offset": 0
+        });
+        assert!(serde_json::from_value::<ListCapturesInput>(unknown_library_field).is_err());
     }
 
     #[test]
