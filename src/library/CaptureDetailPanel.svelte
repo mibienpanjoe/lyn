@@ -9,6 +9,7 @@
   interface Props {
     capture: CaptureDetail;
     compact?: boolean;
+    backLabel?: string;
     playing?: boolean;
     busy?: boolean;
     onback?: () => void;
@@ -19,6 +20,7 @@
   let {
     capture,
     compact = false,
+    backLabel = 'All captures',
     playing = false,
     busy = false,
     onback,
@@ -45,12 +47,16 @@
     {#if compact}
       <button class="icon-label-button" type="button" onclick={onback}>
         <ArrowLeftIcon aria-hidden="true" />
-        Back
+        {backLabel}
       </button>
     {/if}
     <div>
-      <p class="detail-eyebrow">{capture.kind} capture</p>
       <h2 id="capture-detail-title">{capture.context.name}</h2>
+      <p class="detail-eyebrow">
+        {capture.kind[0].toUpperCase() + capture.kind.slice(1)} · {fullDate(
+          capture.capturedAt,
+        )}
+      </p>
     </div>
   </header>
 

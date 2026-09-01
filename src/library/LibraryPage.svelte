@@ -2,13 +2,13 @@
   import ClockIcon from '@lucide/svelte/icons/clock-3';
   import FolderIcon from '@lucide/svelte/icons/folder-code';
   import LayersIcon from '@lucide/svelte/icons/layers-3';
-  import LibraryIcon from '@lucide/svelte/icons/library';
   import MenuIcon from '@lucide/svelte/icons/menu';
   import NotebookIcon from '@lucide/svelte/icons/notebook-tabs';
   import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
   import SearchIcon from '@lucide/svelte/icons/search';
   import SlidersIcon from '@lucide/svelte/icons/sliders-horizontal';
   import { onDestroy, onMount, tick } from 'svelte';
+  import logoUrl from '../../src-tauri/icons/lyn-icon.svg?url';
 
   import type {
     CaptureDetail,
@@ -43,6 +43,9 @@
   let captureKinds = $state<CaptureKind[]>([]);
   let capturedFromDate = $state('');
   let capturedToDate = $state('');
+  let datePreset = $state<'any' | 'today' | '7-days' | '30-days' | 'custom'>(
+    'any',
+  );
   let snippets = $state<Record<string, string>>({});
   let knownBranches = $state<string[]>([]);
   let loading = $state(true);
@@ -76,6 +79,12 @@
         : scope.kind === 'all'
           ? 'All captures'
           : (activeContext?.name ?? 'Context'),
+  );
+  const activeFilterCount = $derived(
+    Number(Boolean(searchContextId)) +
+      Number(Boolean(branchName)) +
+      Number(captureKinds.length > 0) +
+      Number(datePreset !== 'any'),
   );
 
   onMount(() => {
@@ -214,11 +223,48 @@
     applySearchFilter();
   }
 
+  function changeDatePreset(event: Event) {
+    datePreset = (event.currentTarget as HTMLSelectElement)
+      .value as typeof datePreset;
+    if (datePreset === 'any') {
+      capturedFromDate = '';
+      capturedToDate = '';
+    } else if (datePreset !== 'custom') {
+      const today = new Date();
+      const start = new Date(today);
+      if (datePreset === '7-days') start.setDate(today.getDate() - 6);
+      if (datePreset === '30-days') start.setDate(today.getDate() - 29);
+      capturedFromDate = localDate(start);
+      capturedToDate = localDate(today);
+    }
+    applySearchFilter();
+  }
+
+  function localDate(value: Date) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
   function changeCaptureKind(event: Event, kind: CaptureKind) {
-    const checked = (event.currentTarget as HTMLInputElement).checked;
-    captureKinds = checked
-      ? [...captureKinds, kind]
-      : captureKinds.filter((candidate) => candidate !== kind);
+    const selected =
+      (event.currentTarget as HTMLButtonElement).getAttribute(
+        'aria-pressed',
+      ) === 'true';
+    captureKinds = selected
+      ? captureKinds.filter((candidate) => candidate !== kind)
+      : [...captureKinds, kind];
+    applySearchFilter();
+  }
+
+  function clearSearchFilters() {
+    searchContextId = null;
+    branchName = null;
+    captureKinds = [];
+    capturedFromDate = '';
+    capturedToDate = '';
+    datePreset = 'any';
     applySearchFilter();
   }
 
@@ -303,7 +349,7 @@
     aria-label="Library navigation"
   >
     <div class="library-brand">
-      <LibraryIcon aria-hidden="true" /><span>Lyn</span>
+      <img src={logoUrl} alt="" /><span>Lyn</span>
     </div>
     <nav>
       <button
@@ -363,7 +409,6 @@
         ><MenuIcon aria-hidden="true" /></button
       >
       <div>
-        <p>Library</p>
         <h1 id="library-title">{title}</h1>
       </div>
       {#if activeContext?.kind === 'project' && knownBranches.length}
@@ -394,7 +439,11 @@
           />
         </label>
         <details class="search-filters">
-          <summary><SlidersIcon aria-hidden="true" />Filters</summary>
+          <summary
+            ><SlidersIcon aria-hidden="true" />{activeFilterCount
+              ? `Filters · ${activeFilterCount}`
+              : 'Filters'}</summary
+          >
           <div class="filter-grid">
             <label>
               <span>Context</span>
@@ -418,36 +467,55 @@
                 onchange={changeSearchBranch}
               />
             </label>
-            <label>
-              <span>From</span>
-              <input
-                type="date"
-                value={capturedFromDate}
-                onchange={(event) => changeSearchDate(event, 'from')}
-              />
+            <label class="date-preset">
+              <span>Date</span>
+              <select value={datePreset} onchange={changeDatePreset}>
+                <option value="any">Any time</option>
+                <option value="today">Today</option>
+                <option value="7-days">Last 7 days</option>
+                <option value="30-days">Last 30 days</option>
+                <option value="custom">Custom range</option>
+              </select>
             </label>
-            <label>
-              <span>To</span>
-              <input
-                type="date"
-                value={capturedToDate}
-                onchange={(event) => changeSearchDate(event, 'to')}
-              />
-            </label>
+            {#if datePreset === 'custom'}
+              <label>
+                <span>From</span>
+                <input
+                  type="date"
+                  value={capturedFromDate}
+                  onchange={(event) => changeSearchDate(event, 'from')}
+                />
+              </label>
+              <label>
+                <span>To</span>
+                <input
+                  type="date"
+                  value={capturedToDate}
+                  onchange={(event) => changeSearchDate(event, 'to')}
+                />
+              </label>
+            {/if}
             <fieldset>
               <legend>Capture type</legend>
               {#each ['text', 'image', 'audio'] as kind}
-                <label class="kind-filter">
-                  <input
-                    type="checkbox"
-                    checked={captureKinds.includes(kind as CaptureKind)}
-                    onchange={(event) =>
-                      changeCaptureKind(event, kind as CaptureKind)}
-                  />
-                  {kind}
-                </label>
+                <button
+                  class="kind-filter"
+                  class:active={captureKinds.includes(kind as CaptureKind)}
+                  type="button"
+                  aria-pressed={captureKinds.includes(kind as CaptureKind)}
+                  onclick={(event) =>
+                    changeCaptureKind(event, kind as CaptureKind)}
+                  >{kind[0].toUpperCase() + kind.slice(1)}</button
+                >
               {/each}
             </fieldset>
+            {#if activeFilterCount}
+              <button
+                class="clear-filters"
+                type="button"
+                onclick={clearSearchFilters}>Clear filters</button
+              >
+            {/if}
           </div>
         </details>
         <p class="search-scope-note">
@@ -476,8 +544,10 @@
           {:else}
             <h2>Nothing captured yet</h2>
             <p>
-              Use <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd> to save your first
-              note.
+              Press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd> to make
+              your first capture{activeContext
+                ? ` in ${activeContext.name}`
+                : ''}.
             </p>
           {/if}
         </div>
@@ -511,6 +581,7 @@
       <CaptureDetailPanel
         capture={selected}
         compact={true}
+        backLabel={title}
         playing={playingMediaId === selected.media?.mediaId}
         busy={mediaBusy}
         onback={closeDetail}

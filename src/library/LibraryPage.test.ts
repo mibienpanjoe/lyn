@@ -108,6 +108,11 @@ describe('responsive Library', () => {
     );
     expect(screen.getByText('Code')).toBeVisible();
     expect((await axe.run(container)).violations).toEqual([]);
+    expect(screen.queryByText('Library')).not.toBeInTheDocument();
+    expect(container.querySelector('.library-brand img')).toHaveAttribute(
+      'src',
+      expect.stringContaining('data:image/svg+xml'),
+    );
   });
 
   it('keeps project branches in one stream and applies branch only as a filter', async () => {
@@ -248,14 +253,47 @@ describe('responsive Library', () => {
     await fireEvent.change(screen.getByRole('combobox', { name: 'Context' }), {
       target: { value: project.id },
     });
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'image' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Image' }));
 
     await waitFor(() => {
       const call = searchCaptures.mock.calls.at(-1);
       expect(call?.[1].contextId).toBe(project.id);
       expect(call?.[1].captureKinds).toEqual(['image']);
     });
+    expect(screen.getByText('Filters · 2')).toBeVisible();
     expect((await axe.run(container)).violations).toEqual([]);
+  });
+
+  it('uses date presets, reveals custom dates only when needed, and clears filters', async () => {
+    const searchCaptures = vi.fn().mockResolvedValue({
+      items: [],
+      nextCursor: null,
+    });
+    const client = createClient({ searchCaptures });
+    render(LibraryPage, { client });
+    await screen.findByRole('heading', { name: 'Recent' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await fireEvent.click(screen.getByText('Filters'));
+
+    expect(screen.queryByLabelText('From')).not.toBeInTheDocument();
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Date' }), {
+      target: { value: 'custom' },
+    });
+    expect(screen.getByLabelText('From')).toBeVisible();
+    expect(screen.getByLabelText('To')).toBeVisible();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Audio' }));
+    expect(screen.getByText('Filters · 2')).toBeVisible();
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Clear filters' }),
+    );
+
+    expect(screen.getByText('Filters')).toBeVisible();
+    expect(screen.queryByLabelText('From')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Audio' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
   });
 
   it('ignores a stale search response after a newer query completes', async () => {

@@ -631,7 +631,7 @@ kbd {
 }
 
 .library-navigation {
-  padding: var(--space-5) var(--space-3);
+  padding: var(--space-4) var(--space-2);
   overflow-y: auto;
   border-right: 1px solid var(--color-divider);
   background: var(--color-surface);
@@ -641,11 +641,17 @@ kbd {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 36px;
-  padding: 0 var(--space-2) var(--space-4);
+  min-height: 32px;
+  padding: 0 var(--space-2) var(--space-3);
   color: var(--color-text);
   font-size: 16px;
   font-weight: 650;
+}
+
+.library-brand img {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
 }
 
 .library-brand svg,
@@ -666,7 +672,7 @@ kbd {
 }
 
 .library-navigation nav h2 {
-  margin: var(--space-5) var(--space-2) var(--space-2);
+  margin: var(--space-4) var(--space-2) var(--space-1);
   color: var(--color-text-muted);
   font-size: 11px;
   font-weight: 650;
@@ -675,17 +681,19 @@ kbd {
 }
 
 .library-navigation nav button {
+  position: relative;
   display: flex;
   min-width: 0;
-  min-height: 38px;
+  min-height: 34px;
   align-items: center;
   gap: var(--space-2);
-  padding: 7px var(--space-2);
+  padding: 5px var(--space-2);
   overflow: hidden;
   border: 0;
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--color-text-muted);
+  font-size: 13px;
   text-align: left;
   transition:
     color 150ms ease-out,
@@ -709,13 +717,22 @@ kbd {
 .icon-label-button:active,
 .load-more-button:active,
 .open-media-button:active {
-  transform: scale(0.98);
+  transform: scale(0.96);
 }
 
 .library-navigation nav button.active {
-  background: var(--color-accent-soft);
+  background: color-mix(in srgb, var(--color-accent-soft) 72%, transparent);
   color: var(--color-accent);
   font-weight: 600;
+}
+
+.library-navigation nav button.active::before {
+  position: absolute;
+  inset: 8px auto 8px 0;
+  width: 2px;
+  border-radius: 2px;
+  background: currentcolor;
+  content: '';
 }
 
 .library-stream {
@@ -727,7 +744,7 @@ kbd {
 
 .library-toolbar {
   display: flex;
-  min-height: 76px;
+  min-height: 64px;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-5);
@@ -735,7 +752,6 @@ kbd {
   background: color-mix(in srgb, var(--color-canvas) 92%, transparent);
 }
 
-.library-toolbar p,
 .detail-eyebrow {
   margin: 0 0 2px;
   color: var(--color-text-muted);
@@ -748,7 +764,7 @@ kbd {
 .detail-header h2 {
   margin: 0;
   color: var(--color-text);
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 650;
   line-height: 27px;
 }
@@ -829,6 +845,13 @@ kbd {
   flex: 1 1 auto;
   min-height: 0;
   padding: var(--space-4) var(--space-5) var(--space-6, 24px);
+}
+
+.stream-scroll-region > * {
+  width: 100%;
+  max-width: 720px;
+  margin-right: auto;
+  margin-left: auto;
 }
 
 .search-panel {
@@ -927,8 +950,9 @@ kbd {
 .filter-grid fieldset {
   display: flex;
   grid-column: 1 / -1;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   padding: 0;
   margin: 0;
   border: 0;
@@ -936,25 +960,53 @@ kbd {
 
 .filter-grid legend {
   float: left;
-  margin-right: auto;
+  width: 100%;
+  margin-bottom: var(--space-1);
   color: var(--color-text-muted);
   font-size: 11px;
 }
 
 .kind-filter {
   display: inline-flex;
+  min-height: 30px;
   align-items: center;
-  gap: var(--space-1);
+  justify-content: center;
+  padding: 4px var(--space-3);
+  border: 1px solid var(--color-input-border);
+  border-radius: 999px;
+  background: transparent;
   color: var(--color-text);
   font-size: 12px;
-  text-transform: capitalize;
+  transition:
+    color 150ms ease-out,
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    transform 150ms ease-out;
 }
 
-.kind-filter input {
-  width: 16px;
-  min-height: 16px;
+.kind-filter:hover,
+.kind-filter.active {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.kind-filter:active {
+  transform: scale(0.96);
+}
+
+.date-preset {
+  grid-column: 1 / -1;
+}
+
+.clear-filters {
+  grid-column: 1 / -1;
+  justify-self: start;
   padding: 0;
-  accent-color: var(--color-accent);
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 12px;
 }
 
 .search-scope-note {
@@ -995,7 +1047,7 @@ kbd {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto;
   width: 100%;
-  min-height: 76px;
+  min-height: 84px;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-2);
@@ -1036,7 +1088,7 @@ kbd {
 .capture-row-content {
   display: grid;
   min-width: 0;
-  gap: var(--space-1);
+  gap: 6px;
 }
 
 .capture-row-meta {
@@ -1045,7 +1097,7 @@ kbd {
   align-items: center;
   gap: var(--space-2);
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .capture-row-meta > span:not(.branch-label)::before {
@@ -1067,8 +1119,10 @@ kbd {
 .capture-excerpt {
   display: -webkit-box;
   overflow: hidden;
-  font-size: 13px;
-  line-height: 19px;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -1081,9 +1135,10 @@ kbd {
 }
 
 .capture-thumbnail {
-  width: 64px;
-  height: 44px;
-  border-radius: 4px;
+  width: 96px;
+  height: 64px;
+  margin-left: var(--space-2);
+  border-radius: 6px;
   object-fit: cover;
 }
 
@@ -1150,7 +1205,7 @@ kbd {
 
 .detail-header {
   display: flex;
-  min-height: 76px;
+  min-height: 64px;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-5);
@@ -1159,6 +1214,8 @@ kbd {
 
 .detail-header > .icon-label-button {
   display: none;
+  padding-inline: 0;
+  border-color: transparent;
 }
 
 .detail-content {
@@ -1178,7 +1235,7 @@ kbd {
 
 .detail-image {
   width: 100%;
-  max-height: 440px;
+  max-height: 420px;
   border-radius: var(--radius-control);
   object-fit: contain;
   background: var(--color-surface-subtle);
@@ -1235,6 +1292,8 @@ kbd {
 .open-media-button {
   justify-self: start;
   color: var(--color-text-muted);
+  border-color: transparent;
+  padding-inline: 0;
 }
 
 @media (max-width: 899px) {
