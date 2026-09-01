@@ -95,13 +95,15 @@ pub fn run() {
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let database_path = app_data_dir.join("lyn.db");
-            let database = storage::Database::open(database_path)?;
+            let mut database = storage::Database::open(database_path)?;
             let settings = storage::settings::SettingsRepository::new(database.connection())
                 .get()
                 .unwrap_or_default();
             let referenced_paths =
                 storage::media_assets::MediaAssetRepository::new(database.connection())
                     .referenced_relative_paths()?;
+            let mut enrichment = enrichment::EnrichmentQueue::new(database.connection_mut());
+            let _ = enrichment.recover_interrupted();
             let mut media_store = media::staging::MediaStore::open(app_data_dir)?;
             media_store.reconcile(&referenced_paths)?;
             app.manage(Mutex::new(database));

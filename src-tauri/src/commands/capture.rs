@@ -419,7 +419,10 @@ fn save_audio_capture_value(
         }
         saved.map(|saved| (capture_id, saved))
     }) {
-        Ok(SaveOnceResult::Saved { value, .. }) => CommandResult::success(value),
+        Ok(SaveOnceResult::Saved { mut value, .. }) => {
+            value.enrichment_scheduled = schedule_enrichment(database, value.capture_id);
+            CommandResult::success(value)
+        }
         Ok(SaveOnceResult::AlreadySaved(_)) | Err(SaveOnceError::Session(_)) => {
             CommandResult::failure(stale_session_error())
         }
@@ -502,12 +505,27 @@ fn save_image_capture_value(
         }
         saved.map(|saved| (capture_id, saved))
     }) {
-        Ok(SaveOnceResult::Saved { value, .. }) => CommandResult::success(value),
+        Ok(SaveOnceResult::Saved { mut value, .. }) => {
+            value.enrichment_scheduled = schedule_enrichment(database, value.capture_id);
+            CommandResult::success(value)
+        }
         Ok(SaveOnceResult::AlreadySaved(_)) | Err(SaveOnceError::Session(_)) => {
             CommandResult::failure(stale_session_error())
         }
         Err(SaveOnceError::Persistence(error)) => CommandResult::failure(error),
     }
+}
+
+fn schedule_enrichment(database: &Mutex<Database>, capture_id: crate::contract::CaptureId) -> bool {
+    let Ok(mut database) = database.lock() else {
+        return false;
+    };
+    let enabled = crate::storage::settings::SettingsRepository::new(database.connection())
+        .get()
+        .map(|settings| settings.local_speech_enabled)
+        .unwrap_or(false);
+    crate::enrichment::schedule_after_commit(database.connection_mut(), capture_id, enabled, false)
+        .unwrap_or(false)
 }
 
 fn normalize_optional_caption(caption: Option<String>) -> Option<String> {
