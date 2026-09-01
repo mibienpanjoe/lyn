@@ -6,6 +6,7 @@
   import NotebookIcon from '@lucide/svelte/icons/notebook-tabs';
   import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
   import SearchIcon from '@lucide/svelte/icons/search';
+  import SettingsIcon from '@lucide/svelte/icons/settings-2';
   import { onDestroy, onMount, tick } from 'svelte';
   import logoUrl from '../../src-tauri/icons/lyn-icon.svg?url';
 
@@ -19,6 +20,8 @@
   import CaptureDetailPanel from './CaptureDetailPanel.svelte';
   import CaptureStream from './CaptureStream.svelte';
   import SearchFilters from './SearchFilters.svelte';
+  import SettingsPanel from '../settings/SettingsPanel.svelte';
+  import type { SettingsClient } from '../settings/settings-client';
   import {
     LibraryCommandError,
     libraryClient,
@@ -27,9 +30,10 @@
 
   interface Props {
     client?: LibraryClient;
+    settings?: SettingsClient;
   }
 
-  let { client = libraryClient }: Props = $props();
+  let { client = libraryClient, settings }: Props = $props();
   let contexts = $state<ContextRef[]>([]);
   let scope = $state<LibraryScope>({ kind: 'recent' });
   let captures = $state<CaptureSummary[]>([]);
@@ -38,6 +42,7 @@
   let selectedSummaryId = $state<string | null>(null);
   let branchName = $state<string | null>(null);
   let searchMode = $state(false);
+  let settingsMode = $state(false);
   let query = $state('');
   let searchContextId = $state<string | null>(null);
   let captureKinds = $state<CaptureKind[]>([]);
@@ -106,6 +111,7 @@
 
   async function chooseScope(nextScope: LibraryScope) {
     searchMode = false;
+    settingsMode = false;
     scope = nextScope;
     branchName = null;
     knownBranches = [];
@@ -117,6 +123,7 @@
 
   async function chooseSearch() {
     searchMode = true;
+    settingsMode = false;
     branchName = null;
     selected = null;
     selectedSummaryId = null;
@@ -124,6 +131,14 @@
     await loadCaptures(false);
     await tick();
     searchInput?.focus();
+  }
+
+  function chooseSettings() {
+    settingsMode = true;
+    searchMode = false;
+    selected = null;
+    selectedSummaryId = null;
+    navigationOpen = false;
   }
 
   async function changeBranch(event: Event) {
@@ -362,6 +377,9 @@
       <button class:active={searchMode} type="button" onclick={chooseSearch}
         ><SearchIcon aria-hidden="true" />Search</button
       >
+      <button class:active={settingsMode} type="button" onclick={chooseSettings}
+        ><SettingsIcon aria-hidden="true" />Settings</button
+      >
 
       {#if projects.length}
         <h2>Projects</h2>
@@ -393,136 +411,140 @@
     </nav>
   </aside>
 
-  <section class="library-stream" aria-labelledby="library-title">
-    <header class="library-toolbar">
-      <button
-        class="navigation-toggle"
-        type="button"
-        aria-label="Toggle Library navigation"
-        aria-expanded={navigationOpen}
-        onclick={() => (navigationOpen = !navigationOpen)}
-        ><MenuIcon aria-hidden="true" /></button
-      >
-      <div>
-        <h1 id="library-title">{title}</h1>
-      </div>
-      {#if activeContext?.kind === 'project' && knownBranches.length}
-        <label class="branch-filter">
-          <span>Branch</span>
-          <select value={branchName ?? ''} onchange={changeBranch}>
-            <option value="">All branches</option>
-            {#each knownBranches as branch}
-              <option value={branch}>{branch}</option>
-            {/each}
-          </select>
-        </label>
-      {/if}
-    </header>
-
-    {#if searchMode}
-      <div class="search-panel">
-        <label class="search-field">
-          <span class="sr-only">Search captures</span>
-          <SearchIcon aria-hidden="true" />
-          <input
-            bind:this={searchInput}
-            type="search"
-            value={query}
-            maxlength="200"
-            placeholder="Search text and captions"
-            oninput={scheduleSearch}
-          />
-        </label>
-        <SearchFilters
-          {contexts}
-          contextId={searchContextId}
-          {branchName}
-          {captureKinds}
-          {datePreset}
-          {capturedFromDate}
-          {capturedToDate}
-          activeCount={activeFilterCount}
-          oncontext={changeSearchContext}
-          onbranch={changeSearchBranch}
-          onkind={changeCaptureKind}
-          onpreset={changeDatePreset}
-          ondate={changeSearchDate}
-          onclear={clearSearchFilters}
-        />
-        <p class="search-scope-note">
-          Literal local search across note text and media captions.
-        </p>
-      </div>
-    {/if}
-
-    {#if error}
-      <div class="library-error" role="alert">
-        <span>{error}</span>
-        <button type="button" onclick={() => loadCaptures(false)}
-          ><RefreshIcon aria-hidden="true" />Retry</button
-        >
-      </div>
-    {/if}
-
-    <div class="stream-scroll-region" aria-busy={loading}>
-      {#if loading}
-        <p class="library-status">Loading captures…</p>
-      {:else if captures.length === 0}
-        <div class="library-empty">
-          {#if searchMode && query.trim()}
-            <h2>No matches</h2>
-            <p>Try fewer words or adjust the filters.</p>
-          {:else}
-            <h2>Nothing captured yet</h2>
-            <p>
-              Press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd> to make
-              your first capture{activeContext
-                ? ` in ${activeContext.name}`
-                : ''}.
-            </p>
-          {/if}
-        </div>
-      {:else}
-        <CaptureStream
-          {captures}
-          selectedId={selectedSummaryId}
-          {snippets}
-          query={searchMode ? query.trim() : ''}
-          onselect={inspectCapture}
-        />
-        {#if nextCursor}
-          <button
-            class="load-more-button"
-            type="button"
-            disabled={loadingMore}
-            onclick={() => loadCaptures(true)}
-            >{loadingMore ? 'Loading…' : 'Load more'}</button
-          >
-        {/if}
-      {/if}
-    </div>
-  </section>
-
-  {#if detailLoading}
-    <aside class="library-detail">
-      <p class="library-status">Loading capture…</p>
-    </aside>
-  {:else if selected}
-    <aside class="library-detail">
-      <CaptureDetailPanel
-        capture={selected}
-        compact={true}
-        backLabel={title}
-        playing={playingMediaId === selected.media?.mediaId}
-        busy={mediaBusy}
-        onback={closeDetail}
-        onplay={toggleAudio}
-        onopen={openMedia}
-      />
-    </aside>
+  {#if settingsMode}
+    <SettingsPanel client={settings} />
   {:else}
-    <aside class="library-detail detail-placeholder" aria-hidden="true">
-      <p>Select a capture to inspect it.</p>
-    </aside>
+    <section class="library-stream" aria-labelledby="library-title">
+      <header class="library-toolbar">
+        <button
+          class="navigation-toggle"
+          type="button"
+          aria-label="Toggle Library navigation"
+          aria-expanded={navigationOpen}
+          onclick={() => (navigationOpen = !navigationOpen)}
+          ><MenuIcon aria-hidden="true" /></button
+        >
+        <div>
+          <h1 id="library-title">{title}</h1>
+        </div>
+        {#if activeContext?.kind === 'project' && knownBranches.length}
+          <label class="branch-filter">
+            <span>Branch</span>
+            <select value={branchName ?? ''} onchange={changeBranch}>
+              <option value="">All branches</option>
+              {#each knownBranches as branch}
+                <option value={branch}>{branch}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+      </header>
+
+      {#if searchMode}
+        <div class="search-panel">
+          <label class="search-field">
+            <span class="sr-only">Search captures</span>
+            <SearchIcon aria-hidden="true" />
+            <input
+              bind:this={searchInput}
+              type="search"
+              value={query}
+              maxlength="200"
+              placeholder="Search text and captions"
+              oninput={scheduleSearch}
+            />
+          </label>
+          <SearchFilters
+            {contexts}
+            contextId={searchContextId}
+            {branchName}
+            {captureKinds}
+            {datePreset}
+            {capturedFromDate}
+            {capturedToDate}
+            activeCount={activeFilterCount}
+            oncontext={changeSearchContext}
+            onbranch={changeSearchBranch}
+            onkind={changeCaptureKind}
+            onpreset={changeDatePreset}
+            ondate={changeSearchDate}
+            onclear={clearSearchFilters}
+          />
+          <p class="search-scope-note">
+            Literal local search across note text and media captions.
+          </p>
+        </div>
+      {/if}
+
+      {#if error}
+        <div class="library-error" role="alert">
+          <span>{error}</span>
+          <button type="button" onclick={() => loadCaptures(false)}
+            ><RefreshIcon aria-hidden="true" />Retry</button
+          >
+        </div>
+      {/if}
+
+      <div class="stream-scroll-region" aria-busy={loading}>
+        {#if loading}
+          <p class="library-status">Loading captures…</p>
+        {:else if captures.length === 0}
+          <div class="library-empty">
+            {#if searchMode && query.trim()}
+              <h2>No matches</h2>
+              <p>Try fewer words or adjust the filters.</p>
+            {:else}
+              <h2>Nothing captured yet</h2>
+              <p>
+                Press <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd> to make
+                your first capture{activeContext
+                  ? ` in ${activeContext.name}`
+                  : ''}.
+              </p>
+            {/if}
+          </div>
+        {:else}
+          <CaptureStream
+            {captures}
+            selectedId={selectedSummaryId}
+            {snippets}
+            query={searchMode ? query.trim() : ''}
+            onselect={inspectCapture}
+          />
+          {#if nextCursor}
+            <button
+              class="load-more-button"
+              type="button"
+              disabled={loadingMore}
+              onclick={() => loadCaptures(true)}
+              >{loadingMore ? 'Loading…' : 'Load more'}</button
+            >
+          {/if}
+        {/if}
+      </div>
+    </section>
+
+    {#if detailLoading}
+      <aside class="library-detail">
+        <p class="library-status">Loading capture…</p>
+      </aside>
+    {:else if selected}
+      <aside class="library-detail">
+        <CaptureDetailPanel
+          capture={selected}
+          compact={true}
+          backLabel={title}
+          playing={playingMediaId === selected.media?.mediaId}
+          busy={mediaBusy}
+          onback={closeDetail}
+          onplay={toggleAudio}
+          onopen={openMedia}
+        />
+      </aside>
+    {:else}
+      <aside class="library-detail detail-placeholder" aria-hidden="true">
+        <p>Select a capture to inspect it.</p>
+      </aside>
+    {/if}
   {/if}
 </main>

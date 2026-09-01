@@ -11,6 +11,7 @@ import type {
 } from '../lib/ipc-types';
 import LibraryPage from './LibraryPage.svelte';
 import type { LibraryClient } from './library-client';
+import type { SettingsClient } from '../settings/settings-client';
 
 const project: ContextRef = { id: 'project-1', kind: 'project', name: 'Lyn' };
 const inbox: ContextRef = {
@@ -90,6 +91,27 @@ function createClient(overrides: Partial<LibraryClient> = {}): LibraryClient {
 }
 
 describe('responsive Library', () => {
+  it('opens Settings from the persistent Library navigation', async () => {
+    const settings: SettingsClient = {
+      get: vi.fn().mockResolvedValue({
+        globalShortcut: 'Control+Shift+Space',
+        providerTieBreakOrder: ['vscode', 'shell', 'foreground_window'],
+        theme: 'system',
+        localSpeechEnabled: false,
+      }),
+      update: vi.fn(),
+    };
+    render(LibraryPage, { client: createClient(), settings });
+    await screen.findByRole('heading', { name: 'Recent' });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Settings' }),
+    ).toBeVisible();
+    expect(settings.get).toHaveBeenCalledOnce();
+  });
+
   it('renders chronological navigation and faithful text detail accessibly', async () => {
     const client = createClient();
     const { container } = render(LibraryPage, { client });
