@@ -44,6 +44,18 @@ export type SettingsPatch = { globalShortcut: string | null, providerTieBreakOrd
 
 export type UpdateSettingsInput = { patch: SettingsPatch, };
 
+export type SpeechModelState = "not_installed" | "downloading" | "installed" | "invalid";
+
+export type SpeechModelStatus = { state: SpeechModelState, modelId: string | null, label: string, downloadedBytes: number | null, totalBytes: number | null, errorCode: ErrorCode | null, };
+
+export type SpeechModelInput = { modelId: string, };
+
+export type InstallSpeechModelResult = { accepted: boolean, modelId: string, };
+
+export type RemoveSpeechModelResult = { removed: boolean, };
+
+export type CancelSpeechModelInstallResult = { cancelled: boolean, };
+
 export type ContextSourceKind = "vscode_window" | "integrated_terminal" | "external_terminal" | "shell" | "foreground_window";
 
 export type MediaKind = "image" | "audio";

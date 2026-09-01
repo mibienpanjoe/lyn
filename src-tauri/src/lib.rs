@@ -94,6 +94,7 @@ pub fn run() {
     builder
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
+            let speech_manager = intelligence::model::SpeechModelManager::new(&app_data_dir);
             let database_path = app_data_dir.join("lyn.db");
             let mut database = storage::Database::open(database_path)?;
             let settings = storage::settings::SettingsRepository::new(database.connection())
@@ -104,14 +105,10 @@ pub fn run() {
                     .referenced_relative_paths()?;
             let enrichment = enrichment::EnrichmentQueue::new(database.connection_mut());
             let _ = enrichment.recover_interrupted();
-            let mut intelligence = intelligence::UnavailableLocalIntelligence;
-            if intelligence.available() {
-                let mut enrichment = enrichment::EnrichmentQueue::new(database.connection_mut());
-                let _ = enrichment.run_one(settings.local_speech_enabled, &mut intelligence);
-            }
             let mut media_store = media::staging::MediaStore::open(app_data_dir)?;
             media_store.reconcile(&referenced_paths)?;
             app.manage(Mutex::new(database));
+            app.manage(speech_manager);
             app.manage(Mutex::new(media_store));
             app.manage(Mutex::new(platform::clipboard::NativeClipboardPlatform));
             app.manage(Mutex::new(
@@ -129,6 +126,13 @@ pub fn run() {
                 capture::session::CaptureSessionService::default(),
             ));
             app.manage(Mutex::new(platform::InvocationContext::default()));
+            if settings.local_speech_enabled
+                && app
+                    .state::<intelligence::model::SpeechModelManager>()
+                    .installed()
+            {
+                spawn_enrichment_worker(app.handle().clone());
+            }
             #[cfg(target_os = "linux")]
             // Context providers enrich capture, but must never make core capture unavailable.
             // A missing or unusable runtime socket therefore disables only this provider.
@@ -175,9 +179,51 @@ pub fn run() {
             commands::platform::set_capture_popup_layout,
             commands::settings::get_settings,
             commands::settings::update_settings,
+            commands::model::get_speech_model_status,
+            commands::model::install_speech_model,
+            commands::model::cancel_speech_model_install,
+            commands::model::remove_speech_model,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Lyn");
+}
+
+pub(crate) fn spawn_enrichment_worker(app: tauri::AppHandle) {
+    let manager = app
+        .state::<intelligence::model::SpeechModelManager>()
+        .inner()
+        .clone();
+    if !manager.begin_worker() {
+        return;
+    }
+    let worker_manager = manager.clone();
+    if std::thread::Builder::new()
+        .name("lyn-speech-enrichment".to_owned())
+        .spawn(move || {
+            let enabled = app
+                .state::<Mutex<storage::Database>>()
+                .lock()
+                .ok()
+                .and_then(|database| {
+                    storage::settings::SettingsRepository::new(database.connection())
+                        .get()
+                        .ok()
+                })
+                .is_some_and(|settings| settings.local_speech_enabled);
+            if enabled {
+                let database = app.state::<Mutex<storage::Database>>();
+                let mut processor = worker_manager.processor();
+                while enrichment::process_one(database.inner(), true, &mut processor)
+                    .unwrap_or(false)
+                {}
+                let _ = app.emit("library://captures-changed", serde_json::json!({}));
+            }
+            worker_manager.finish_worker();
+        })
+        .is_err()
+    {
+        manager.finish_worker();
+    }
 }
 
 #[cfg(target_os = "linux")]

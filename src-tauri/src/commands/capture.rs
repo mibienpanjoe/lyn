@@ -337,16 +337,23 @@ pub(crate) fn save_image_capture(
 #[tauri::command]
 pub(crate) fn save_audio_capture(
     input: serde_json::Value,
+    app: tauri::AppHandle,
     database: State<'_, Mutex<Database>>,
     service: State<'_, Mutex<CaptureSessionService>>,
     media_store: State<'_, Mutex<MediaStore>>,
+    speech: State<'_, crate::intelligence::model::SpeechModelManager>,
 ) -> CommandResult<SaveCaptureResult> {
-    save_audio_capture_value(
+    let result = save_audio_capture_value(
         input,
         database.inner(),
         service.inner(),
         media_store.inner(),
-    )
+        speech.installed(),
+    );
+    if matches!(&result, CommandResult::Success { data, .. } if data.enrichment_scheduled) {
+        crate::spawn_enrichment_worker(app);
+    }
+    result
 }
 
 fn save_audio_capture_value(
@@ -354,6 +361,7 @@ fn save_audio_capture_value(
     database: &Mutex<Database>,
     service: &Mutex<CaptureSessionService>,
     media_store: &Mutex<MediaStore>,
+    processor_available: bool,
 ) -> CommandResult<SaveCaptureResult> {
     let Ok(input) = serde_json::from_value::<SaveAudioCaptureInput>(input) else {
         return CommandResult::failure(validation_error());
@@ -420,7 +428,8 @@ fn save_audio_capture_value(
         saved.map(|saved| (capture_id, saved))
     }) {
         Ok(SaveOnceResult::Saved { mut value, .. }) => {
-            value.enrichment_scheduled = schedule_enrichment(database, value.capture_id);
+            value.enrichment_scheduled =
+                schedule_enrichment(database, value.capture_id, processor_available);
             CommandResult::success(value)
         }
         Ok(SaveOnceResult::AlreadySaved(_)) | Err(SaveOnceError::Session(_)) => {
@@ -505,10 +514,7 @@ fn save_image_capture_value(
         }
         saved.map(|saved| (capture_id, saved))
     }) {
-        Ok(SaveOnceResult::Saved { mut value, .. }) => {
-            value.enrichment_scheduled = schedule_enrichment(database, value.capture_id);
-            CommandResult::success(value)
-        }
+        Ok(SaveOnceResult::Saved { value, .. }) => CommandResult::success(value),
         Ok(SaveOnceResult::AlreadySaved(_)) | Err(SaveOnceError::Session(_)) => {
             CommandResult::failure(stale_session_error())
         }
@@ -516,7 +522,11 @@ fn save_image_capture_value(
     }
 }
 
-fn schedule_enrichment(database: &Mutex<Database>, capture_id: crate::contract::CaptureId) -> bool {
+fn schedule_enrichment(
+    database: &Mutex<Database>,
+    capture_id: crate::contract::CaptureId,
+    processor_available: bool,
+) -> bool {
     let Ok(mut database) = database.lock() else {
         return false;
     };
@@ -524,12 +534,11 @@ fn schedule_enrichment(database: &Mutex<Database>, capture_id: crate::contract::
         .get()
         .map(|settings| settings.local_speech_enabled)
         .unwrap_or(false);
-    let intelligence = crate::intelligence::UnavailableLocalIntelligence;
     crate::enrichment::schedule_after_commit(
         database.connection_mut(),
         capture_id,
         enabled,
-        intelligence.available(),
+        processor_available,
     )
     .unwrap_or(false)
 }
@@ -1479,6 +1488,7 @@ mod tests {
             &database,
             &service,
             &media,
+            false,
         );
 
         let CommandResult::Success { data: saved, .. } = saved else {
@@ -1568,7 +1578,7 @@ mod tests {
         })
         .unwrap();
 
-        let failed = save_audio_capture_value(input.clone(), &database, &service, &media);
+        let failed = save_audio_capture_value(input.clone(), &database, &service, &media, false);
 
         let CommandResult::Failure { error, .. } = failed else {
             panic!("forced audio failure succeeded")
@@ -1588,7 +1598,7 @@ mod tests {
             .execute_batch("DROP TRIGGER reject_audio_capture;")
             .unwrap();
         assert!(matches!(
-            save_audio_capture_value(input, &database, &service, &media),
+            save_audio_capture_value(input, &database, &service, &media, false),
             CommandResult::Success { .. }
         ));
     }

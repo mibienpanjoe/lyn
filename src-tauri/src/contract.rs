@@ -174,6 +174,51 @@ pub struct UpdateSettingsInput {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub enum SpeechModelState {
+    NotInstalled,
+    Downloading,
+    Installed,
+    Invalid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechModelStatus {
+    pub state: SpeechModelState,
+    pub model_id: Option<String>,
+    pub label: String,
+    pub downloaded_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+    pub error_code: Option<ErrorCode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SpeechModelInput {
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallSpeechModelResult {
+    pub accepted: bool,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveSpeechModelResult {
+    pub removed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelSpeechModelInstallResult {
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub enum ContextSourceKind {
     VscodeWindow,
     IntegratedTerminal,
@@ -638,6 +683,12 @@ pub fn typescript_bindings() -> String {
         AppSettings::decl(&config),
         SettingsPatch::decl(&config),
         UpdateSettingsInput::decl(&config),
+        SpeechModelState::decl(&config),
+        SpeechModelStatus::decl(&config),
+        SpeechModelInput::decl(&config),
+        InstallSpeechModelResult::decl(&config),
+        RemoveSpeechModelResult::decl(&config),
+        CancelSpeechModelInstallResult::decl(&config),
         ContextSourceKind::decl(&config),
         MediaKind::decl(&config),
         CapturePopupLayout::decl(&config),

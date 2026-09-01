@@ -33,7 +33,21 @@ pub(crate) fn update_settings(
     input: serde_json::Value,
     app: AppHandle,
     database: State<'_, Mutex<Database>>,
+    speech: State<'_, crate::intelligence::model::SpeechModelManager>,
 ) -> CommandResult<AppSettings> {
+    if serde_json::from_value::<UpdateSettingsInput>(input.clone())
+        .ok()
+        .and_then(|request| request.patch.local_speech_enabled)
+        == Some(true)
+        && !speech.installed()
+    {
+        return CommandResult::failure(AppError {
+            code: ErrorCode::ModelNotAvailable,
+            message: "Install the local speech model before enabling transcription".to_owned(),
+            retryable: false,
+            details: ErrorDetails::default(),
+        });
+    }
     let mut platform = NativeSettingsPlatform::new(app);
     update_settings_value(input, database.inner(), &mut platform)
 }

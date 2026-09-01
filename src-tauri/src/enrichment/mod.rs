@@ -1,6 +1,6 @@
 //! Optional post-commit enrichment coordination.
 
-use std::{error::Error, fmt, str::FromStr};
+use std::{error::Error, fmt, str::FromStr, sync::Mutex};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -37,6 +37,8 @@ pub(crate) struct EnrichmentJob {
     pub(crate) kind: EnrichmentKind,
     pub(crate) input_revision: u32,
     pub(crate) attempt_count: u32,
+    pub(crate) media_relative_path: String,
+    pub(crate) duration_ms: u64,
 }
 
 #[derive(Debug)]
@@ -125,10 +127,12 @@ impl<'a> EnrichmentQueue<'a> {
         let transaction = self.connection.transaction()?;
         let stored = transaction
             .query_row(
-                "SELECT id, capture_id, kind, input_revision, attempt_count
-                 FROM enrichment_jobs
-                 WHERE status IN ('pending', 'failed') AND attempt_count < ?1
-                 ORDER BY updated_at, id LIMIT 1",
+                "SELECT jobs.id, jobs.capture_id, jobs.kind, jobs.input_revision,
+                        jobs.attempt_count, media.relative_path, media.duration_ms
+                 FROM enrichment_jobs jobs
+                 JOIN media_assets media ON media.capture_id = jobs.capture_id
+                 WHERE jobs.status IN ('pending', 'failed') AND jobs.attempt_count < ?1
+                 ORDER BY jobs.updated_at, jobs.id LIMIT 1",
                 [MAX_ATTEMPTS],
                 |row| {
                     Ok((
@@ -137,11 +141,23 @@ impl<'a> EnrichmentQueue<'a> {
                         row.get::<_, String>(2)?,
                         row.get::<_, u32>(3)?,
                         row.get::<_, u32>(4)?,
+                        row.get::<_, String>(5)?,
+                        u64::try_from(row.get::<_, i64>(6)?)
+                            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(6, i64::MAX))?,
                     ))
                 },
             )
             .optional()?;
-        let Some((id, capture_id, kind, input_revision, attempt_count)) = stored else {
+        let Some((
+            id,
+            capture_id,
+            kind,
+            input_revision,
+            attempt_count,
+            media_relative_path,
+            duration_ms,
+        )) = stored
+        else {
             return Ok(None);
         };
         transaction.execute(
@@ -159,9 +175,12 @@ impl<'a> EnrichmentQueue<'a> {
             kind: parse_kind(&kind)?,
             input_revision,
             attempt_count: attempt_count + 1,
+            media_relative_path,
+            duration_ms,
         }))
     }
 
+    #[cfg(test)]
     pub(crate) fn run_one(
         &mut self,
         enabled: bool,
@@ -260,6 +279,38 @@ impl<'a> EnrichmentQueue<'a> {
         )?;
         Ok(())
     }
+}
+
+pub(crate) fn process_one(
+    database: &Mutex<crate::storage::Database>,
+    enabled: bool,
+    processor: &mut impl EnrichmentProcessor,
+) -> Result<bool, EnrichmentError> {
+    if !enabled {
+        return Ok(false);
+    }
+    let job = {
+        let mut database = database
+            .lock()
+            .map_err(|_| EnrichmentError::InvalidStoredJob)?;
+        EnrichmentQueue::new(database.connection_mut()).claim_next()?
+    };
+    let Some(job) = job else {
+        return Ok(false);
+    };
+    let generated = processor.generate(&job);
+    let mut database = database
+        .lock()
+        .map_err(|_| EnrichmentError::InvalidStoredJob)?;
+    let mut queue = EnrichmentQueue::new(database.connection_mut());
+    match generated {
+        Ok(Some(caption)) => {
+            queue.apply_generated(&job, &caption)?;
+        }
+        Ok(None) => queue.skip(&job)?,
+        Err(code) => queue.fail(&job, code)?,
+    }
+    Ok(true)
 }
 
 pub(crate) fn schedule_after_commit(
