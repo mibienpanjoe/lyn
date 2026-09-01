@@ -1,5 +1,6 @@
 <script lang="ts">
   import SlidersIcon from '@lucide/svelte/icons/sliders-horizontal';
+  import { onMount } from 'svelte';
 
   import type { CaptureKind, ContextRef } from '../lib/ipc-types';
 
@@ -38,10 +39,39 @@
     ondate,
     onclear,
   }: Props = $props();
+  let filters = $state<HTMLDetailsElement>();
+  let summary = $state<HTMLElement>();
+
+  onMount(() => {
+    function closeFromOutside(event: PointerEvent) {
+      if (
+        filters?.open &&
+        event.target instanceof Node &&
+        !filters.contains(event.target)
+      ) {
+        filters.open = false;
+      }
+    }
+
+    function closeFromEscape(event: KeyboardEvent) {
+      if (filters?.open && event.key === 'Escape') {
+        event.preventDefault();
+        filters.open = false;
+        summary?.focus();
+      }
+    }
+
+    document.addEventListener('pointerdown', closeFromOutside);
+    document.addEventListener('keydown', closeFromEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeFromOutside);
+      document.removeEventListener('keydown', closeFromEscape);
+    };
+  });
 </script>
 
-<details class="search-filters">
-  <summary>
+<details class="search-filters" bind:this={filters}>
+  <summary bind:this={summary}>
     <SlidersIcon aria-hidden="true" />
     {activeCount ? `Filters · ${activeCount}` : 'Filters'}
   </summary>

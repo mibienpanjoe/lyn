@@ -296,6 +296,39 @@ describe('responsive Library', () => {
     );
   });
 
+  it('closes the filter popover when focus moves to an outside pointer target', async () => {
+    const client = createClient();
+    const { container } = render(LibraryPage, { client });
+    await screen.findByRole('heading', { name: 'Recent' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await fireEvent.click(screen.getByText('Filters'));
+    const filters =
+      container.querySelector<HTMLDetailsElement>('.search-filters');
+    expect(filters?.open).toBe(true);
+
+    await fireEvent.pointerDown(
+      screen.getByRole('heading', { name: 'Search' }),
+    );
+
+    expect(filters?.open).toBe(false);
+  });
+
+  it('closes filters with Escape and returns focus to the trigger', async () => {
+    const client = createClient();
+    const { container } = render(LibraryPage, { client });
+    await screen.findByRole('heading', { name: 'Recent' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    const trigger = screen.getByText('Filters');
+    await fireEvent.click(trigger);
+
+    await fireEvent.keyDown(document, { key: 'Escape' });
+
+    expect(
+      container.querySelector<HTMLDetailsElement>('.search-filters')?.open,
+    ).toBe(false);
+    expect(trigger).toHaveFocus();
+  });
+
   it('ignores a stale search response after a newer query completes', async () => {
     let resolveAlpha:
       | ((value: { items: SearchResultItem[]; nextCursor: null }) => void)
