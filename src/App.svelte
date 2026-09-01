@@ -1,5 +1,8 @@
 <script lang="ts">
   import CapturePopup from './capture/CapturePopup.svelte';
+  import LibraryPage from './library/LibraryPage.svelte';
+
+  const surface = new URLSearchParams(window.location.search).get('surface');
 </script>
 
 <svelte:head>
@@ -9,4 +12,8 @@
   />
 </svelte:head>
 
-<CapturePopup />
+{#if surface === 'capture'}
+  <CapturePopup />
+{:else}
+  <LibraryPage />
+{/if}

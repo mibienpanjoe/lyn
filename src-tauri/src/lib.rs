@@ -296,7 +296,7 @@ fn resolve_invocation_context(
 
 #[cfg(all(desktop, not(target_os = "linux")))]
 fn invoke_capture_popup(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+    if let Some(window) = app.get_webview_window("capture") {
         let _ = window.show();
         let _ = window.set_focus();
     }

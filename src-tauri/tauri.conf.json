@@ -14,11 +14,22 @@
       {
         "label": "main",
         "title": "Lyn",
+        "width": 1040,
+        "height": 720,
+        "minWidth": 640,
+        "minHeight": 480,
+        "resizable": true
+      },
+      {
+        "label": "capture",
+        "title": "Lyn",
+        "url": "index.html?surface=capture",
         "width": 640,
         "height": 210,
         "minWidth": 520,
         "minHeight": 200,
-        "resizable": true
+        "resizable": true,
+        "visible": false
       }
     ],
     "security": {

@@ -75,7 +75,7 @@ impl CaptureWindowPlatform for UnsupportedCaptureWindowPlatform {
     fn show_capture_popup(&mut self) -> Result<(), PlatformError> {
         let window = self
             .app
-            .get_webview_window("main")
+            .get_webview_window("capture")
             .ok_or(PlatformError::Unsupported)?;
         window.show().map_err(|_| PlatformError::FocusFailed)?;
         window.set_focus().map_err(|_| PlatformError::FocusFailed)
@@ -83,7 +83,7 @@ impl CaptureWindowPlatform for UnsupportedCaptureWindowPlatform {
 
     fn hide_capture_popup(&mut self) -> Result<(), PlatformError> {
         self.app
-            .get_webview_window("main")
+            .get_webview_window("capture")
             .ok_or(PlatformError::Unsupported)?
             .hide()
             .map_err(|_| PlatformError::FocusFailed)

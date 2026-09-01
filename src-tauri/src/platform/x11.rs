@@ -36,7 +36,7 @@ impl CaptureWindowPlatform for X11CaptureWindowPlatform {
     fn show_capture_popup(&mut self) -> Result<(), PlatformError> {
         let window = self
             .app
-            .get_webview_window("main")
+            .get_webview_window("capture")
             .ok_or(PlatformError::FocusFailed)?;
         window.show().map_err(|_| PlatformError::FocusFailed)?;
         window.set_focus().map_err(|_| PlatformError::FocusFailed)
@@ -44,7 +44,7 @@ impl CaptureWindowPlatform for X11CaptureWindowPlatform {
 
     fn hide_capture_popup(&mut self) -> Result<(), PlatformError> {
         self.app
-            .get_webview_window("main")
+            .get_webview_window("capture")
             .ok_or(PlatformError::FocusFailed)?
             .hide()
             .map_err(|_| PlatformError::FocusFailed)
