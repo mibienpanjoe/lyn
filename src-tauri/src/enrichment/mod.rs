@@ -13,21 +13,18 @@ const MAX_ATTEMPTS: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EnrichmentKind {
-    ContextCaption,
     SpeechCaption,
 }
 
 impl EnrichmentKind {
     fn stored(self) -> &'static str {
         match self {
-            Self::ContextCaption => "context_caption",
             Self::SpeechCaption => "speech_caption",
         }
     }
 
     fn source(self) -> CaptionSource {
         match self {
-            Self::ContextCaption => CaptionSource::ContextGenerated,
             Self::SpeechCaption => CaptionSource::TranscriptGenerated,
         }
     }
@@ -287,7 +284,6 @@ pub(crate) fn schedule_after_commit(
 
 fn parse_kind(value: &str) -> Result<EnrichmentKind, EnrichmentError> {
     match value {
-        "context_caption" => Ok(EnrichmentKind::ContextCaption),
         "speech_caption" => Ok(EnrichmentKind::SpeechCaption),
         _ => Err(EnrichmentError::InvalidStoredJob),
     }

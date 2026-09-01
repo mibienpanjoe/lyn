@@ -102,8 +102,13 @@ pub fn run() {
             let referenced_paths =
                 storage::media_assets::MediaAssetRepository::new(database.connection())
                     .referenced_relative_paths()?;
-            let mut enrichment = enrichment::EnrichmentQueue::new(database.connection_mut());
+            let enrichment = enrichment::EnrichmentQueue::new(database.connection_mut());
             let _ = enrichment.recover_interrupted();
+            let mut intelligence = intelligence::UnavailableLocalIntelligence;
+            if intelligence.available() {
+                let mut enrichment = enrichment::EnrichmentQueue::new(database.connection_mut());
+                let _ = enrichment.run_one(settings.local_speech_enabled, &mut intelligence);
+            }
             let mut media_store = media::staging::MediaStore::open(app_data_dir)?;
             media_store.reconcile(&referenced_paths)?;
             app.manage(Mutex::new(database));

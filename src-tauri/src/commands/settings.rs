@@ -34,14 +34,22 @@ pub(crate) fn update_settings(
     app: AppHandle,
     database: State<'_, Mutex<Database>>,
 ) -> CommandResult<AppSettings> {
+    let mut platform = NativeSettingsPlatform::new(app);
+    update_settings_value(input, database.inner(), &mut platform)
+}
+
+fn update_settings_value(
+    input: serde_json::Value,
+    database: &Mutex<Database>,
+    platform: &mut impl crate::settings::SettingsPlatform,
+) -> CommandResult<AppSettings> {
     let Ok(input) = serde_json::from_value::<UpdateSettingsInput>(input) else {
         return CommandResult::failure(validation_error("input"));
     };
     let Ok(mut database) = database.lock() else {
         return CommandResult::failure(internal_error());
     };
-    let mut platform = NativeSettingsPlatform::new(app);
-    match update(&mut database, input.patch, &mut platform) {
+    match update(&mut database, input.patch, platform) {
         Ok(settings) => CommandResult::success(settings),
         Err(SettingsError::InvalidShortcut) => {
             CommandResult::failure(validation_error("globalShortcut"))
@@ -95,5 +103,68 @@ fn internal_error() -> AppError {
         message: "Lyn could not update settings".to_owned(),
         retryable: true,
         details: ErrorDetails::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use serde_json::json;
+
+    use crate::{
+        contract::AppSettings,
+        settings::SettingsPlatform,
+        storage::{Database, settings::SettingsRepository},
+    };
+
+    use super::update_settings_value;
+
+    struct ConflictingPlatform;
+
+    impl SettingsPlatform for ConflictingPlatform {
+        fn replace_shortcut(&mut self, _current: &str, _next: &str) -> Result<(), ()> {
+            Err(())
+        }
+
+        fn apply_theme(&mut self, _settings: &AppSettings) {}
+    }
+
+    #[test]
+    fn update_rejects_unknown_fields_at_the_command_boundary() {
+        let database = Mutex::new(Database::open_in_memory().unwrap());
+
+        let result = update_settings_value(
+            json!({ "patch": {}, "unexpected": true }),
+            &database,
+            &mut ConflictingPlatform,
+        );
+
+        assert_eq!(
+            serde_json::to_value(result).unwrap()["error"]["code"],
+            "VALIDATION_ERROR"
+        );
+    }
+
+    #[test]
+    fn shortcut_conflict_maps_safely_and_preserves_the_stored_setting() {
+        let database = Mutex::new(Database::open_in_memory().unwrap());
+
+        let result = update_settings_value(
+            json!({ "patch": { "globalShortcut": "Control+Alt+L" } }),
+            &database,
+            &mut ConflictingPlatform,
+        );
+
+        let value = serde_json::to_value(result).unwrap();
+        assert_eq!(value["error"]["code"], "SHORTCUT_CONFLICT");
+        assert_eq!(value["error"]["retryable"], true);
+        assert_eq!(
+            SettingsRepository::new(database.lock().unwrap().connection())
+                .get()
+                .unwrap()
+                .global_shortcut,
+            "Control+Shift+Space"
+        );
     }
 }

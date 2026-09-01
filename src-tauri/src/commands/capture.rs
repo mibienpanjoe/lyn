@@ -524,8 +524,14 @@ fn schedule_enrichment(database: &Mutex<Database>, capture_id: crate::contract::
         .get()
         .map(|settings| settings.local_speech_enabled)
         .unwrap_or(false);
-    crate::enrichment::schedule_after_commit(database.connection_mut(), capture_id, enabled, false)
-        .unwrap_or(false)
+    let intelligence = crate::intelligence::UnavailableLocalIntelligence;
+    crate::enrichment::schedule_after_commit(
+        database.connection_mut(),
+        capture_id,
+        enabled,
+        intelligence.available(),
+    )
+    .unwrap_or(false)
 }
 
 fn normalize_optional_caption(caption: Option<String>) -> Option<String> {
