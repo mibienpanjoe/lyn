@@ -1,10 +1,10 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.10, 2026-09-01
+Version: v1.11, 2026-09-01
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
-Contract status: **Shared primitives, manual and live contexts, capture-session lifecycle, durable text/media save, popup window controls, paged Library reads, committed-media actions, and bounded local search are implemented; settings and enrichment commands remain proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
+Contract status: **Shared primitives, manual and live contexts, capture-session lifecycle, durable text/media save, popup window controls, paged Library reads, committed-media actions, bounded local search, and transactional settings are implemented. Persistent post-commit enrichment coordination is implemented behind an adapter boundary; local speech/model delivery remains gated by G2.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
 
 ## Conventions
 
@@ -622,6 +622,8 @@ Play a committed audio asset.
 Image preview uses the read-only opaque `previewUri` returned in media summaries and does not require a generic file-read command.
 
 ## Settings and Local Intelligence Commands
+
+`get_settings` and `update_settings` are implemented. Speech-model commands and model-progress events in this section remain proposed behind G2 and are not registered by the current build.
 
 ```ts
 interface AppSettings {
