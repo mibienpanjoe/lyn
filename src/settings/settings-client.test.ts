@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AppSettings } from '../lib/ipc-types';
-import { createSettingsClient, SettingsCommandError } from './settings-client';
+import {
+  applyTheme,
+  createSettingsClient,
+  SettingsCommandError,
+} from './settings-client';
 
 const settings: AppSettings = {
   globalShortcut: 'Control+Shift+Space',
@@ -56,5 +60,16 @@ describe('settings client', () => {
     await expect(createSettingsClient(invoke).get()).rejects.toBeInstanceOf(
       SettingsCommandError,
     );
+  });
+
+  it('applies explicit themes and restores system preference deterministically', () => {
+    applyTheme('dark');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+
+    applyTheme('light');
+    expect(document.documentElement.dataset.theme).toBe('light');
+
+    applyTheme('system');
+    expect(document.documentElement).not.toHaveAttribute('data-theme');
   });
 });
