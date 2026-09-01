@@ -1,10 +1,10 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.9, 2026-09-01
+Version: v1.10, 2026-09-01
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
-Contract status: **Shared primitives, manual and live contexts, capture-session lifecycle, durable text/media save, and popup window controls are implemented; remaining Library, settings, and enrichment commands are proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
+Contract status: **Shared primitives, manual and live contexts, capture-session lifecycle, durable text/media save, popup window controls, paged Library reads, committed-media actions, and bounded local search are implemented; settings and enrichment commands remain proposed for v1 implementation.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
 
 ## Conventions
 
