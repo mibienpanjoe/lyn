@@ -21,6 +21,22 @@ impl CorrelationToken {
     pub(crate) fn new() -> Self {
         Self(Uuid::new_v4())
     }
+
+    pub(crate) fn from_process_id(process_id: u32) -> Self {
+        const PROCESS_NAMESPACE: u128 = 0x4c79_6e00_7072_6f63_0000_0000_0000_0000;
+        Self(Uuid::from_u128(PROCESS_NAMESPACE | u128::from(process_id)))
+    }
+
+    pub(crate) fn from_session_id(session_id: Uuid) -> Self {
+        Self(session_id)
+    }
+
+    pub(crate) fn from_terminal_id(terminal_id: u64) -> Self {
+        const TERMINAL_NAMESPACE: u128 = 0x4c79_6e00_7465_726d_0000_0000_0000_0000;
+        Self(Uuid::from_u128(
+            TERMINAL_NAMESPACE | u128::from(terminal_id),
+        ))
+    }
 }
 
 impl fmt::Debug for CorrelationToken {

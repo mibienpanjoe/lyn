@@ -97,6 +97,8 @@ pub fn run() {
             // Context providers enrich capture, but must never make core capture unavailable.
             // A missing or unusable runtime socket therefore disables only this provider.
             let _ = context::vscode_provider::start(app.handle().clone());
+            #[cfg(target_os = "linux")]
+            let _ = context::shell_provider::start(app.handle().clone());
             #[cfg(desktop)]
             {
                 // Settings persistence replaces this initial default in T27.
@@ -126,6 +128,11 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Lyn");
+}
+
+#[cfg(target_os = "linux")]
+pub fn run_shell_context_helper() -> std::process::ExitCode {
+    context::shell_provider::run_helper()
 }
 
 #[cfg(target_os = "linux")]

@@ -4,6 +4,8 @@ pub(crate) mod provider;
 pub(crate) mod resolver;
 pub(crate) mod session_registry;
 #[cfg(target_os = "linux")]
+pub(crate) mod shell_provider;
+#[cfg(target_os = "linux")]
 pub(crate) mod vscode_provider;
 
 use std::{
