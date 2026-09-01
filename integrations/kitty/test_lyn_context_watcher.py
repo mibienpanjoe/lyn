@@ -1,3 +1,4 @@
+import inspect
 import unittest
 from unittest.mock import patch
 
@@ -22,6 +23,10 @@ class OtherWindow:
     child = OtherChild()
 
 
+class Boss:
+    active_window = Window()
+
+
 class KittyWatcherTests(unittest.TestCase):
     def setUp(self):
         watcher.reset_for_test()
@@ -37,6 +42,24 @@ class KittyWatcherTests(unittest.TestCase):
         self.assertNotIn("title", message)
         self.assertNotIn("command", message)
         self.assertNotIn("environment", message)
+
+    def test_on_load_matches_kitty_global_watcher_contract(self):
+        self.assertEqual(
+            list(inspect.signature(watcher.on_load).parameters),
+            ["boss", "_data"],
+        )
+
+    def test_on_load_seeds_the_already_focused_kitty_pane(self):
+        with (
+            patch.object(watcher, "send_message") as send,
+            patch.object(watcher.threading, "Thread") as thread,
+        ):
+            watcher.on_load(Boss(), {})
+
+        self.assertEqual(
+            send.call_args.args[0], watcher.create_message(77, 4242, "focused")
+        )
+        thread.assert_called_once()
 
     def test_focus_changes_report_and_revoke_the_exact_kitty_pane(self):
         with patch.object(watcher, "send_message") as send:

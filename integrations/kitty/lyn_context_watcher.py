@@ -133,12 +133,15 @@ def _heartbeat() -> None:
             send_message(create_message(terminal_session_id, process_id, "focused"))
 
 
-def on_load(_boss: Any, _data: dict[str, Any]) -> None:
+def on_load(boss: Any, _data: dict[str, Any]) -> None:
     global _heartbeat_started
     with _lock:
         if _heartbeat_started:
             return
         _heartbeat_started = True
+    active_window = getattr(boss, "active_window", None)
+    if active_window is not None:
+        on_focus_change(boss, active_window, {"focused": True})
     threading.Thread(
         target=_heartbeat,
         name="lyn-kitty-context",
