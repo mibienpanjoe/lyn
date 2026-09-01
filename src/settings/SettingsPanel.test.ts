@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppSettings } from '../lib/ipc-types';
 import SettingsPanel from './SettingsPanel.svelte';
+import type { SpeechModelClient } from './model-client';
 import { SettingsCommandError, type SettingsClient } from './settings-client';
 
 const initial: AppSettings = {
@@ -29,12 +30,33 @@ function client(overrides: Partial<SettingsClient> = {}): SettingsClient {
   };
 }
 
+const modelClient: SpeechModelClient = {
+  status: vi.fn().mockResolvedValue({
+    state: 'not_installed',
+    modelId: null,
+    label: 'Multilingual base',
+    downloadedBytes: null,
+    totalBytes: null,
+    errorCode: null,
+  }),
+  install: vi.fn().mockResolvedValue({
+    accepted: true,
+    modelId: 'whisper-base-multilingual-v1',
+  }),
+  cancel: vi.fn().mockResolvedValue({ cancelled: true }),
+  remove: vi.fn().mockResolvedValue({ removed: true }),
+  subscribe: vi.fn().mockResolvedValue(() => {}),
+};
+
 afterEach(() => document.documentElement.removeAttribute('data-theme'));
 
 describe('Settings', () => {
   it('updates shortcut, provider order, and deterministic theme accessibly', async () => {
     const settingsClient = client();
-    const { container } = render(SettingsPanel, { client: settingsClient });
+    const { container } = render(SettingsPanel, {
+      client: settingsClient,
+      modelClient,
+    });
     const shortcut = await screen.findByRole('textbox', {
       name: 'Global shortcut',
     });
@@ -74,7 +96,7 @@ describe('Settings', () => {
         }),
       ),
     });
-    render(SettingsPanel, { client: settingsClient });
+    render(SettingsPanel, { client: settingsClient, modelClient });
     const shortcut = await screen.findByRole('textbox', {
       name: 'Global shortcut',
     });
@@ -89,13 +111,12 @@ describe('Settings', () => {
     expect(shortcut).toHaveValue('Control+Shift+Space');
   });
 
-  it('labels local speech unavailable without disabling core capture', async () => {
-    render(SettingsPanel, { client: client() });
+  it('offers an explicit model install while leaving core capture independent', async () => {
+    render(SettingsPanel, { client: client(), modelClient });
+    expect(await screen.findByText('Model not installed')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Install model' })).toBeEnabled();
     expect(
-      await screen.findByText('Unavailable in this build.', { exact: false }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole('checkbox', { name: 'Automatic local transcription' }),
-    ).toBeDisabled();
+      screen.queryByRole('checkbox', { name: 'Automatic local transcription' }),
+    ).not.toBeInTheDocument();
   });
 });

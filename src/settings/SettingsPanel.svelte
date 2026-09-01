@@ -8,6 +8,7 @@
     AppSettings,
     ContextProviderKind,
     ThemeSetting,
+    SpeechModelStatus,
   } from '../lib/ipc-types';
   import {
     SettingsCommandError,
@@ -15,18 +16,24 @@
     settingsClient,
     type SettingsClient,
   } from './settings-client';
+  import { speechModelClient, type SpeechModelClient } from './model-client';
 
   interface Props {
     client?: SettingsClient;
+    modelClient?: SpeechModelClient;
   }
 
-  let { client = settingsClient }: Props = $props();
+  let { client = settingsClient, modelClient = speechModelClient }: Props =
+    $props();
   let saved = $state<AppSettings | null>(null);
   let draft = $state<AppSettings | null>(null);
   let loading = $state(true);
   let saving = $state(false);
   let error = $state<string | null>(null);
   let savedNotice = $state(false);
+  let model = $state<SpeechModelStatus | null>(null);
+  let modelBusy = $state(false);
+  let unsubscribeModel: (() => void) | null = null;
 
   const providerNames: Record<ContextProviderKind, string> = {
     manual: 'Manual selection',
@@ -35,10 +42,52 @@
     foreground_window: 'Foreground window',
   };
 
-  onMount(() => void load());
+  onMount(() => {
+    void load();
+    void loadModel();
+    void modelClient
+      .subscribe((status) => (model = status))
+      .then((unsubscribe) => {
+        unsubscribeModel = unsubscribe;
+      })
+      .catch(() => {});
+  });
   onDestroy(() => {
+    unsubscribeModel?.();
     if (saved) applyTheme(saved.theme);
   });
+
+  async function loadModel() {
+    try {
+      model = await modelClient.status();
+    } catch (caught) {
+      error = message(caught, 'Local speech status could not be loaded.');
+    }
+  }
+
+  async function changeModel(action: 'install' | 'cancel' | 'remove') {
+    if (modelBusy) return;
+    modelBusy = true;
+    error = null;
+    try {
+      await modelClient[action]();
+      await loadModel();
+      if (action === 'remove' && draft) {
+        const updated = await client.update({
+          globalShortcut: null,
+          providerTieBreakOrder: null,
+          theme: null,
+          localSpeechEnabled: false,
+        });
+        saved = updated;
+        draft = cloneSettings(updated);
+      }
+    } catch (caught) {
+      error = message(caught, 'The local speech model could not be changed.');
+    } finally {
+      modelBusy = false;
+    }
+  }
 
   async function load() {
     loading = true;
@@ -87,7 +136,7 @@
         globalShortcut: draft.globalShortcut,
         providerTieBreakOrder: draft.providerTieBreakOrder,
         theme: draft.theme,
-        localSpeechEnabled: false,
+        localSpeechEnabled: draft.localSpeechEnabled,
       });
       saved = updated;
       draft = cloneSettings(updated);
@@ -198,14 +247,60 @@
         <div>
           <h2 id="speech-title">Local speech</h2>
           <p>
-            Unavailable in this build. Voice captures remain fully operational;
-            only automatic transcription is deferred.
+            Optional, offline transcription for uncapped voice captures.
+            Download size: about 150 MB.
           </p>
         </div>
-        <label class="settings-switch">
-          <input type="checkbox" checked={false} disabled />
-          <span>Automatic local transcription</span>
-        </label>
+        <div class="speech-controls">
+          <p class="model-status" aria-live="polite">
+            {#if model?.state === 'downloading'}
+              Downloading… {model.totalBytes && model.downloadedBytes
+                ? Math.round((model.downloadedBytes / model.totalBytes) * 100)
+                : 0}%
+            {:else if model?.state === 'installed'}Model installed
+            {:else if model?.state === 'invalid'}Installation needs repair
+            {:else}Model not installed{/if}
+          </p>
+          {#if model?.state === 'downloading'}
+            <progress
+              value={model.downloadedBytes ?? 0}
+              max={model.totalBytes ?? 1}>Download progress</progress
+            >
+            <button
+              type="button"
+              class="secondary-action"
+              disabled={modelBusy}
+              onclick={() => changeModel('cancel')}>Cancel download</button
+            >
+          {:else if model?.state === 'installed'}
+            <label class="settings-switch">
+              <input
+                type="checkbox"
+                checked={draft.localSpeechEnabled}
+                onchange={(event) =>
+                  (draft = {
+                    ...draft!,
+                    localSpeechEnabled: event.currentTarget.checked,
+                  })}
+              />
+              <span>Automatic local transcription</span>
+            </label>
+            <button
+              type="button"
+              class="secondary-action"
+              disabled={modelBusy}
+              onclick={() => changeModel('remove')}>Remove model</button
+            >
+          {:else}
+            <button
+              type="button"
+              class="secondary-action"
+              disabled={modelBusy}
+              onclick={() => changeModel('install')}
+              >{modelBusy ? 'Starting…' : 'Install model'}</button
+            >
+          {/if}
+        </div>
       </section>
 
       {#if error}<p class="settings-error" role="alert">{error}</p>{/if}

@@ -785,6 +785,31 @@ kbd {
   accent-color: var(--color-accent);
 }
 
+.speech-controls {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: var(--space-2);
+}
+
+.speech-controls .model-status {
+  margin: 0;
+}
+
+.speech-controls progress {
+  width: min(100%, 300px);
+  accent-color: var(--color-accent);
+}
+
+.secondary-action {
+  min-height: 34px;
+  padding: 5px var(--space-3);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text);
+}
+
 .settings-actions {
   display: flex;
   justify-content: flex-end;
