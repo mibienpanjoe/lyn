@@ -110,6 +110,12 @@ export type MediaByIdInput = { mediaId: MediaId, };
 
 export type OpenMediaResult = { opened: boolean, };
 
+export type SearchMatchedField = "text_body" | "caption";
+
+export type SearchCapturesInput = { query: string, contextId: ContextId | null, branchName: string | null, captureKinds: Array<CaptureKind>, capturedFrom: Timestamp | null, capturedTo: Timestamp | null, cursor: string | null, limit: number, };
+
+export type SearchResultItem = { capture: CaptureSummary, matchedField: SearchMatchedField, snippet: string, };
+
 export type SaveTextCaptureInput = { sessionId: CaptureSessionId, textBody: string, };
 
 export type StageClipboardImageInput = { sessionId: CaptureSessionId, };

@@ -5,9 +5,10 @@ use tauri::State;
 use crate::{
     contract::{
         AudioPlaybackResult, CaptureDetail, CaptureSummary, GetCaptureInput, ListCapturesInput,
-        MediaByIdInput, MediaKind, OpenMediaResult, Page,
+        MediaByIdInput, MediaKind, OpenMediaResult, Page, SearchCapturesInput, SearchResultItem,
     },
     error::{AppError, CommandResult, ErrorCode, ErrorDetailKey, ErrorDetailValue, ErrorDetails},
+    library::search::{SearchError, SearchService},
     library::service::{LibraryError, LibraryService},
     media::staging::MediaStore,
     platform::{
@@ -70,6 +71,46 @@ pub(crate) fn get_capture(
     match LibraryService::new(database.connection(), &media_store).get(input.capture_id) {
         Ok(capture) => CommandResult::success(capture),
         Err(error) => CommandResult::failure(library_error(error)),
+    }
+}
+
+#[tauri::command]
+pub(crate) fn search_captures(
+    input: serde_json::Value,
+    database: State<'_, Mutex<Database>>,
+    media_store: State<'_, Mutex<MediaStore>>,
+) -> CommandResult<Page<SearchResultItem>> {
+    let Ok(input) = serde_json::from_value::<SearchCapturesInput>(input) else {
+        return CommandResult::failure(validation_error("input"));
+    };
+    if let Err(field) = validate_search_input(&input) {
+        return CommandResult::failure(validation_error(field));
+    }
+    let Ok(database) = database.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    let Ok(media_store) = media_store.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    let service = SearchService::new(database.connection(), &media_store);
+    let result = match service.search(&input) {
+        Err(SearchError::Storage(_)) if service.rebuild().is_ok() => service.search(&input),
+        result => result,
+    };
+    match result {
+        Ok(page) => CommandResult::success(page),
+        Err(SearchError::InvalidQuery) => CommandResult::failure(validation_error("query")),
+        Err(SearchError::InvalidCursor) => CommandResult::failure(validation_error("cursor")),
+        Err(SearchError::ContextNotFound) => CommandResult::failure(simple_error(
+            ErrorCode::ContextNotFound,
+            "The search context no longer exists",
+            false,
+        )),
+        Err(SearchError::Storage(_)) => CommandResult::failure(simple_error(
+            ErrorCode::SearchFailed,
+            "Search is temporarily unavailable",
+            true,
+        )),
     }
 }
 
@@ -222,6 +263,26 @@ fn validate_list_input(input: &ListCapturesInput) -> Result<(), &'static str> {
         return Err("capturedFrom");
     }
     Ok(())
+}
+
+fn validate_search_input(input: &SearchCapturesInput) -> Result<(), &'static str> {
+    if input.query.trim().is_empty()
+        || input.query.trim() != input.query
+        || input.query.chars().count() > 200
+        || input.query.chars().any(char::is_control)
+    {
+        return Err("query");
+    }
+    let list_shape = ListCapturesInput {
+        scope: crate::contract::LibraryScope::All,
+        branch_name: input.branch_name.clone(),
+        capture_kinds: input.capture_kinds.clone(),
+        captured_from: input.captured_from.clone(),
+        captured_to: input.captured_to.clone(),
+        cursor: input.cursor.clone(),
+        limit: input.limit,
+    };
+    validate_list_input(&list_shape)
 }
 
 fn library_error(error: LibraryError) -> AppError {

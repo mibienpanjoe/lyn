@@ -468,6 +468,34 @@ pub struct OpenMediaResult {
     pub opened: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchMatchedField {
+    TextBody,
+    Caption,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SearchCapturesInput {
+    pub query: String,
+    pub context_id: Option<ContextId>,
+    pub branch_name: Option<String>,
+    pub capture_kinds: Vec<CaptureKind>,
+    pub captured_from: Option<Timestamp>,
+    pub captured_to: Option<Timestamp>,
+    pub cursor: Option<String>,
+    pub limit: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResultItem {
+    pub capture: CaptureSummary,
+    pub matched_field: SearchMatchedField,
+    pub snippet: String,
+}
+
 /// First strict command input contract used by the durable text slice.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -596,6 +624,9 @@ pub fn typescript_bindings() -> String {
         GetCaptureInput::decl(&config),
         MediaByIdInput::decl(&config),
         OpenMediaResult::decl(&config),
+        SearchMatchedField::decl(&config),
+        SearchCapturesInput::decl(&config),
+        SearchResultItem::decl(&config),
         SaveTextCaptureInput::decl(&config),
         StageClipboardImageInput::decl(&config),
         DiscardStagedMediaInput::decl(&config),
@@ -789,6 +820,21 @@ mod tests {
         let get_capture_input = GetCaptureInput {
             capture_id: summary.id,
         };
+        let search_input = SearchCapturesInput {
+            query: "build output".to_owned(),
+            context_id: Some(context.id),
+            branch_name: Some("main".to_owned()),
+            capture_kinds: vec![CaptureKind::Image],
+            captured_from: None,
+            captured_to: None,
+            cursor: None,
+            limit: 50,
+        };
+        let search_result = SearchResultItem {
+            capture: summary.clone(),
+            matched_field: SearchMatchedField::Caption,
+            snippet: "Build output".to_owned(),
+        };
         let error = AppError {
             code: ErrorCode::ValidationError,
             message: "Invalid capture".to_owned(),
@@ -829,6 +875,8 @@ mod tests {
         round_trip(&create_context_result);
         round_trip(&list_captures_input);
         round_trip(&get_capture_input);
+        round_trip(&search_input);
+        round_trip(&search_result);
         round_trip(&CommandResult::<CaptureSession>::failure(error));
     }
 
@@ -901,6 +949,19 @@ mod tests {
             "offset": 0
         });
         assert!(serde_json::from_value::<ListCapturesInput>(unknown_library_field).is_err());
+
+        let unknown_search_field = json!({
+            "query": "build",
+            "contextId": null,
+            "branchName": null,
+            "captureKinds": [],
+            "capturedFrom": null,
+            "capturedTo": null,
+            "cursor": null,
+            "limit": 50,
+            "rawFts": "build*"
+        });
+        assert!(serde_json::from_value::<SearchCapturesInput>(unknown_search_field).is_err());
     }
 
     #[test]

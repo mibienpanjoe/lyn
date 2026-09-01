@@ -150,6 +150,7 @@ pub fn run() {
             commands::context::list_contexts,
             commands::library::list_captures,
             commands::library::get_capture,
+            commands::library::search_captures,
             commands::library::play_media,
             commands::library::open_media_external,
             commands::platform::dismiss_capture_popup,

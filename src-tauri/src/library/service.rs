@@ -51,9 +51,9 @@ impl From<rusqlite::Error> for LibraryError {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct LibraryCursor {
-    captured_at: Timestamp,
-    capture_id: CaptureId,
+pub(super) struct LibraryCursor {
+    pub(super) captured_at: Timestamp,
+    pub(super) capture_id: CaptureId,
 }
 
 pub(crate) struct LibraryService<'a> {
@@ -79,7 +79,7 @@ impl<'a> LibraryService<'a> {
             return Err(LibraryError::ContextNotFound);
         }
         let cursor = input.cursor.as_deref().map(decode_cursor).transpose()?;
-        let mut sql = format!("{} WHERE 1 = 1", select_capture_fields());
+        let mut sql = format!("{} WHERE 1 = 1", select_capture_fields("FROM captures c"));
         let mut parameters = Vec::<Value>::new();
 
         if let LibraryScope::Context { context_id } = input.scope {
@@ -142,7 +142,10 @@ impl<'a> LibraryService<'a> {
     }
 
     pub(crate) fn get(&self, capture_id: CaptureId) -> Result<CaptureDetail, LibraryError> {
-        let sql = format!("{} WHERE c.id = ?", select_capture_fields());
+        let sql = format!(
+            "{} WHERE c.id = ?",
+            select_capture_fields("FROM captures c")
+        );
         self.connection
             .query_row(&sql, [capture_id.to_string()], |row| {
                 decode_capture_row(row, self.media_store).map(|capture| capture.detail)
@@ -164,13 +167,14 @@ impl<'a> LibraryService<'a> {
     }
 }
 
-struct DecodedCapture {
-    summary: CaptureSummary,
-    detail: CaptureDetail,
+pub(super) struct DecodedCapture {
+    pub(super) summary: CaptureSummary,
+    pub(super) detail: CaptureDetail,
 }
 
-fn select_capture_fields() -> &'static str {
-    "SELECT
+pub(super) fn select_capture_fields(from_clause: &str) -> String {
+    format!(
+        "SELECT
         c.id, c.kind, c.branch_name, c.captured_at, c.text_body, c.caption,
         c.caption_source, c.source_app, c.source_window_title, c.updated_at,
         context.id, context.kind, context.name,
@@ -181,12 +185,16 @@ fn select_capture_fields() -> &'static str {
             WHERE job.capture_id = c.id
             ORDER BY job.updated_at DESC, job.id DESC LIMIT 1
         ), 'not_requested')
-     FROM captures c
+     {from_clause}
      JOIN contexts context ON context.id = c.context_id
      LEFT JOIN media_assets media ON media.capture_id = c.id"
+    )
 }
 
-fn decode_capture_row(row: &Row<'_>, media_store: &MediaStore) -> rusqlite::Result<DecodedCapture> {
+pub(super) fn decode_capture_row(
+    row: &Row<'_>,
+    media_store: &MediaStore,
+) -> rusqlite::Result<DecodedCapture> {
     let capture_id = parse_id::<CaptureId>(row.get::<_, String>(0)?, 0)?;
     let capture_kind = parse_capture_kind(&row.get::<_, String>(1)?, 1)?;
     let captured_at = parse_timestamp(row.get(3)?, 3)?;
@@ -262,12 +270,12 @@ fn text_excerpt(body: &str) -> String {
     excerpt
 }
 
-fn encode_cursor(cursor: &LibraryCursor) -> Result<String, LibraryError> {
+pub(super) fn encode_cursor(cursor: &LibraryCursor) -> Result<String, LibraryError> {
     let bytes = serde_json::to_vec(cursor).map_err(|_| LibraryError::InvalidCursor)?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-fn decode_cursor(value: &str) -> Result<LibraryCursor, LibraryError> {
+pub(super) fn decode_cursor(value: &str) -> Result<LibraryCursor, LibraryError> {
     if value.len() > MAX_CURSOR_BYTES * 2 || value.len() % 2 != 0 {
         return Err(LibraryError::InvalidCursor);
     }
@@ -282,7 +290,7 @@ fn decode_cursor(value: &str) -> Result<LibraryCursor, LibraryError> {
     serde_json::from_slice(&bytes).map_err(|_| LibraryError::InvalidCursor)
 }
 
-fn capture_kind_name(kind: CaptureKind) -> &'static str {
+pub(super) fn capture_kind_name(kind: CaptureKind) -> &'static str {
     match kind {
         CaptureKind::Text => "text",
         CaptureKind::Image => "image",
