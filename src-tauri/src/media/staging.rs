@@ -316,6 +316,13 @@ impl MediaStore {
         Ok((read_bytes(&asset.path)?, asset.mime_type))
     }
 
+    pub(crate) fn final_available(&self, relative_path: &str) -> bool {
+        self.final_path(relative_path)
+            .ok()
+            .and_then(|path| fs::metadata(path).ok())
+            .is_some_and(|metadata| metadata.is_file())
+    }
+
     pub(crate) fn reconcile(
         &mut self,
         referenced_paths: &HashSet<String>,
@@ -354,9 +361,19 @@ impl MediaStore {
             .map(|preview| preview.0)
     }
 
-    #[cfg(test)]
     pub(crate) fn read_final(&self, relative_path: &str) -> Result<Vec<u8>, StagingError> {
         read_bytes(&self.final_path(relative_path)?)
+    }
+
+    pub(crate) fn final_path_for_external(
+        &self,
+        relative_path: &str,
+    ) -> Result<PathBuf, StagingError> {
+        let path = self.final_path(relative_path)?;
+        if !path.is_file() {
+            return Err(StagingError::InvalidMedia);
+        }
+        Ok(path)
     }
 
     fn staging_directory(&self, session_id: CaptureSessionId) -> Result<PathBuf, StagingError> {

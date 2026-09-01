@@ -2,7 +2,19 @@ use std::collections::HashSet;
 
 use rusqlite::Connection;
 
-use crate::storage::StorageError;
+use crate::{
+    contract::{MediaId, MediaKind, MediaMimeType},
+    storage::StorageError,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StoredMediaAsset {
+    pub(crate) id: MediaId,
+    pub(crate) kind: MediaKind,
+    pub(crate) relative_path: String,
+    pub(crate) mime_type: MediaMimeType,
+    pub(crate) duration_ms: Option<u64>,
+}
 
 pub(crate) struct MediaAssetRepository<'connection> {
     connection: &'connection Connection,
@@ -22,6 +34,58 @@ impl<'connection> MediaAssetRepository<'connection> {
             .collect::<Result<HashSet<String>, _>>()?;
         Ok(paths)
     }
+
+    pub(crate) fn find(&self, media_id: MediaId) -> Result<Option<StoredMediaAsset>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, kind, relative_path, mime_type, duration_ms
+             FROM media_assets WHERE id = ?1",
+        )?;
+        let result = statement.query_row([media_id.to_string()], |row| {
+            let kind = match row.get::<_, String>(1)?.as_str() {
+                "image" => MediaKind::Image,
+                "audio" => MediaKind::Audio,
+                value => return Err(invalid_value(1, value)),
+            };
+            let mime_type = match row.get::<_, String>(3)?.as_str() {
+                "image/png" => MediaMimeType::ImagePng,
+                "audio/wav" => MediaMimeType::AudioWav,
+                value => return Err(invalid_value(3, value)),
+            };
+            let duration_ms = row
+                .get::<_, Option<i64>>(4)?
+                .map(|value| {
+                    u64::try_from(value)
+                        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(4, value))
+                })
+                .transpose()?;
+            Ok(StoredMediaAsset {
+                id: row.get::<_, String>(0)?.parse().map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?,
+                kind,
+                relative_path: row.get(2)?,
+                mime_type,
+                duration_ms,
+            })
+        });
+        match result {
+            Ok(asset) => Ok(Some(asset)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+fn invalid_value(column: usize, value: &str) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        column,
+        rusqlite::types::Type::Text,
+        format!("invalid stored media value: {value}").into(),
+    )
 }
 
 #[cfg(test)]

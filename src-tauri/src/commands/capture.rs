@@ -105,11 +105,7 @@ fn stop_audio_playback_value<Playback: AudioPlaybackPlatform>(
     let Ok(input) = serde_json::from_value::<StopAudioPlaybackInput>(input) else {
         return CommandResult::failure(validation_error());
     };
-    if input
-        .playback_target_id
-        .parse::<crate::contract::StagedMediaId>()
-        .is_err()
-    {
+    if input.playback_target_id.parse::<uuid::Uuid>().is_err() {
         return CommandResult::failure(validation_error());
     }
     if playback

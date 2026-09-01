@@ -4,6 +4,7 @@ use std::fmt;
 
 pub(crate) mod audio;
 pub(crate) mod clipboard;
+pub(crate) mod media_open;
 pub(crate) mod playback;
 pub(crate) mod popup;
 

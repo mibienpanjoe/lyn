@@ -27,21 +27,45 @@ pub fn run() {
                     .body(Vec::new())
                     .expect("static media response is valid")
             };
-            if request.uri().host() != Some("staged") {
-                return not_found();
-            }
-            let Ok(staged_media_id) =
-                contract::StagedMediaId::from_str(request.uri().path().trim_start_matches('/'))
-            else {
-                return not_found();
+            let app = context.app_handle();
+            let media_state = app.state::<Mutex<media::staging::MediaStore>>();
+            let resolved = match request.uri().host() {
+                Some("staged") => {
+                    let Ok(staged_media_id) = contract::StagedMediaId::from_str(
+                        request.uri().path().trim_start_matches('/'),
+                    ) else {
+                        return not_found();
+                    };
+                    media_state
+                        .lock()
+                        .ok()
+                        .and_then(|store| store.staged_preview(staged_media_id).ok())
+                }
+                Some("capture") => {
+                    let Ok(media_id) =
+                        contract::MediaId::from_str(request.uri().path().trim_start_matches('/'))
+                    else {
+                        return not_found();
+                    };
+                    let database_state = app.state::<Mutex<storage::Database>>();
+                    let asset = database_state.lock().ok().and_then(|database| {
+                        storage::media_assets::MediaAssetRepository::new(database.connection())
+                            .find(media_id)
+                            .ok()
+                            .flatten()
+                    });
+                    asset.and_then(|asset| {
+                        media_state.lock().ok().and_then(|store| {
+                            store
+                                .read_final(&asset.relative_path)
+                                .ok()
+                                .map(|bytes| (bytes, asset.mime_type))
+                        })
+                    })
+                }
+                _ => None,
             };
-            let media_state = context
-                .app_handle()
-                .state::<Mutex<media::staging::MediaStore>>();
-            let Ok(store) = media_state.lock() else {
-                return not_found();
-            };
-            let Ok((bytes, mime_type)) = store.staged_preview(staged_media_id) else {
+            let Some((bytes, mime_type)) = resolved else {
                 return not_found();
             };
             let content_type = match mime_type {
@@ -85,6 +109,7 @@ pub fn run() {
             app.manage(Mutex::new(
                 platform::playback::NativeAudioPlaybackPlatform::default(),
             ));
+            app.manage(platform::media_open::NativeMediaOpenPlatform);
             app.manage(Mutex::new(context::DirectorySelectionRegistry::default()));
             app.manage(Mutex::new(
                 context::session_registry::ContextSourceRegistry::default(),
@@ -123,6 +148,10 @@ pub fn run() {
             commands::context::pick_project_directory,
             commands::context::create_context,
             commands::context::list_contexts,
+            commands::library::list_captures,
+            commands::library::get_capture,
+            commands::library::play_media,
+            commands::library::open_media_external,
             commands::platform::dismiss_capture_popup,
             commands::platform::set_capture_popup_layout,
         ])

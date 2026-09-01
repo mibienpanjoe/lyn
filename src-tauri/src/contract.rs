@@ -53,7 +53,7 @@ opaque_uuid!(DirectorySelectionToken);
 opaque_uuid!(MediaId);
 opaque_uuid!(StagedMediaId);
 
-#[derive(Debug, Clone, PartialEq, Eq, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, TS)]
 #[ts(type = "string")]
 pub struct Timestamp(OffsetDateTime);
 
@@ -428,11 +428,14 @@ pub struct Page<T> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LibraryScope {
     All,
     Recent,
-    Context { context_id: ContextId },
+    Context {
+        #[serde(rename = "contextId")]
+        context_id: ContextId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -451,6 +454,18 @@ pub struct ListCapturesInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GetCaptureInput {
     pub capture_id: CaptureId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MediaByIdInput {
+    pub media_id: MediaId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenMediaResult {
+    pub opened: bool,
 }
 
 /// First strict command input contract used by the durable text slice.
@@ -579,6 +594,8 @@ pub fn typescript_bindings() -> String {
         LibraryScope::decl(&config),
         ListCapturesInput::decl(&config),
         GetCaptureInput::decl(&config),
+        MediaByIdInput::decl(&config),
+        OpenMediaResult::decl(&config),
         SaveTextCaptureInput::decl(&config),
         StageClipboardImageInput::decl(&config),
         DiscardStagedMediaInput::decl(&config),

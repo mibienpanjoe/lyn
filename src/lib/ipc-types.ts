@@ -100,11 +100,15 @@ export type CaptureDetail = { id: CaptureId, kind: CaptureKind, context: Context
 
 export type Page<T> = { items: Array<T>, nextCursor: string | null, };
 
-export type LibraryScope = { "kind": "all" } | { "kind": "recent" } | { "kind": "context", context_id: ContextId, };
+export type LibraryScope = { "kind": "all" } | { "kind": "recent" } | { "kind": "context", contextId: ContextId, };
 
 export type ListCapturesInput = { scope: LibraryScope, branchName: string | null, captureKinds: Array<CaptureKind>, capturedFrom: Timestamp | null, capturedTo: Timestamp | null, cursor: string | null, limit: number, };
 
 export type GetCaptureInput = { captureId: CaptureId, };
+
+export type MediaByIdInput = { mediaId: MediaId, };
+
+export type OpenMediaResult = { opened: boolean, };
 
 export type SaveTextCaptureInput = { sessionId: CaptureSessionId, textBody: string, };
 
