@@ -153,6 +153,73 @@ describe('responsive Library', () => {
     expect(screen.getAllByText('Exact screenshot caption')).toHaveLength(2);
   });
 
+  it('pages search results with the active literal query and filters', async () => {
+    const next = { ...imageCapture, id: 'capture-image-next' };
+    const searchCaptures = vi
+      .fn()
+      .mockResolvedValueOnce({
+        items: [
+          {
+            capture: textCapture,
+            matchedField: 'text_body',
+            snippet: 'alpha first',
+          },
+        ],
+        nextCursor: 'search-page-2',
+      })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            capture: next,
+            matchedField: 'caption',
+            snippet: 'alpha second',
+          },
+        ],
+        nextCursor: null,
+      });
+    const client = createClient({ searchCaptures });
+    render(LibraryPage, { client });
+    await screen.findByRole('button', { name: /text capture in Lyn/i });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await fireEvent.input(
+      screen.getByRole('searchbox', { name: 'Search captures' }),
+      { target: { value: 'alpha' } },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Load more' }),
+    );
+
+    await waitFor(() => {
+      expect(searchCaptures).toHaveBeenLastCalledWith(
+        'alpha',
+        expect.objectContaining({ contextId: null }),
+        'search-page-2',
+      );
+      expect(screen.getByText('second')).toBeVisible();
+    });
+  });
+
+  it('renders empty and recoverable error states', async () => {
+    const listCaptures = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ items: [], nextCursor: null });
+    const client = createClient({ listCaptures });
+    render(LibraryPage, { client });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Captures could not be loaded.',
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Nothing captured yet' }),
+    ).toBeVisible();
+    expect(listCaptures).toHaveBeenCalledTimes(2);
+  });
+
   it('debounces literal search, highlights snippets, and applies accessible filters', async () => {
     const searchCaptures = vi.fn().mockResolvedValue({
       items: [

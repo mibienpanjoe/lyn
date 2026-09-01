@@ -513,6 +513,64 @@ mod tests {
     }
 
     #[test]
+    fn context_stream_includes_text_image_and_audio_across_branches() {
+        let database = Database::open_in_memory().unwrap();
+        let directory = tempdir().unwrap();
+        let media = MediaStore::open(directory.path()).unwrap();
+        let context = "11111111-1111-4111-8111-111111111111";
+        insert_context(&database, context, "Project");
+        database
+            .connection()
+            .execute_batch(
+                "INSERT INTO captures (
+                    id, session_id, context_id, kind, text_body, caption, caption_source,
+                    branch_name, source_app, source_window_title, captured_at, updated_at
+                 ) VALUES
+                    ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3',
+                     'aaaaaaaa-3333-4333-8333-333333333333',
+                     '11111111-1111-4111-8111-111111111111', 'text', 'note', NULL, NULL,
+                     'main', NULL, NULL, '2026-09-01T12:00:00Z', '2026-09-01T12:00:00Z'),
+                    ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+                     'aaaaaaaa-2222-4222-8222-222222222222',
+                     '11111111-1111-4111-8111-111111111111', 'image', NULL, 'screen', 'user',
+                     'feature/image', NULL, NULL, '2026-09-01T11:00:00Z', '2026-09-01T11:00:00Z'),
+                    ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+                     'aaaaaaaa-1111-4111-8111-111111111111',
+                     '11111111-1111-4111-8111-111111111111', 'audio', NULL, 'voice', 'user',
+                     'feature/audio', NULL, NULL, '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z');",
+            )
+            .unwrap();
+
+        let page = LibraryService::new(database.connection(), &media)
+            .list(&input(
+                LibraryScope::Context {
+                    context_id: ContextId::from_str(context).unwrap(),
+                },
+                50,
+            ))
+            .unwrap();
+
+        assert_eq!(
+            page.items
+                .iter()
+                .map(|capture| capture.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                crate::contract::CaptureKind::Text,
+                crate::contract::CaptureKind::Image,
+                crate::contract::CaptureKind::Audio,
+            ]
+        );
+        assert_eq!(
+            page.items
+                .iter()
+                .filter_map(|capture| capture.branch_name.as_deref())
+                .collect::<Vec<_>>(),
+            vec!["main", "feature/image", "feature/audio"]
+        );
+    }
+
+    #[test]
     fn cursor_pages_equal_timestamps_by_descending_capture_id_without_overlap() {
         let database = Database::open_in_memory().unwrap();
         let directory = tempdir().unwrap();
