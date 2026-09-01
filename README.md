@@ -12,7 +12,7 @@ Lyn captures titleless text notes, screenshots, and voice notes, associates them
 
 ## Status
 
-Implementation has started. Phase 0 provides a verified Svelte 5/Vite shell, a minimal Tauri 2/Rust desktop shell, narrow window capabilities, and frontend/Rust smoke-test harnesses. Phase 1 now includes Rust-owned shared IPC primitives, startup initialization of the canonical SQLite/FTS schema through ordered migrations, validated manual contexts, a single-active-session state machine, durable titleless text capture with FTS projection, and the quick-capture popup. Project directories enter only through a native picker and an expiring one-use token; raw paths remain inside Rust. Phase 2 now includes invocation-bound X11 foreground capture, Git worktree identity, the provider feasibility boundary, an ephemeral live-source registry, deterministic evidence ranking, safe source-list IPC, selection/save-time revalidation, an accessible focused source chooser, and delivered local VS Code, Kitty, and bounded shell/terminal providers for Linux X11. Phase 3 implements recoverable Lyn-owned media staging plus screenshot and WAV voice capture, opaque preview/playback, optional exact captions, cancellation, and durable save. The concurrent VS Code/Kitty/GNOME Terminal desktop matrix remains owner verification work. Library behavior remains proposed.
+Implementation has started. Phase 0 provides a verified Svelte 5/Vite shell, a minimal Tauri 2/Rust desktop shell, narrow window capabilities, and frontend/Rust smoke-test harnesses. Phase 1 now includes Rust-owned shared IPC primitives, startup initialization of the canonical SQLite/FTS schema through ordered migrations, validated manual contexts, a single-active-session state machine, durable titleless text capture with FTS projection, and the quick-capture popup. Project directories enter only through a native picker and an expiring one-use token; raw paths remain inside Rust. Phase 2 now includes invocation-bound X11 foreground capture, Git worktree identity, the provider feasibility boundary, an ephemeral live-source registry, deterministic evidence ranking, safe source-list IPC, selection/save-time revalidation, an accessible focused source chooser, and delivered local VS Code, Kitty, and bounded shell/terminal providers for Linux X11. Checkpoint B is verified through the owner-confirmed VS Code and Kitty desktop flow plus automated ambiguity, staleness, privacy-boundary, and draft-preservation coverage. Phase 3 implements recoverable Lyn-owned media staging plus screenshot and WAV voice capture, opaque preview/playback, optional exact captions, cancellation, and durable save. Library behavior remains proposed.
 
 The first implementation baseline is Pop!_OS 22.04 LTS (Ubuntu-compatible, x86_64, X11), Node 24.12.0 with pnpm 10.28.0, and Rust 1.96.1. macOS, Windows, Wayland, and packaging support remain unverified and are not yet claimed.
 
@@ -41,6 +41,18 @@ pnpm tauri build --no-bundle
 
 `pnpm bindings` regenerates the tracked TypeScript IPC contract from Rust. `pnpm dev` runs only the frontend. `pnpm icons` regenerates platform icons from the tracked SVG master. `pnpm tauri dev` opens the desktop shell and initializes `lyn.db` in Tauri's application-data directory. Application packaging remains disabled until the distribution gate is resolved.
 
+## Context providers on Linux X11
+
+Context detection is optional enrichment: Lyn still captures when a provider is unavailable. Start Lyn first so its private user-only sockets exist:
+
+```bash
+pnpm tauri dev
+```
+
+The default development shortcut is `Ctrl+Shift+Space`. Focus the editor window or terminal pane that owns the work, then invoke Lyn with the shortcut. Automatic selection is bound to that exact pre-popup window. Focusing another provider after Lyn is already open does not silently replace the capture context; use the context chooser when you intentionally want another live session or saved context.
+
+### VS Code
+
 The VS Code provider is a separate local extension. Test, package, and install it with:
 
 ```bash
@@ -51,7 +63,27 @@ code --install-extension /tmp/lyn-context-provider.vsix --force
 
 Reload existing VS Code windows after installation. While Lyn is running, the extension reconnects to its user-only runtime socket automatically. It reports only per-window focus state and local workspace folders; remote and multi-root workspaces remain manual rather than guessed.
 
-Kitty and generic shell setup is documented under [`integrations/kitty/`](integrations/kitty/README.md) and [`integrations/shell/`](integrations/shell/README.md). Kitty uses a global focus watcher for exact pane correlation without enabling remote control. The generic helper supports single-session GNOME Terminal and VS Code integrated-terminal windows; multiple sessions sharing one OS window remain visibly ambiguous.
+### Kitty
+
+Add the watcher to `~/.config/kitty/kitty.conf`, using the absolute path to this checkout:
+
+```text
+watcher /absolute/path/to/lyn/integrations/kitty/lyn_context_watcher.py
+```
+
+Fully restart Kitty after adding or updating the watcher; config reloads affect only newly created Kitty windows. Keep Lyn running, allow up to two seconds for the first heartbeat, focus the intended pane, and invoke Lyn with `Ctrl+Shift+Space`. The watcher retains the originating pane while Lyn owns focus, replaces it when another Kitty pane takes focus, and revokes it when the pane closes. Kitty remote control is neither required nor enabled.
+
+### Live and saved contexts
+
+- **Live sessions** are ephemeral provider observations. A row marked **Current window** is associated with the window that invoked the current capture.
+- **Saved contexts** are durable manual choices. They remain available without a provider.
+- Lyn automatically selects only exact invocation-bound evidence. Being the only or most recently reported live session is intentionally insufficient.
+- Unsupported multi-session cases remain ambiguous or require manual selection. The generic helper supports one distinguishable GNOME Terminal or VS Code integrated-terminal session per OS window; it does not guess between several sessions sharing that window.
+- Changing context preserves the current text, screenshot, recording, and capture session.
+
+If a provider does not appear, confirm Lyn was running before the provider heartbeat, reload the VS Code window or fully restart Kitty, wait two seconds, and reopen Lyn from the source window using the shortcut. If a live source appears but is not marked **Current window**, dismiss the capture with `Esc`, focus the intended source, and invoke Lyn again instead of clicking the existing Lyn window.
+
+Detailed provider boundaries and tests are documented under [`integrations/vscode/`](integrations/vscode/README.md), [`integrations/kitty/`](integrations/kitty/README.md), and [`integrations/shell/`](integrations/shell/README.md).
 
 ## Documentation
 

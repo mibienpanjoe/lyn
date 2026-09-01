@@ -1,6 +1,6 @@
 # Context Provider Feasibility — G1
 
-**Status:** Accepted; VS Code, Kitty, and bounded shell/terminal providers are implemented. Their concurrent live desktop matrix is pending owner verification.
+**Status:** Accepted and Checkpoint B verified; VS Code, Kitty, and bounded shell/terminal providers are implemented. Exact VS Code and Kitty invocation binding is owner-confirmed on the reference desktop, with ambiguity, staleness, privacy-boundary, and draft-preservation cases covered by automated tests.
 
 **Date:** 2026-09-01.
 
@@ -17,7 +17,7 @@ Automatic selection requires a relationship to the window captured before Lyn ap
 | Source | Required local evidence | G1 decision |
 |---|---|---|
 | X11 foreground window | `_NET_ACTIVE_WINDOW` captured before popup focus | Supported as an opaque invocation correlation; it does not reveal a project by itself. |
-| VS Code workspace window | A local VS Code integration supplies the exact editor-window correlation and workspace directory | Implemented for Linux X11 by the local VSIX and Rust-owned user-only socket. Delayed reports are accepted only while a supported VS Code window is active; remote and multi-root workspaces remain manual. Post-fix live confirmation is pending. |
+| VS Code workspace window | A local VS Code integration supplies the exact editor-window correlation and workspace directory | Implemented and owner-verified for Linux X11 by the local VSIX and Rust-owned user-only socket. Delayed reports are accepted only while a supported VS Code window is active; remote and multi-root workspaces remain manual. |
 | VS Code integrated terminal | Owning editor-window correlation, distinct active-terminal session correlation, and that terminal's cwd/workspace | Implemented through the bounded shell helper for one distinguishable terminal session. Multiple sessions sharing the editor window remain ambiguous unless exact active-session evidence is added. |
 | Kitty tab or pane | Exact foreground-window correlation plus an integration that identifies the active pane/session and cwd | Implemented through a global Kitty focus watcher. It reports only pane focus and child-process identity; Rust derives cwd and revalidates the active Kitty X11 window. |
 | GNOME Terminal tab | Exact foreground-window correlation plus a distinguishable shell session and cwd | Implemented for one distinguishable session per OS window through the bounded shell helper. Multiple tabs sharing the window remain ambiguous rather than using recency. |
@@ -38,7 +38,7 @@ Run the following cases through the normal `pnpm tauri dev` application on the r
 6. Close a selected live source before save and confirm the draft remains intact while Lyn asks for another context.
 7. Repeat with a linked Git worktree and confirm the common project identity is shared while branch/worktree labels reflect the selected source.
 
-Automated tests cover bounded messages, same-user process validation, focus-class validation, exact Kitty-pane replacement, safe generic-terminal ambiguity, stale remapping, exact-window resolution, provider failure isolation, and draft-preserving chooser behavior. They do not replace the real concurrent-window cases above, which remain acceptance evidence for Checkpoint B until explicitly verified on the reference desktop.
+Checkpoint B was accepted on 2026-09-01 from the owner-confirmed VS Code and Kitty reference-desktop flow together with the automated provider matrix. The live run confirmed automatic project/branch binding from the invoking VS Code window and Kitty pane, provider persistence while Lyn owns focus, and deliberate non-selection of an unrelated live source. Automated tests cover bounded messages, same-user process validation, focus-class validation, exact Kitty-pane replacement, safe generic-terminal ambiguity, stale remapping, exact-window resolution, provider failure isolation, and draft-preserving chooser behavior.
 
 ## Rejected approaches
 
