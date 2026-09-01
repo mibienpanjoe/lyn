@@ -6,7 +6,6 @@
   import NotebookIcon from '@lucide/svelte/icons/notebook-tabs';
   import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
   import SearchIcon from '@lucide/svelte/icons/search';
-  import SlidersIcon from '@lucide/svelte/icons/sliders-horizontal';
   import { onDestroy, onMount, tick } from 'svelte';
   import logoUrl from '../../src-tauri/icons/lyn-icon.svg?url';
 
@@ -19,6 +18,7 @@
   } from '../lib/ipc-types';
   import CaptureDetailPanel from './CaptureDetailPanel.svelte';
   import CaptureStream from './CaptureStream.svelte';
+  import SearchFilters from './SearchFilters.svelte';
   import {
     LibraryCommandError,
     libraryClient,
@@ -206,26 +206,24 @@
     void loadCaptures(false);
   }
 
-  function changeSearchContext(event: Event) {
-    searchContextId = (event.currentTarget as HTMLSelectElement).value || null;
+  function changeSearchContext(value: string) {
+    searchContextId = value || null;
     applySearchFilter();
   }
 
-  function changeSearchBranch(event: Event) {
-    branchName = (event.currentTarget as HTMLInputElement).value.trim() || null;
+  function changeSearchBranch(value: string) {
+    branchName = value.trim() || null;
     applySearchFilter();
   }
 
-  function changeSearchDate(event: Event, boundary: 'from' | 'to') {
-    const value = (event.currentTarget as HTMLInputElement).value;
+  function changeSearchDate(value: string, boundary: 'from' | 'to') {
     if (boundary === 'from') capturedFromDate = value;
     else capturedToDate = value;
     applySearchFilter();
   }
 
-  function changeDatePreset(event: Event) {
-    datePreset = (event.currentTarget as HTMLSelectElement)
-      .value as typeof datePreset;
+  function changeDatePreset(value: typeof datePreset) {
+    datePreset = value;
     if (datePreset === 'any') {
       capturedFromDate = '';
       capturedToDate = '';
@@ -247,11 +245,8 @@
     return `${year}-${month}-${day}`;
   }
 
-  function changeCaptureKind(event: Event, kind: CaptureKind) {
-    const selected =
-      (event.currentTarget as HTMLButtonElement).getAttribute(
-        'aria-pressed',
-      ) === 'true';
+  function changeCaptureKind(kind: CaptureKind) {
+    const selected = captureKinds.includes(kind);
     captureKinds = selected
       ? captureKinds.filter((candidate) => candidate !== kind)
       : [...captureKinds, kind];
@@ -438,86 +433,22 @@
             oninput={scheduleSearch}
           />
         </label>
-        <details class="search-filters">
-          <summary
-            ><SlidersIcon aria-hidden="true" />{activeFilterCount
-              ? `Filters · ${activeFilterCount}`
-              : 'Filters'}</summary
-          >
-          <div class="filter-grid">
-            <label>
-              <span>Context</span>
-              <select
-                value={searchContextId ?? ''}
-                onchange={changeSearchContext}
-              >
-                <option value="">All contexts</option>
-                {#each contexts as context (context.id)}
-                  <option value={context.id}>{context.name}</option>
-                {/each}
-              </select>
-            </label>
-            <label>
-              <span>Branch</span>
-              <input
-                type="text"
-                maxlength="255"
-                value={branchName ?? ''}
-                placeholder="Any branch"
-                onchange={changeSearchBranch}
-              />
-            </label>
-            <label class="date-preset">
-              <span>Date</span>
-              <select value={datePreset} onchange={changeDatePreset}>
-                <option value="any">Any time</option>
-                <option value="today">Today</option>
-                <option value="7-days">Last 7 days</option>
-                <option value="30-days">Last 30 days</option>
-                <option value="custom">Custom range</option>
-              </select>
-            </label>
-            {#if datePreset === 'custom'}
-              <label>
-                <span>From</span>
-                <input
-                  type="date"
-                  value={capturedFromDate}
-                  onchange={(event) => changeSearchDate(event, 'from')}
-                />
-              </label>
-              <label>
-                <span>To</span>
-                <input
-                  type="date"
-                  value={capturedToDate}
-                  onchange={(event) => changeSearchDate(event, 'to')}
-                />
-              </label>
-            {/if}
-            <fieldset>
-              <legend>Capture type</legend>
-              {#each ['text', 'image', 'audio'] as kind}
-                <button
-                  class="kind-filter"
-                  class:active={captureKinds.includes(kind as CaptureKind)}
-                  type="button"
-                  aria-pressed={captureKinds.includes(kind as CaptureKind)}
-                  onclick={(event) =>
-                    changeCaptureKind(event, kind as CaptureKind)}
-                  >{kind[0].toUpperCase() + kind.slice(1)}</button
-                >
-              {/each}
-            </fieldset>
-            {#if activeFilterCount}
-              <button
-                class="clear-filters"
-                type="button"
-                onclick={clearSearchFilters}>Clear filters</button
-              >
-            {/if}
-          </div>
-        </details>
+        <SearchFilters
+          {contexts}
+          contextId={searchContextId}
+          {branchName}
+          {captureKinds}
+          {datePreset}
+          {capturedFromDate}
+          {capturedToDate}
+          activeCount={activeFilterCount}
+          oncontext={changeSearchContext}
+          onbranch={changeSearchBranch}
+          onkind={changeCaptureKind}
+          onpreset={changeDatePreset}
+          ondate={changeSearchDate}
+          onclear={clearSearchFilters}
+        />
         <p class="search-scope-note">
           Literal local search across note text and media captions.
         </p>

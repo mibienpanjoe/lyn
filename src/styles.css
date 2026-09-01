@@ -932,6 +932,8 @@ kbd {
   display: grid;
   grid-template-columns: repeat(2, minmax(150px, 1fr));
   width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
   gap: var(--space-3);
   padding: var(--space-4);
   border: 1px solid var(--color-divider);
