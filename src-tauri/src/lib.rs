@@ -15,6 +15,7 @@ mod intelligence;
 mod library;
 mod media;
 mod platform;
+mod settings;
 mod storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -95,6 +96,9 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             let database_path = app_data_dir.join("lyn.db");
             let database = storage::Database::open(database_path)?;
+            let settings = storage::settings::SettingsRepository::new(database.connection())
+                .get()
+                .unwrap_or_default();
             let referenced_paths =
                 storage::media_assets::MediaAssetRepository::new(database.connection())
                     .referenced_relative_paths()?;
@@ -126,9 +130,16 @@ pub fn run() {
             let _ = context::shell_provider::start(app.handle().clone());
             #[cfg(desktop)]
             {
-                // Settings persistence replaces this initial default in T27.
-                let _ = app.global_shortcut().register("Control+Shift+Space");
+                let _ = app
+                    .global_shortcut()
+                    .register(settings.global_shortcut.as_str());
             }
+            let theme = match settings.theme {
+                contract::ThemeSetting::System => None,
+                contract::ThemeSetting::Light => Some(tauri::Theme::Light),
+                contract::ThemeSetting::Dark => Some(tauri::Theme::Dark),
+            };
+            app.set_theme(theme);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -155,6 +166,8 @@ pub fn run() {
             commands::library::open_media_external,
             commands::platform::dismiss_capture_popup,
             commands::platform::set_capture_popup_layout,
+            commands::settings::get_settings,
+            commands::settings::update_settings,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Lyn");
@@ -227,14 +240,24 @@ fn resolve_invocation_context(
                 )
             })
             .collect();
-        resolve(
-            &candidates,
-            &[
-                ContextProviderKind::Vscode,
-                ContextProviderKind::Shell,
-                ContextProviderKind::ForegroundWindow,
-            ],
-        )
+        let provider_order = app
+            .state::<Mutex<storage::Database>>()
+            .lock()
+            .ok()
+            .and_then(|database| {
+                storage::settings::SettingsRepository::new(database.connection())
+                    .get()
+                    .ok()
+            })
+            .map(|settings| settings.provider_tie_break_order)
+            .unwrap_or_else(|| {
+                vec![
+                    ContextProviderKind::Vscode,
+                    ContextProviderKind::Shell,
+                    ContextProviderKind::ForegroundWindow,
+                ]
+            });
+        resolve(&candidates, &provider_order)
     };
 
     let resolution = match outcome {

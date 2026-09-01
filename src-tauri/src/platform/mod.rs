@@ -7,6 +7,7 @@ pub(crate) mod clipboard;
 pub(crate) mod media_open;
 pub(crate) mod playback;
 pub(crate) mod popup;
+pub(crate) mod settings;
 
 #[cfg(not(target_os = "linux"))]
 use tauri::Manager;

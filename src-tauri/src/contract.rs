@@ -127,6 +127,53 @@ pub enum ContextProviderKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub enum ThemeSetting {
+    System,
+    Light,
+    Dark,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AppSettings {
+    pub global_shortcut: String,
+    pub provider_tie_break_order: Vec<ContextProviderKind>,
+    pub theme: ThemeSetting,
+    pub local_speech_enabled: bool,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            global_shortcut: "Control+Shift+Space".to_owned(),
+            provider_tie_break_order: vec![
+                ContextProviderKind::Vscode,
+                ContextProviderKind::Shell,
+                ContextProviderKind::ForegroundWindow,
+            ],
+            theme: ThemeSetting::System,
+            local_speech_enabled: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingsPatch {
+    pub global_shortcut: Option<String>,
+    pub provider_tie_break_order: Option<Vec<ContextProviderKind>>,
+    pub theme: Option<ThemeSetting>,
+    pub local_speech_enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateSettingsInput {
+    pub patch: SettingsPatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub enum ContextSourceKind {
     VscodeWindow,
     IntegratedTerminal,
@@ -587,6 +634,10 @@ pub fn typescript_bindings() -> String {
         ContextKind::decl(&config),
         CaptionSource::decl(&config),
         ContextProviderKind::decl(&config),
+        ThemeSetting::decl(&config),
+        AppSettings::decl(&config),
+        SettingsPatch::decl(&config),
+        UpdateSettingsInput::decl(&config),
         ContextSourceKind::decl(&config),
         MediaKind::decl(&config),
         CapturePopupLayout::decl(&config),

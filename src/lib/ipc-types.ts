@@ -36,6 +36,14 @@ export type CaptionSource = "user" | "context_generated" | "transcript_generated
 
 export type ContextProviderKind = "manual" | "vscode" | "shell" | "foreground_window";
 
+export type ThemeSetting = "system" | "light" | "dark";
+
+export type AppSettings = { globalShortcut: string, providerTieBreakOrder: Array<ContextProviderKind>, theme: ThemeSetting, localSpeechEnabled: boolean, };
+
+export type SettingsPatch = { globalShortcut: string | null, providerTieBreakOrder: Array<ContextProviderKind> | null, theme: ThemeSetting | null, localSpeechEnabled: boolean | null, };
+
+export type UpdateSettingsInput = { patch: SettingsPatch, };
+
 export type ContextSourceKind = "vscode_window" | "integrated_terminal" | "external_terminal" | "shell" | "foreground_window";
 
 export type MediaKind = "image" | "audio";
