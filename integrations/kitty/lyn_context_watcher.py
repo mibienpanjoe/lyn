@@ -88,29 +88,24 @@ def on_focus_change(_boss: Any, window: Any, data: dict[str, Any]) -> None:
         return
     terminal_session_id, process_id = identity
     focused = data.get("focused") is True
+    if not focused:
+        # Opening Lyn necessarily moves OS focus away from Kitty. Keep the
+        # invocation-bound pane alive until another Kitty pane takes focus,
+        # the pane closes, or Rust expires the bounded observation.
+        return
     with _lock:
-        if focused:
-            previous = tuple(
-                (session_id, child_process_id)
-                for session_id, child_process_id in _focused.items()
-                if session_id != terminal_session_id
-            )
-            _focused.clear()
-            _focused[terminal_session_id] = process_id
-        else:
-            previous = ()
-            _focused.pop(terminal_session_id, None)
+        previous = tuple(
+            (session_id, child_process_id)
+            for session_id, child_process_id in _focused.items()
+            if session_id != terminal_session_id
+        )
+        _focused.clear()
+        _focused[terminal_session_id] = process_id
     for previous_session_id, previous_process_id in previous:
         send_message(
             create_message(previous_session_id, previous_process_id, "ended")
         )
-    send_message(
-        create_message(
-            terminal_session_id,
-            process_id,
-            "focused" if focused else "ended",
-        )
-    )
+    send_message(create_message(terminal_session_id, process_id, "focused"))
 
 
 def on_close(_boss: Any, window: Any, _data: dict[str, Any]) -> None:

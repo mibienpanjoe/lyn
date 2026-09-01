@@ -61,14 +61,14 @@ class KittyWatcherTests(unittest.TestCase):
         )
         thread.assert_called_once()
 
-    def test_focus_changes_report_and_revoke_the_exact_kitty_pane(self):
+    def test_os_focus_loss_keeps_the_exact_kitty_pane_available_for_capture(self):
         with patch.object(watcher, "send_message") as send:
             watcher.on_focus_change(None, Window(), {"focused": True})
             watcher.on_focus_change(None, Window(), {"focused": False})
 
         self.assertEqual(send.call_args_list[0].args[0]["state"], "focused")
-        self.assertEqual(send.call_args_list[1].args[0]["state"], "ended")
         self.assertEqual(send.call_args_list[0].args[0]["terminalSessionId"], 77)
+        self.assertEqual(send.call_count, 1)
 
     def test_close_revokes_a_previously_focused_pane(self):
         with patch.object(watcher, "send_message") as send:
