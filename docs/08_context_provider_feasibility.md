@@ -1,8 +1,8 @@
 # Context Provider Feasibility — G1
 
-**Status:** Accepted; the VS Code workspace provider is implemented and its post-fix live desktop matrix is pending owner verification.
+**Status:** Accepted; VS Code, Kitty, and bounded shell/terminal providers are implemented. Their concurrent live desktop matrix is pending owner verification.
 
-**Date:** 2026-08-31.
+**Date:** 2026-09-01.
 
 **Target:** Pop!_OS 22.04 LTS, GNOME on X11.
 
@@ -18,9 +18,10 @@ Automatic selection requires a relationship to the window captured before Lyn ap
 |---|---|---|
 | X11 foreground window | `_NET_ACTIVE_WINDOW` captured before popup focus | Supported as an opaque invocation correlation; it does not reveal a project by itself. |
 | VS Code workspace window | A local VS Code integration supplies the exact editor-window correlation and workspace directory | Implemented for Linux X11 by the local VSIX and Rust-owned user-only socket. Delayed reports are accepted only while a supported VS Code window is active; remote and multi-root workspaces remain manual. Post-fix live confirmation is pending. |
-| VS Code integrated terminal | Owning editor-window correlation, distinct active-terminal session correlation, and that terminal's cwd/workspace | Supported only with all three relationships. Missing active-terminal evidence is ambiguous. |
-| GNOME Terminal or Kitty tab | Exact foreground-window correlation plus an integration that identifies the active tab/session and cwd | Unsupported without a terminal-specific integration; multiple tabs must remain ambiguous. |
-| Shell session | Distinct process/session correlation and cwd, related to the invocation window by verified local evidence | Supported by the provider contract; a globally recent shell report cannot auto-select. |
+| VS Code integrated terminal | Owning editor-window correlation, distinct active-terminal session correlation, and that terminal's cwd/workspace | Implemented through the bounded shell helper for one distinguishable terminal session. Multiple sessions sharing the editor window remain ambiguous unless exact active-session evidence is added. |
+| Kitty tab or pane | Exact foreground-window correlation plus an integration that identifies the active pane/session and cwd | Implemented through a global Kitty focus watcher. It reports only pane focus and child-process identity; Rust derives cwd and revalidates the active Kitty X11 window. |
+| GNOME Terminal tab | Exact foreground-window correlation plus a distinguishable shell session and cwd | Implemented for one distinguishable session per OS window through the bounded shell helper. Multiple tabs sharing the window remain ambiguous rather than using recency. |
+| Shell session | Distinct process/session correlation and cwd, related to the invocation window by verified local evidence | Implemented by the `lyn-context` helper and private Rust broker. The helper sends no cwd; Rust derives it from the validated same-user process. |
 | Non-Git directory | Verified directory evidence | Degrades to explicit/manual standalone flow; no project identity is fabricated. |
 
 VS Code, GNOME Terminal, and Kitty are the applications selected for the first reproducible desktop matrix. The provider contract deliberately keeps VS Code windows, integrated terminals, external terminals, and shell sessions as distinct source kinds.
@@ -32,19 +33,19 @@ Run the following cases through the normal `pnpm tauri dev` application on the r
 1. Focus VS Code workspace A, invoke Lyn, and confirm A is the only exact-window candidate.
 2. Focus a VS Code integrated terminal in workspace B, invoke Lyn, and confirm the editor window plus active terminal session resolves B.
 3. Open two integrated terminals with different cwd values; when active-terminal correlation is absent, confirm Lyn reports ambiguity.
-4. Open two GNOME Terminal tabs, then two Kitty tabs, with different cwd values; without a supported tab integration, confirm Lyn reports ambiguity rather than selecting the newest report.
+4. Open two GNOME Terminal tabs with different cwd values and confirm Lyn reports ambiguity; repeat with two Kitty panes and confirm the installed Kitty watcher resolves only the focused pane.
 5. Keep a newer background observation for workspace B, focus the verified window for A, and confirm A wins.
 6. Close a selected live source before save and confirm the draft remains intact while Lyn asks for another context.
 7. Repeat with a linked Git worktree and confirm the common project identity is shared while branch/worktree labels reflect the selected source.
 
-Automated tests cover bounded messages, focus-class validation, stale remapping, exact-window resolution, provider failure isolation, and draft-preserving chooser behavior. They do not replace the real concurrent-window cases above, which remain acceptance evidence for Checkpoint C until explicitly verified on the reference desktop.
+Automated tests cover bounded messages, same-user process validation, focus-class validation, exact Kitty-pane replacement, safe generic-terminal ambiguity, stale remapping, exact-window resolution, provider failure isolation, and draft-preserving chooser behavior. They do not replace the real concurrent-window cases above, which remain acceptance evidence for Checkpoint B until explicitly verified on the reference desktop.
 
 ## Rejected approaches
 
 - Parsing window titles: titles are untrusted, configurable, truncated, and may expose content.
 - Choosing the globally most recent provider report: this violates invocation-bound context under concurrent windows.
 - Persisting live observations: correlations and cwd/workspace evidence are ephemeral and must not enter SQLite or logs.
-- Treating a terminal process as its active tab: one process may own several tabs or panes with different working directories.
+- Treating a terminal process as its active tab: one process may own several tabs or panes with different working directories. The Kitty watcher supplies exact pane focus; generic multi-tab terminals remain ambiguous.
 
 ## Consequences
 
@@ -53,3 +54,5 @@ Automated tests cover bounded messages, focus-class validation, stale remapping,
 - T16 must revalidate a selected live source at selection and save time.
 - Unsupported integrations reduce convenience, not core capture availability.
 - The delivered VS Code extension reports only an ephemeral instance ID, focus state, and local workspace folders. The Rust broker validates the active X11 window class before attaching an opaque correlation and never persists observations.
+- The Kitty watcher reports only exact pane focus plus child-process identity. It does not enable Kitty remote control or inspect screen text, commands, output, titles, environment values, or cwd.
+- The generic helper reports only opaque session, process, and X11-window correlation. The broker validates the same-user process and derives cwd inside Rust before registration.

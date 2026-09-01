@@ -1,6 +1,6 @@
 # Lyn — System Architecture
 
-Version: v1.1, 2026-08-28
+Version: v1.2, 2026-09-01
 
 Derived from: [`04_transition_req_arch.md`](04_transition_req_arch.md)
 
@@ -545,7 +545,10 @@ The overview does not establish the first supported operating system. Release do
 ## Project Structure
 
 ```text
-integrations/vscode/       # Separately packaged local workspace provider
+integrations/
+├── vscode/                # Separately packaged local workspace provider
+├── kitty/                 # Exact-pane focus watcher
+└── shell/                 # Bash/Zsh bootstrap for the bounded helper
 
 src/
 ├── capture/

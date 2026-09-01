@@ -1,6 +1,6 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.8, 2026-08-31
+Version: v1.9, 2026-09-01
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
@@ -203,7 +203,7 @@ interface Page<T> {
 
 ### Local provider observation contract
 
-Context providers are Rust-side adapters, not frontend IPC. They submit only validated correlation metadata: provider/source kind, opaque OS window/process/session tokens, workspace or working directory, observation time, and liveness. Context Resolver derives the public `ContextSourceOption`; raw paths and tokens never cross the Tauri boundary. Provider observations MUST NOT contain terminal commands/output, editor contents, clipboard content, or agent conversations, and MUST NOT be persisted.
+Context providers are Rust-side adapters, not frontend IPC. They submit only validated correlation metadata: provider/source kind, opaque OS window/process/session tokens, workspace or working directory, observation time, and liveness. The private terminal broker accepts only bounded version, process, session, window, and focus fields; Rust derives the process working directory after same-user and active-window validation. Context Resolver derives the public `ContextSourceOption`; raw paths and tokens never cross the Tauri boundary. Provider observations MUST NOT contain terminal commands/output, environment values, editor contents, clipboard content, or agent conversations, and MUST NOT be persisted.
 
 ## Capture Session Commands
 
