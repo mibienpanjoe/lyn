@@ -26,6 +26,23 @@ pub(crate) const MODEL_SIZE: u64 = 147_951_465;
 pub(crate) const MODEL_SHA256: &str =
     "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe";
 
+const ENGINE_ARCHIVE_ALIASES: [(&str, &str); 8] = [
+    ("libwhisper.so", "libwhisper.so.1"),
+    ("libwhisper.so.1", "libwhisper.so.1.9.2"),
+    ("libggml.so", "libggml.so.0"),
+    ("libggml.so.0", "libggml.so.0.18.1"),
+    ("libggml-base.so", "libggml-base.so.0"),
+    ("libggml-base.so.0", "libggml-base.so.0.18.1"),
+    ("libparakeet.so", "libparakeet.so.1"),
+    ("libparakeet.so.1", "libparakeet.so.1.9.2"),
+];
+
+const ENGINE_RUNTIME_ALIASES: [(&str, &str); 3] = [
+    ("libwhisper.so.1", "libwhisper.so.1.9.2"),
+    ("libggml.so.0", "libggml.so.0.18.1"),
+    ("libggml-base.so.0", "libggml-base.so.0.18.1"),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModelError {
     InvalidModelId,
@@ -562,6 +579,7 @@ impl SpeechPaths {
             && manifest.model_sha256 == MODEL_SHA256
             && executable_file(&self.engine_path())
             && verify_engine_package(&self.active_package()).is_ok()
+            && verify_runtime_aliases(&self.active_package().join("engine")).is_ok()
             && verify_file(&self.model_path(), MODEL_SIZE, MODEL_SHA256).is_ok()
     }
 
@@ -796,8 +814,20 @@ fn extract_engine(
             || path
                 .components()
                 .any(|component| matches!(component, Component::ParentDir))
-            || !(entry.header().entry_type().is_file() || entry.header().entry_type().is_dir())
         {
+            return Err(ModelError::InvalidArchive);
+        }
+        if entry.header().entry_type().is_symlink() {
+            let target = entry
+                .link_name()
+                .map_err(|_| ModelError::InvalidArchive)?
+                .ok_or(ModelError::InvalidArchive)?;
+            if !accepted_engine_alias(&path, &target) {
+                return Err(ModelError::InvalidArchive);
+            }
+            continue;
+        }
+        if !(entry.header().entry_type().is_file() || entry.header().entry_type().is_dir()) {
             return Err(ModelError::InvalidArchive);
         }
         if entry.header().entry_type().is_dir() {
@@ -830,6 +860,9 @@ fn extract_engine(
     if !found_cli || !found_license {
         return Err(ModelError::InvalidArchive);
     }
+    for (alias, source) in ENGINE_RUNTIME_ALIASES {
+        copy_new(&engine_dir.join(source), &engine_dir.join(alias))?;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -838,6 +871,48 @@ fn extract_engine(
             fs::Permissions::from_mode(0o700),
         )
         .map_err(|_| ModelError::Io)?;
+    }
+    Ok(())
+}
+
+fn accepted_engine_alias(path: &Path, target: &Path) -> bool {
+    if target.components().count() != 1
+        || !matches!(target.components().next(), Some(Component::Normal(_)))
+    {
+        return false;
+    }
+    let Some(alias) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(target) = target.to_str() else {
+        return false;
+    };
+    ENGINE_ARCHIVE_ALIASES.contains(&(alias, target))
+}
+
+fn copy_new(source: &Path, destination: &Path) -> Result<(), ModelError> {
+    let mut source = File::open(source).map_err(|_| ModelError::InvalidArchive)?;
+    let mut destination = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .map_err(|_| ModelError::InvalidArchive)?;
+    io::copy(&mut source, &mut destination).map_err(|_| ModelError::InvalidArchive)?;
+    destination.sync_all().map_err(|_| ModelError::Io)
+}
+
+fn verify_runtime_aliases(engine_dir: &Path) -> Result<(), ModelError> {
+    for (alias, source) in ENGINE_RUNTIME_ALIASES {
+        let alias = engine_dir.join(alias);
+        if !alias
+            .symlink_metadata()
+            .map_err(|_| ModelError::InvalidArtifact)?
+            .is_file()
+            || fs::read(&alias).map_err(|_| ModelError::InvalidArtifact)?
+                != fs::read(engine_dir.join(source)).map_err(|_| ModelError::InvalidArtifact)?
+        {
+            return Err(ModelError::InvalidArtifact);
+        }
     }
     Ok(())
 }
@@ -865,7 +940,7 @@ mod tests {
     use flate2::{Compression, write::GzEncoder};
     use tempfile::tempdir;
 
-    use super::{ModelError, SpeechPaths, resolve_audio_path, verify_file};
+    use super::{ModelError, SpeechPaths, extract_engine, resolve_audio_path, verify_file};
 
     #[test]
     fn stored_audio_paths_resolve_beneath_the_private_media_root() {
@@ -957,5 +1032,78 @@ mod tests {
             super::extract_engine(&archive_path, &engine, &notices),
             Err(ModelError::InvalidArchive)
         );
+    }
+
+    #[test]
+    fn pinned_engine_aliases_are_materialized_as_regular_files() {
+        let directory = tempdir().unwrap();
+        let archive_path = directory.path().join("engine.tar.gz");
+        let encoder = GzEncoder::new(
+            std::fs::File::create(&archive_path).unwrap(),
+            Compression::default(),
+        );
+        let mut archive = tar::Builder::new(encoder);
+        for (path, bytes) in [
+            ("whisper-bin-ubuntu-x64/whisper-cli", b"cli".as_slice()),
+            ("whisper-bin-ubuntu-x64/LICENSE", b"license".as_slice()),
+            (
+                "whisper-bin-ubuntu-x64/libwhisper.so.1.9.2",
+                b"whisper".as_slice(),
+            ),
+            (
+                "whisper-bin-ubuntu-x64/libggml.so.0.18.1",
+                b"ggml".as_slice(),
+            ),
+            (
+                "whisper-bin-ubuntu-x64/libggml-base.so.0.18.1",
+                b"ggml-base".as_slice(),
+            ),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_path(path).unwrap();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o700);
+            header.set_cksum();
+            archive.append(&header, bytes).unwrap();
+        }
+        for (path, target) in [
+            (
+                "whisper-bin-ubuntu-x64/libwhisper.so.1",
+                "libwhisper.so.1.9.2",
+            ),
+            ("whisper-bin-ubuntu-x64/libggml.so.0", "libggml.so.0.18.1"),
+            (
+                "whisper-bin-ubuntu-x64/libggml-base.so.0",
+                "libggml-base.so.0.18.1",
+            ),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_path(path).unwrap();
+            header.set_link_name(target).unwrap();
+            header.set_size(0);
+            header.set_cksum();
+            archive.append(&header, std::io::empty()).unwrap();
+        }
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let engine = directory.path().join("engine");
+        let notices = directory.path().join("notices");
+        std::fs::create_dir_all(&engine).unwrap();
+        std::fs::create_dir_all(&notices).unwrap();
+
+        extract_engine(&archive_path, &engine, &notices).unwrap();
+
+        for (alias, source) in [
+            ("libwhisper.so.1", "libwhisper.so.1.9.2"),
+            ("libggml.so.0", "libggml.so.0.18.1"),
+            ("libggml-base.so.0", "libggml-base.so.0.18.1"),
+        ] {
+            assert!(engine.join(alias).symlink_metadata().unwrap().is_file());
+            assert_eq!(
+                std::fs::read(engine.join(alias)).unwrap(),
+                std::fs::read(engine.join(source)).unwrap()
+            );
+        }
     }
 }

@@ -59,7 +59,7 @@ Rust must:
 4. Use a 15-second connect timeout and five-minute total installation deadline.
 5. Stream into a newly created Lyn-owned staging directory with restrictive permissions while computing SHA-256.
 6. Require the exact final byte count and digest before activation.
-7. From the exact digest-verified archive, extract only explicitly selected engine members; ignore other regular members and reject absolute paths, parent traversal, links, and devices.
+7. From the exact digest-verified archive, extract only explicitly selected engine members; ignore other regular members and reject absolute paths, parent traversal, devices, and every link except the archive's exact allowlisted shared-library aliases. Lyn never extracts those aliases as links: it recreates only the required loader aliases as private regular-file copies of their verified versioned libraries.
 8. Validate the engine with a bounded version probe and the model by its exact size and digest, then atomically rename the complete package into the active location.
 9. On cancellation, interruption, mismatch, or validation failure, remove only incomplete staging and retain any previous valid package.
 
