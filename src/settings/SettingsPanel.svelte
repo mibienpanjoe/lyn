@@ -5,7 +5,7 @@
   import MonitorIcon from '@lucide/svelte/icons/monitor';
   import MoonIcon from '@lucide/svelte/icons/moon';
   import SunIcon from '@lucide/svelte/icons/sun';
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
 
   import type {
     AppSettings,
@@ -36,6 +36,8 @@
   let savedNotice = $state(false);
   let model = $state<SpeechModelStatus | null>(null);
   let modelBusy = $state(false);
+  let editingShortcut = $state(false);
+  let shortcutInput = $state<HTMLInputElement>();
   let unsubscribeModel: (() => void) | null = null;
 
   const providerNames: Record<ContextProviderKind, string> = {
@@ -53,6 +55,11 @@
         saved.providerTieBreakOrder.some(
           (provider, index) => provider !== draft?.providerTieBreakOrder[index],
         )),
+  );
+  const shortcutParts = $derived(
+    (draft?.globalShortcut ?? '')
+      .split('+')
+      .map((part) => (part === 'Control' ? 'Ctrl' : part)),
   );
 
   onMount(() => {
@@ -129,6 +136,24 @@
     savedNotice = false;
   }
 
+  async function beginShortcutEdit() {
+    editingShortcut = true;
+    await tick();
+    shortcutInput?.focus();
+    shortcutInput?.select();
+  }
+
+  function handleShortcutKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      editingShortcut = false;
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      if (saved) setShortcut(saved.globalShortcut);
+      editingShortcut = false;
+    }
+  }
+
   function moveProvider(index: number, direction: -1 | 1) {
     if (!draft) return;
     const target = index + direction;
@@ -193,17 +218,39 @@
           <h2 id="shortcut-title">Quick capture</h2>
           <p>The global shortcut used to open Lyn from another application.</p>
         </div>
-        <label>
-          <span>Global shortcut</span>
-          <input
-            type="text"
-            value={draft.globalShortcut}
-            maxlength="100"
-            autocomplete="off"
-            oninput={(event) =>
-              setShortcut((event.currentTarget as HTMLInputElement).value)}
-          />
-        </label>
+        <div class="shortcut-setting">
+          <span class="control-label">Global shortcut</span>
+          {#if editingShortcut}
+            <div class="shortcut-editor">
+              <input
+                bind:this={shortcutInput}
+                aria-label="Global shortcut"
+                type="text"
+                value={draft.globalShortcut}
+                maxlength="100"
+                autocomplete="off"
+                oninput={(event) =>
+                  setShortcut((event.currentTarget as HTMLInputElement).value)}
+                onkeydown={handleShortcutKeydown}
+              />
+              <button type="button" onclick={() => (editingShortcut = false)}
+                >Done</button
+              >
+            </div>
+          {:else}
+            <div class="shortcut-display">
+              <span class="shortcut-keycaps" aria-label={draft.globalShortcut}>
+                {#each shortcutParts as part, index}
+                  {#if index > 0}<span aria-hidden="true">+</span>{/if}
+                  <kbd>{part}</kbd>
+                {/each}
+              </span>
+              <button type="button" onclick={beginShortcutEdit}
+                >Change shortcut</button
+              >
+            </div>
+          {/if}
+        </div>
       </section>
 
       <section class="settings-section" aria-labelledby="providers-title">

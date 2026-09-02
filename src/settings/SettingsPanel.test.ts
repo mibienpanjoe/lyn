@@ -51,6 +51,27 @@ const modelClient: SpeechModelClient = {
 afterEach(() => document.documentElement.removeAttribute('data-theme'));
 
 describe('Settings', () => {
+  it('presents the global shortcut as keycaps until editing is requested', async () => {
+    render(SettingsPanel, { client: client(), modelClient });
+
+    await screen.findByRole('heading', { name: 'Quick capture' });
+    expect(screen.getByText('Ctrl', { selector: 'kbd' })).toBeVisible();
+    expect(screen.getByText('Shift', { selector: 'kbd' })).toBeVisible();
+    expect(screen.getByText('Space', { selector: 'kbd' })).toBeVisible();
+    expect(
+      screen.queryByRole('textbox', { name: 'Global shortcut' }),
+    ).not.toBeInTheDocument();
+
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Change shortcut' }),
+    );
+
+    expect(
+      screen.getByRole('textbox', { name: 'Global shortcut' }),
+    ).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Done' })).toBeVisible();
+  });
+
   it('pairs each theme label with a distinct decorative icon', async () => {
     render(SettingsPanel, { client: client(), modelClient });
     await screen.findByRole('heading', { name: 'Appearance' });
@@ -68,6 +89,9 @@ describe('Settings', () => {
       client: settingsClient,
       modelClient,
     });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Change shortcut' }),
+    );
     const shortcut = await screen.findByRole('textbox', {
       name: 'Global shortcut',
     });
@@ -113,6 +137,9 @@ describe('Settings', () => {
       ),
     });
     render(SettingsPanel, { client: settingsClient, modelClient });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Change shortcut' }),
+    );
     const shortcut = await screen.findByRole('textbox', {
       name: 'Global shortcut',
     });
