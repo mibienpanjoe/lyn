@@ -644,6 +644,10 @@ kbd {
 }
 
 .settings-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
   padding: var(--space-5) var(--space-4) var(--space-3);
 }
 
@@ -660,6 +664,24 @@ kbd {
   color: var(--color-text-muted);
   font-size: 12px;
   line-height: 16px;
+}
+
+.settings-save-status {
+  display: inline-flex;
+  min-height: 28px;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding-top: 2px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.settings-save-status svg {
+  width: 14px;
+  height: 14px;
+  color: var(--color-accent);
+  stroke-width: 1.5;
 }
 
 .settings-form {
@@ -834,13 +856,11 @@ kbd {
 }
 
 .provider-order-actions button:active:not(:disabled),
-.secondary-action:active:not(:disabled),
-.settings-actions button:active:not(:disabled) {
+.secondary-action:active:not(:disabled) {
   scale: 0.96;
 }
 
-.provider-order-actions svg,
-.settings-saved svg {
+.provider-order-actions svg {
   width: 15px;
   height: 15px;
   stroke-width: 1.5;
@@ -1022,45 +1042,7 @@ kbd {
   color: var(--color-error);
 }
 
-.settings-actions {
-  position: sticky;
-  z-index: 1;
-  bottom: 0;
-  display: flex;
-  min-height: 64px;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-3);
-  padding-top: var(--space-4);
-  padding-bottom: var(--space-4);
-  border-top: 1px solid var(--color-divider);
-  background: var(--color-canvas);
-}
-
-.settings-change-state {
-  color: var(--color-text-muted);
-  font-size: 11px;
-}
-
-.settings-actions button {
-  min-height: 36px;
-  padding: 6px var(--space-4);
-  border: 0;
-  border-radius: var(--radius-control);
-  background: var(--color-accent);
-  color: var(--color-on-accent);
-  font-weight: 600;
-  transition:
-    opacity 120ms ease-out,
-    scale 120ms ease-out;
-}
-
-.settings-actions button:disabled {
-  opacity: 0.42;
-}
-
 .settings-error,
-.settings-saved,
 .settings-status {
   display: flex;
   align-items: center;
@@ -1071,10 +1053,6 @@ kbd {
 
 .settings-error {
   color: var(--color-error);
-}
-
-.settings-saved {
-  color: var(--color-accent);
 }
 
 .settings-status {

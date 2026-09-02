@@ -24,6 +24,8 @@ function client(overrides: Partial<SettingsClient> = {}): SettingsClient {
         providerTieBreakOrder:
           patch.providerTieBreakOrder ?? initial.providerTieBreakOrder,
         theme: patch.theme ?? initial.theme,
+        localSpeechEnabled:
+          patch.localSpeechEnabled ?? initial.localSpeechEnabled,
       }),
     ),
     ...overrides,
@@ -96,22 +98,29 @@ describe('Settings', () => {
       name: 'Global shortcut',
     });
     expect(
-      screen.getByRole('button', { name: 'Save settings' }),
-    ).toBeDisabled();
+      screen.queryByRole('button', { name: 'Save settings' }),
+    ).not.toBeInTheDocument();
     await fireEvent.input(shortcut, { target: { value: 'Control+Alt+L' } });
     expect(screen.getByText('Unsaved changes')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Save settings' })).toBeEnabled();
+    expect(settingsClient.update).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     await fireEvent.click(
       screen.getByRole('button', { name: 'Move Terminal earlier' }),
     );
     await fireEvent.click(screen.getByRole('button', { name: 'Dark' }));
     expect(document.documentElement.dataset.theme).toBe('dark');
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Save settings' }),
-    );
 
-    await waitFor(() => expect(settingsClient.update).toHaveBeenCalledOnce());
-    expect(settingsClient.update).toHaveBeenCalledWith(
+    await waitFor(() =>
+      expect(settingsClient.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          globalShortcut: 'Control+Alt+L',
+          providerTieBreakOrder: ['shell', 'vscode', 'foreground_window'],
+          theme: 'dark',
+          localSpeechEnabled: false,
+        }),
+      ),
+    );
+    expect(settingsClient.update).toHaveBeenLastCalledWith(
       expect.objectContaining({
         globalShortcut: 'Control+Alt+L',
         providerTieBreakOrder: ['shell', 'vscode', 'foreground_window'],
@@ -123,6 +132,35 @@ describe('Settings', () => {
       'Settings saved',
     );
     expect((await axe.run(container)).violations).toEqual([]);
+  });
+
+  it('serializes rapid changes and persists the newest settings snapshot', async () => {
+    let resolveFirst!: (settings: AppSettings) => void;
+    const update = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<AppSettings>((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockImplementation((patch) =>
+        Promise.resolve({ ...initial, theme: patch.theme ?? initial.theme }),
+      );
+    const settingsClient = client({ update });
+    render(SettingsPanel, { client: settingsClient, modelClient });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Light' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Dark' }));
+    expect(update).toHaveBeenCalledTimes(1);
+
+    resolveFirst({ ...initial, theme: 'light' });
+
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2));
+    expect(update.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ theme: 'dark' }),
+    );
+    expect(document.documentElement.dataset.theme).toBe('dark');
   });
 
   it('restores the last working settings after a shortcut conflict', async () => {
@@ -144,14 +182,14 @@ describe('Settings', () => {
       name: 'Global shortcut',
     });
     await fireEvent.input(shortcut, { target: { value: 'Control+Alt+L' } });
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Save settings' }),
-    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'That shortcut is already in use',
     );
-    expect(shortcut).toHaveValue('Control+Shift+Space');
+    expect(screen.getByText('Ctrl', { selector: 'kbd' })).toBeVisible();
+    expect(screen.getByText('Shift', { selector: 'kbd' })).toBeVisible();
+    expect(screen.getByText('Space', { selector: 'kbd' })).toBeVisible();
   });
 
   it('offers an explicit model install while leaving core capture independent', async () => {
@@ -187,12 +225,22 @@ describe('Settings', () => {
         errorCode: null,
       }),
     };
-    render(SettingsPanel, { client: client(), modelClient: installedModel });
+    const settingsClient = client();
+    render(SettingsPanel, {
+      client: settingsClient,
+      modelClient: installedModel,
+    });
     const toggle = await screen.findByRole('checkbox', {
       name: 'Automatic transcription',
     });
     await fireEvent.click(toggle);
-    expect(screen.getByText('Unsaved changes')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Save settings' })).toBeEnabled();
+    await waitFor(() =>
+      expect(settingsClient.update).toHaveBeenCalledWith(
+        expect.objectContaining({ localSpeechEnabled: true }),
+      ),
+    );
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Settings saved',
+    );
   });
 });

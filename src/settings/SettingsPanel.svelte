@@ -38,6 +38,8 @@
   let modelBusy = $state(false);
   let editingShortcut = $state(false);
   let shortcutInput = $state<HTMLInputElement>();
+  let shortcutBeforeEdit = '';
+  let pendingSave: AppSettings | null = null;
   let unsubscribeModel: (() => void) | null = null;
 
   const providerNames: Record<ContextProviderKind, string> = {
@@ -74,7 +76,6 @@
   });
   onDestroy(() => {
     unsubscribeModel?.();
-    if (saved) applyTheme(saved.theme);
   });
 
   async function loadModel() {
@@ -93,14 +94,7 @@
       await modelClient[action]();
       await loadModel();
       if (action === 'remove' && draft) {
-        const updated = await client.update({
-          globalShortcut: null,
-          providerTieBreakOrder: null,
-          theme: null,
-          localSpeechEnabled: false,
-        });
-        saved = updated;
-        draft = cloneSettings(updated);
+        updateDraft({ ...draft, localSpeechEnabled: false });
       }
     } catch (caught) {
       error = message(caught, 'The local speech model could not be changed.');
@@ -125,9 +119,8 @@
 
   function chooseTheme(theme: ThemeSetting) {
     if (!draft) return;
-    draft = { ...draft, theme };
+    updateDraft({ ...draft, theme });
     applyTheme(theme);
-    savedNotice = false;
   }
 
   function setShortcut(value: string) {
@@ -137,6 +130,7 @@
   }
 
   async function beginShortcutEdit() {
+    shortcutBeforeEdit = draft?.globalShortcut ?? '';
     editingShortcut = true;
     await tick();
     shortcutInput?.focus();
@@ -146,12 +140,17 @@
   function handleShortcutKeydown(event: KeyboardEvent) {
     if (event.key === 'Enter') {
       event.preventDefault();
-      editingShortcut = false;
+      finishShortcutEdit();
     } else if (event.key === 'Escape') {
       event.preventDefault();
-      if (saved) setShortcut(saved.globalShortcut);
+      setShortcut(shortcutBeforeEdit);
       editingShortcut = false;
     }
+  }
+
+  function finishShortcutEdit() {
+    editingShortcut = false;
+    if (draft && draft.globalShortcut !== shortcutBeforeEdit) queueSave(draft);
   }
 
   function moveProvider(index: number, direction: -1 | 1) {
@@ -160,35 +159,55 @@
     if (target < 0 || target >= draft.providerTieBreakOrder.length) return;
     const order = [...draft.providerTieBreakOrder];
     [order[index], order[target]] = [order[target], order[index]];
-    draft = { ...draft, providerTieBreakOrder: order };
-    savedNotice = false;
+    updateDraft({ ...draft, providerTieBreakOrder: order });
   }
 
-  async function save() {
-    if (!draft || saving || !dirty) return;
-    saving = true;
+  function setLocalSpeechEnabled(localSpeechEnabled: boolean) {
+    if (!draft) return;
+    updateDraft({ ...draft, localSpeechEnabled });
+  }
+
+  function updateDraft(next: AppSettings) {
+    draft = next;
+    queueSave(next);
+  }
+
+  function queueSave(settings: AppSettings) {
+    pendingSave = cloneSettings(settings);
     error = null;
     savedNotice = false;
-    try {
-      const updated = await client.update({
-        globalShortcut: draft.globalShortcut,
-        providerTieBreakOrder: draft.providerTieBreakOrder,
-        theme: draft.theme,
-        localSpeechEnabled: draft.localSpeechEnabled,
-      });
-      saved = updated;
-      draft = cloneSettings(updated);
-      applyTheme(updated.theme);
-      savedNotice = true;
-    } catch (caught) {
-      if (saved) {
-        draft = cloneSettings(saved);
-        applyTheme(saved.theme);
+    void flushSaves();
+  }
+
+  async function flushSaves() {
+    if (saving) return;
+    saving = true;
+    while (pendingSave) {
+      const snapshot = pendingSave;
+      pendingSave = null;
+      try {
+        const updated = await client.update({
+          globalShortcut: snapshot.globalShortcut,
+          providerTieBreakOrder: snapshot.providerTieBreakOrder,
+          theme: snapshot.theme,
+          localSpeechEnabled: snapshot.localSpeechEnabled,
+        });
+        saved = cloneSettings(updated);
+        if (draft && sameSettings(draft, snapshot)) {
+          draft = cloneSettings(updated);
+        }
+        savedNotice = pendingSave === null;
+      } catch (caught) {
+        pendingSave = null;
+        if (saved) {
+          draft = cloneSettings(saved);
+          applyTheme(saved.theme);
+        }
+        error = message(caught, 'Settings could not be saved.');
+        break;
       }
-      error = message(caught, 'Settings could not be saved.');
-    } finally {
-      saving = false;
     }
+    saving = false;
   }
 
   function message(caught: unknown, fallback: string) {
@@ -201,12 +220,32 @@
       providerTieBreakOrder: [...settings.providerTieBreakOrder],
     };
   }
+
+  function sameSettings(left: AppSettings, right: AppSettings) {
+    return (
+      left.globalShortcut === right.globalShortcut &&
+      left.theme === right.theme &&
+      left.localSpeechEnabled === right.localSpeechEnabled &&
+      left.providerTieBreakOrder.length ===
+        right.providerTieBreakOrder.length &&
+      left.providerTieBreakOrder.every(
+        (provider, index) => provider === right.providerTieBreakOrder[index],
+      )
+    );
+  }
 </script>
 
 <section class="settings-page" aria-labelledby="settings-title">
   <header class="settings-header">
-    <h1 id="settings-title">Settings</h1>
-    <p>Local preferences for capture, context, and appearance.</p>
+    <div>
+      <h1 id="settings-title">Settings</h1>
+      <p>Local preferences for capture, context, and appearance.</p>
+    </div>
+    <span class="settings-save-status" role="status" aria-live="polite">
+      {#if saving}Saving…
+      {:else if dirty}Unsaved changes
+      {:else if savedNotice}<CheckIcon aria-hidden="true" />Settings saved{/if}
+    </span>
   </header>
 
   {#if loading}
@@ -233,9 +272,7 @@
                   setShortcut((event.currentTarget as HTMLInputElement).value)}
                 onkeydown={handleShortcutKeydown}
               />
-              <button type="button" onclick={() => (editingShortcut = false)}
-                >Done</button
-              >
+              <button type="button" onclick={finishShortcutEdit}>Done</button>
             </div>
           {:else}
             <div class="shortcut-display">
@@ -388,13 +425,8 @@
                   type="checkbox"
                   aria-label="Automatic transcription"
                   checked={draft.localSpeechEnabled}
-                  onchange={(event) => {
-                    draft = {
-                      ...draft!,
-                      localSpeechEnabled: event.currentTarget.checked,
-                    };
-                    savedNotice = false;
-                  }}
+                  onchange={(event) =>
+                    setLocalSpeechEnabled(event.currentTarget.checked)}
                 />
               </label>
             </div>
@@ -403,19 +435,6 @@
       </section>
 
       {#if error}<p class="settings-error" role="alert">{error}</p>{/if}
-      {#if savedNotice}
-        <p class="settings-saved" role="status">
-          <CheckIcon aria-hidden="true" />Settings saved
-        </p>
-      {/if}
-      <div class="settings-actions">
-        <span class="settings-change-state" aria-live="polite">
-          {dirty ? 'Unsaved changes' : ''}
-        </span>
-        <button type="button" disabled={saving || !dirty} onclick={save}
-          >{saving ? 'Saving…' : 'Save settings'}</button
-        >
-      </div>
     </form>
   {:else}
     <div class="settings-error" role="alert">
