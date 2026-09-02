@@ -2,6 +2,9 @@
   import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import CheckIcon from '@lucide/svelte/icons/check';
+  import MonitorIcon from '@lucide/svelte/icons/monitor';
+  import MoonIcon from '@lucide/svelte/icons/moon';
+  import SunIcon from '@lucide/svelte/icons/sun';
   import { onDestroy, onMount } from 'svelte';
 
   import type {
@@ -251,7 +254,15 @@
               class:active={draft.theme === theme}
               aria-pressed={draft.theme === theme}
               onclick={() => chooseTheme(theme as ThemeSetting)}
-              >{theme[0].toUpperCase() + theme.slice(1)}</button
+            >
+              {#if theme === 'system'}
+                <MonitorIcon aria-hidden="true" />
+              {:else if theme === 'light'}
+                <SunIcon aria-hidden="true" />
+              {:else}
+                <MoonIcon aria-hidden="true" />
+              {/if}
+              <span>{theme[0].toUpperCase() + theme.slice(1)}</span></button
             >
           {/each}
         </div>

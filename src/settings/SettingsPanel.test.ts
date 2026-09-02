@@ -51,6 +51,17 @@ const modelClient: SpeechModelClient = {
 afterEach(() => document.documentElement.removeAttribute('data-theme'));
 
 describe('Settings', () => {
+  it('pairs each theme label with a distinct decorative icon', async () => {
+    render(SettingsPanel, { client: client(), modelClient });
+    await screen.findByRole('heading', { name: 'Appearance' });
+
+    for (const name of ['System', 'Light', 'Dark']) {
+      expect(
+        screen.getByRole('button', { name }).querySelector('svg'),
+      ).not.toBeNull();
+    }
+  });
+
   it('updates shortcut, provider order, and deterministic theme accessibly', async () => {
     const settingsClient = client();
     const { container } = render(SettingsPanel, {
