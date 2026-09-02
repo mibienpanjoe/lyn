@@ -639,12 +639,12 @@ kbd {
 
 .settings-header,
 .settings-form {
-  width: min(100%, 760px);
+  width: min(100%, 704px);
   margin-inline: auto;
 }
 
 .settings-header {
-  padding: var(--space-6, 24px) var(--space-5) var(--space-4);
+  padding: var(--space-5) var(--space-4) var(--space-3);
 }
 
 .settings-header h1 {
@@ -656,26 +656,30 @@ kbd {
 .settings-header p,
 .settings-section p {
   margin: var(--space-1) 0 0;
+  max-width: 240px;
   color: var(--color-text-muted);
   font-size: 12px;
+  line-height: 16px;
 }
 
 .settings-form {
   display: grid;
-  padding: 0 var(--space-5);
+  padding: 0 var(--space-4);
 }
 
 .settings-section {
   display: grid;
-  grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1fr);
-  gap: var(--space-5);
-  padding: var(--space-4) 0;
-  border-top: 1px solid var(--color-divider);
+  grid-template-columns: minmax(0, 1fr) 344px;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-divider) 65%, transparent);
 }
 
 .settings-section h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 18px;
   font-weight: 650;
 }
 
@@ -699,7 +703,7 @@ kbd {
 .provider-order {
   display: grid;
   overflow: hidden;
-  border: 1px solid var(--color-divider);
+  border: 1px solid color-mix(in srgb, var(--color-divider) 72%, transparent);
   border-radius: var(--radius-control);
   background: var(--color-surface);
   padding: 0;
@@ -710,12 +714,13 @@ kbd {
 
 .provider-order li {
   display: flex;
-  min-height: 38px;
+  min-height: 34px;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
   padding: 2px 4px 2px var(--space-2);
-  border-bottom: 1px solid var(--color-divider);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--color-divider) 65%, transparent);
   font-size: 13px;
 }
 
@@ -744,15 +749,15 @@ kbd {
 
 .provider-order-actions button {
   display: grid;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   place-items: center;
   padding: 0;
   border: 0;
   border-radius: 5px;
   background: transparent;
   color: var(--color-text-muted);
-  opacity: 0.3;
+  opacity: 0.58;
   transition:
     background-color 120ms ease-out,
     color 120ms ease-out,
@@ -789,7 +794,7 @@ kbd {
   gap: var(--space-1);
   align-self: start;
   padding: 3px;
-  border: 1px solid var(--color-divider);
+  border: 1px solid color-mix(in srgb, var(--color-divider) 72%, transparent);
   border-radius: var(--radius-control);
   background: var(--color-surface);
   width: min(100%, 300px);
@@ -928,7 +933,8 @@ kbd {
 
 .speech-preference {
   padding-top: var(--space-3);
-  border-top: 1px solid var(--color-divider);
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-divider) 65%, transparent);
 }
 
 .speech-controls progress {
@@ -1014,9 +1020,9 @@ kbd {
 }
 
 .settings-status {
-  width: min(100%, 760px);
+  width: min(100%, 704px);
   margin-inline: auto;
-  padding-inline: var(--space-5);
+  padding-inline: var(--space-4);
   color: var(--color-text-muted);
 }
 
