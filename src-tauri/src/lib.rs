@@ -213,10 +213,19 @@ pub(crate) fn spawn_enrichment_worker(app: tauri::AppHandle) {
             if enabled {
                 let database = app.state::<Mutex<storage::Database>>();
                 let mut processor = worker_manager.processor();
-                while enrichment::process_one(database.inner(), true, &mut processor)
-                    .unwrap_or(false)
-                {}
-                let _ = app.emit("library://captures-changed", serde_json::json!({}));
+                loop {
+                    let Ok((processed, event)) =
+                        enrichment::process_one(database.inner(), true, &mut processor)
+                    else {
+                        break;
+                    };
+                    if let Some(event) = event {
+                        let _ = app.emit("enrichment://updated", event);
+                    }
+                    if !processed {
+                        break;
+                    }
+                }
             }
             worker_manager.finish_worker();
         })

@@ -264,6 +264,14 @@ pub enum EnrichmentStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct EnrichmentUpdatedEvent {
+    pub capture_id: CaptureId,
+    pub status: EnrichmentStatus,
+    pub caption_changed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct ContextRef {
     pub id: ContextId,
     pub kind: ContextKind,
@@ -694,6 +702,7 @@ pub fn typescript_bindings() -> String {
         CapturePopupLayout::decl(&config),
         MediaMimeType::decl(&config),
         EnrichmentStatus::decl(&config),
+        EnrichmentUpdatedEvent::decl(&config),
         ContextRef::decl(&config),
         SelectedProjectDirectory::decl(&config),
         PickProjectDirectoryResult::decl(&config),

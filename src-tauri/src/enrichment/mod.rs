@@ -180,29 +180,6 @@ impl<'a> EnrichmentQueue<'a> {
         }))
     }
 
-    #[cfg(test)]
-    pub(crate) fn run_one(
-        &mut self,
-        enabled: bool,
-        processor: &mut impl EnrichmentProcessor,
-    ) -> Result<bool, EnrichmentError> {
-        let Some(job) = self.claim_next()? else {
-            return Ok(false);
-        };
-        if !enabled {
-            self.skip(&job)?;
-            return Ok(true);
-        }
-        match processor.generate(&job) {
-            Ok(Some(caption)) => {
-                self.apply_generated(&job, &caption)?;
-            }
-            Ok(None) => self.skip(&job)?,
-            Err(code) => self.fail(&job, code)?,
-        }
-        Ok(true)
-    }
-
     pub(crate) fn apply_generated(
         &mut self,
         job: &EnrichmentJob,
@@ -285,9 +262,9 @@ pub(crate) fn process_one(
     database: &Mutex<crate::storage::Database>,
     enabled: bool,
     processor: &mut impl EnrichmentProcessor,
-) -> Result<bool, EnrichmentError> {
+) -> Result<(bool, Option<crate::contract::EnrichmentUpdatedEvent>), EnrichmentError> {
     if !enabled {
-        return Ok(false);
+        return Ok((false, None));
     }
     let job = {
         let mut database = database
@@ -296,21 +273,44 @@ pub(crate) fn process_one(
         EnrichmentQueue::new(database.connection_mut()).claim_next()?
     };
     let Some(job) = job else {
-        return Ok(false);
+        return Ok((false, None));
     };
     let generated = processor.generate(&job);
     let mut database = database
         .lock()
         .map_err(|_| EnrichmentError::InvalidStoredJob)?;
     let mut queue = EnrichmentQueue::new(database.connection_mut());
-    match generated {
+    let event = match generated {
         Ok(Some(caption)) => {
-            queue.apply_generated(&job, &caption)?;
+            let changed = queue.apply_generated(&job, &caption)?;
+            Some(crate::contract::EnrichmentUpdatedEvent {
+                capture_id: job.capture_id,
+                status: if changed {
+                    crate::contract::EnrichmentStatus::Completed
+                } else {
+                    crate::contract::EnrichmentStatus::Skipped
+                },
+                caption_changed: changed,
+            })
         }
-        Ok(None) => queue.skip(&job)?,
-        Err(code) => queue.fail(&job, code)?,
-    }
-    Ok(true)
+        Ok(None) => {
+            queue.skip(&job)?;
+            Some(crate::contract::EnrichmentUpdatedEvent {
+                capture_id: job.capture_id,
+                status: crate::contract::EnrichmentStatus::Skipped,
+                caption_changed: false,
+            })
+        }
+        Err(code) => {
+            queue.fail(&job, code)?;
+            (job.attempt_count >= MAX_ATTEMPTS).then_some(crate::contract::EnrichmentUpdatedEvent {
+                capture_id: job.capture_id,
+                status: crate::contract::EnrichmentStatus::Failed,
+                caption_changed: false,
+            })
+        }
+    };
+    Ok((true, event))
 }
 
 pub(crate) fn schedule_after_commit(

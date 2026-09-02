@@ -297,27 +297,7 @@ impl SpeechModelManager {
         &self,
         job: &crate::enrichment::EnrichmentJob,
     ) -> Result<Option<String>, &'static str> {
-        let relative = Path::new(&job.media_relative_path);
-        if relative.is_absolute()
-            || relative
-                .components()
-                .any(|component| !matches!(component, Component::Normal(_)))
-            || !job.media_relative_path.starts_with("media/audio/")
-            || relative.extension().and_then(|value| value.to_str()) != Some("wav")
-        {
-            return Err("INVALID_MEDIA");
-        }
-        let audio = self.app_data_dir.join(relative);
-        let canonical_audio = audio.canonicalize().map_err(|_| "MEDIA_NOT_AVAILABLE")?;
-        let canonical_audio_root = self
-            .app_data_dir
-            .join("media")
-            .join("audio")
-            .canonicalize()
-            .map_err(|_| "MEDIA_NOT_AVAILABLE")?;
-        if !canonical_audio.starts_with(canonical_audio_root) {
-            return Err("INVALID_MEDIA");
-        }
+        let canonical_audio = resolve_audio_path(&self.app_data_dir, &job.media_relative_path)?;
         let engine = self.paths.engine_path();
         let model = self.paths.model_path();
         let engine_dir = engine.parent().ok_or("MODEL_NOT_AVAILABLE")?.to_path_buf();
@@ -377,6 +357,30 @@ impl SpeechModelManager {
         }
         Ok(Some(transcript.to_owned()))
     }
+}
+
+fn resolve_audio_path(app_data_dir: &Path, stored_path: &str) -> Result<PathBuf, &'static str> {
+    let relative = Path::new(stored_path);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        || !stored_path.starts_with("audio/")
+        || relative.extension().and_then(|value| value.to_str()) != Some("wav")
+    {
+        return Err("INVALID_MEDIA");
+    }
+    let audio = app_data_dir.join("media").join(relative);
+    let canonical_audio = audio.canonicalize().map_err(|_| "MEDIA_NOT_AVAILABLE")?;
+    let canonical_audio_root = app_data_dir
+        .join("media")
+        .join("audio")
+        .canonicalize()
+        .map_err(|_| "MEDIA_NOT_AVAILABLE")?;
+    if !canonical_audio.starts_with(canonical_audio_root) {
+        return Err("INVALID_MEDIA");
+    }
+    Ok(canonical_audio)
 }
 
 pub(crate) struct LocalSpeechProcessor {
@@ -861,7 +865,29 @@ mod tests {
     use flate2::{Compression, write::GzEncoder};
     use tempfile::tempdir;
 
-    use super::{ModelError, SpeechPaths, verify_file};
+    use super::{ModelError, SpeechPaths, resolve_audio_path, verify_file};
+
+    #[test]
+    fn stored_audio_paths_resolve_beneath_the_private_media_root() {
+        let directory = tempdir().unwrap();
+        let audio_directory = directory.path().join("media/audio");
+        std::fs::create_dir_all(&audio_directory).unwrap();
+        let audio = audio_directory.join("capture.wav");
+        std::fs::write(&audio, b"wav").unwrap();
+
+        assert_eq!(
+            resolve_audio_path(directory.path(), "audio/capture.wav").unwrap(),
+            audio.canonicalize().unwrap()
+        );
+        assert_eq!(
+            resolve_audio_path(directory.path(), "media/audio/capture.wav"),
+            Err("INVALID_MEDIA")
+        );
+        assert_eq!(
+            resolve_audio_path(directory.path(), "audio/../capture.wav"),
+            Err("INVALID_MEDIA")
+        );
+    }
 
     #[test]
     fn integrity_requires_exact_size_and_sha256() {

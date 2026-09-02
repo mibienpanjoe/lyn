@@ -8,6 +8,7 @@
   import SearchIcon from '@lucide/svelte/icons/search';
   import SettingsIcon from '@lucide/svelte/icons/settings-2';
   import { onDestroy, onMount, tick } from 'svelte';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import logoUrl from '../../src-tauri/icons/lyn-icon.svg?url';
 
   import type {
@@ -15,6 +16,7 @@
     CaptureKind,
     CaptureSummary,
     ContextRef,
+    EnrichmentUpdatedEvent,
     LibraryScope,
   } from '../lib/ipc-types';
   import CaptureDetailPanel from './CaptureDetailPanel.svelte';
@@ -64,6 +66,7 @@
   let detailRequest = 0;
   let searchInput = $state<HTMLInputElement>();
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let unlistenEnrichment: UnlistenFn | null = null;
 
   const projects = $derived(
     contexts.filter((context) => context.kind === 'project'),
@@ -94,9 +97,24 @@
 
   onMount(() => {
     void initialise();
+    void listen<EnrichmentUpdatedEvent>('enrichment://updated', (event) => {
+      void handleEnrichmentUpdate(event.payload);
+    })
+      .then((unlisten) => (unlistenEnrichment = unlisten))
+      .catch(() => {});
   });
 
-  onDestroy(() => clearTimeout(searchTimer));
+  onDestroy(() => {
+    clearTimeout(searchTimer);
+    unlistenEnrichment?.();
+  });
+
+  async function handleEnrichmentUpdate(event: EnrichmentUpdatedEvent) {
+    await loadCaptures(false);
+    if (selectedSummaryId === event.captureId) {
+      selected = await client.getCapture(event.captureId);
+    }
+  }
 
   async function initialise() {
     loading = true;

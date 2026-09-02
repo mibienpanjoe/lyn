@@ -66,6 +66,8 @@ export type MediaMimeType = "image/png" | "audio/wav";
 
 export type EnrichmentStatus = "not_requested" | "pending" | "completed" | "skipped" | "failed";
 
+export type EnrichmentUpdatedEvent = { captureId: CaptureId, status: EnrichmentStatus, captionChanged: boolean, };
+
 export type ContextRef = { id: ContextId, kind: ContextKind, name: string, };
 
 export type SelectedProjectDirectory = { selectedDirectoryToken: DirectorySelectionToken, suggestedName: string, };
