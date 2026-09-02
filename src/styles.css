@@ -662,14 +662,14 @@ kbd {
 
 .settings-form {
   display: grid;
-  padding: 0 var(--space-5) var(--space-6, 24px);
+  padding: 0 var(--space-5);
 }
 
 .settings-section {
   display: grid;
   grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1fr);
   gap: var(--space-5);
-  padding: var(--space-5) 0;
+  padding: var(--space-4) 0;
   border-top: 1px solid var(--color-divider);
 }
 
@@ -698,7 +698,10 @@ kbd {
 
 .provider-order {
   display: grid;
-  gap: var(--space-1);
+  overflow: hidden;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
   padding: 0;
   margin: 0;
   list-style: none;
@@ -711,11 +714,27 @@ kbd {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: 4px 4px 4px var(--space-3);
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-control);
-  background: var(--color-surface);
+  padding: 2px 4px 2px var(--space-2);
+  border-bottom: 1px solid var(--color-divider);
   font-size: 13px;
+}
+
+.provider-order li:last-child {
+  border-bottom: 0;
+}
+
+.provider-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.provider-priority {
+  width: 14px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
 .provider-order-actions {
@@ -733,11 +752,28 @@ kbd {
   border-radius: 5px;
   background: transparent;
   color: var(--color-text-muted);
+  opacity: 0.3;
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out,
+    opacity 120ms ease-out,
+    scale 120ms ease-out;
+}
+
+.provider-order li:hover .provider-order-actions button,
+.provider-order-actions:focus-within button {
+  opacity: 1;
 }
 
 .provider-order-actions button:hover:not(:disabled) {
   background: var(--color-surface-subtle);
   color: var(--color-text);
+}
+
+.provider-order-actions button:active:not(:disabled),
+.secondary-action:active:not(:disabled),
+.settings-actions button:active:not(:disabled) {
+  scale: 0.96;
 }
 
 .provider-order-actions svg,
@@ -756,6 +792,7 @@ kbd {
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-control);
   background: var(--color-surface);
+  width: min(100%, 300px);
 }
 
 .theme-options button {
@@ -776,24 +813,111 @@ kbd {
   display: flex !important;
   grid-template-columns: auto 1fr;
   align-items: center;
-  opacity: 0.72;
+  color: var(--color-text);
 }
 
 .settings-switch input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--color-accent);
+  position: relative;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  appearance: none;
+  border: 1px solid var(--color-input-border);
+  border-radius: 999px;
+  background: var(--color-surface-subtle);
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out;
+}
+
+.settings-switch input::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  content: '';
+  transition:
+    translate 120ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 120ms ease-out;
+}
+
+.settings-switch input:checked {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.settings-switch input:checked::after {
+  translate: 14px 0;
+  background: var(--color-accent);
+}
+
+.settings-switch input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .speech-controls {
   display: grid;
   align-content: start;
   justify-items: start;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  width: 100%;
 }
 
-.speech-controls .model-status {
-  margin: 0;
+.model-row,
+.speech-preference {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.model-identity,
+.speech-preference > div,
+.model-management {
+  display: grid;
+  gap: 2px;
+}
+
+.model-identity strong,
+.speech-preference strong {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.model-identity span,
+.speech-preference span {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.model-management {
+  flex: none;
+  justify-items: end;
+}
+
+.model-status {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.model-status[data-state='installed'] {
+  color: var(--color-accent);
+}
+
+.model-status[data-state='invalid'] {
+  color: var(--color-warning);
+}
+
+.speech-preference {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-divider);
 }
 
 .speech-controls progress {
@@ -808,13 +932,39 @@ kbd {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--color-text);
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out,
+    scale 120ms ease-out;
+}
+
+.secondary-action:hover:not(:disabled) {
+  border-color: var(--color-input-border);
+  background: var(--color-surface-subtle);
+}
+
+.quiet-danger:hover:not(:disabled) {
+  color: var(--color-error);
 }
 
 .settings-actions {
+  position: sticky;
+  z-index: 1;
+  bottom: 0;
   display: flex;
+  min-height: 64px;
+  align-items: center;
   justify-content: flex-end;
+  gap: var(--space-3);
   padding-top: var(--space-4);
+  padding-bottom: var(--space-4);
   border-top: 1px solid var(--color-divider);
+  background: var(--color-canvas);
+}
+
+.settings-change-state {
+  color: var(--color-text-muted);
+  font-size: 11px;
 }
 
 .settings-actions button {
@@ -825,6 +975,13 @@ kbd {
   background: var(--color-accent);
   color: var(--color-on-accent);
   font-weight: 600;
+  transition:
+    opacity 120ms ease-out,
+    scale 120ms ease-out;
+}
+
+.settings-actions button:disabled {
+  opacity: 0.42;
 }
 
 .settings-error,
@@ -1584,9 +1741,21 @@ kbd {
     grid-template-columns: 1fr;
     gap: var(--space-3);
   }
+
+  .model-row {
+    align-items: flex-start;
+  }
 }
 
 @media (max-width: 479px) {
+  .model-row {
+    display: grid;
+  }
+
+  .model-management {
+    justify-items: start;
+  }
+
   .library-toolbar,
   .detail-header {
     min-height: 68px;

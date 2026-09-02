@@ -60,7 +60,12 @@ describe('Settings', () => {
     const shortcut = await screen.findByRole('textbox', {
       name: 'Global shortcut',
     });
+    expect(
+      screen.getByRole('button', { name: 'Save settings' }),
+    ).toBeDisabled();
     await fireEvent.input(shortcut, { target: { value: 'Control+Alt+L' } });
+    expect(screen.getByText('Unsaved changes')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Save settings' })).toBeEnabled();
     await fireEvent.click(
       screen.getByRole('button', { name: 'Move Terminal earlier' }),
     );
@@ -112,11 +117,44 @@ describe('Settings', () => {
   });
 
   it('offers an explicit model install while leaving core capture independent', async () => {
-    render(SettingsPanel, { client: client(), modelClient });
+    const settingsClient = client();
+    render(SettingsPanel, { client: settingsClient, modelClient });
     expect(await screen.findByText('Model not installed')).toBeVisible();
+    expect(screen.getByText('Multilingual base')).toBeVisible();
+    expect(screen.getByText('Approximately 150 MB')).toBeVisible();
+    expect(
+      screen.getByText(
+        'Generate searchable captions for voice captures entirely on this device.',
+      ),
+    ).toBeVisible();
     expect(screen.getByRole('button', { name: 'Install model' })).toBeEnabled();
     expect(
       screen.queryByRole('checkbox', { name: 'Automatic local transcription' }),
     ).not.toBeInTheDocument();
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Install model' }),
+    );
+    expect(settingsClient.update).not.toHaveBeenCalled();
+  });
+
+  it('exposes transcription as a saved preference only after installation', async () => {
+    const installedModel: SpeechModelClient = {
+      ...modelClient,
+      status: vi.fn().mockResolvedValue({
+        state: 'installed',
+        modelId: 'whisper-base-multilingual-v1',
+        label: 'Multilingual base',
+        downloadedBytes: null,
+        totalBytes: null,
+        errorCode: null,
+      }),
+    };
+    render(SettingsPanel, { client: client(), modelClient: installedModel });
+    const toggle = await screen.findByRole('checkbox', {
+      name: 'Automatic transcription',
+    });
+    await fireEvent.click(toggle);
+    expect(screen.getByText('Unsaved changes')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Save settings' })).toBeEnabled();
   });
 });

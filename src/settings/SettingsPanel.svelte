@@ -41,6 +41,16 @@
     shell: 'Terminal',
     foreground_window: 'Foreground window',
   };
+  const dirty = $derived(
+    saved !== null &&
+      draft !== null &&
+      (saved.globalShortcut !== draft.globalShortcut ||
+        saved.theme !== draft.theme ||
+        saved.localSpeechEnabled !== draft.localSpeechEnabled ||
+        saved.providerTieBreakOrder.some(
+          (provider, index) => provider !== draft?.providerTieBreakOrder[index],
+        )),
+  );
 
   onMount(() => {
     void load();
@@ -127,7 +137,7 @@
   }
 
   async function save() {
-    if (!draft || saving) return;
+    if (!draft || saving || !dirty) return;
     saving = true;
     error = null;
     savedNotice = false;
@@ -203,7 +213,11 @@
         <ol class="provider-order">
           {#each draft.providerTieBreakOrder as provider, index (provider)}
             <li>
-              <span>{providerNames[provider]}</span>
+              <span class="provider-name"
+                ><span class="provider-priority" aria-hidden="true"
+                  >{index + 1}</span
+                >{providerNames[provider]}</span
+              >
               <span class="provider-order-actions">
                 <button
                   type="button"
@@ -247,58 +261,85 @@
         <div>
           <h2 id="speech-title">Local speech</h2>
           <p>
-            Optional, offline transcription for uncapped voice captures.
-            Download size: about 150 MB.
+            Generate searchable captions for voice captures entirely on this
+            device.
           </p>
         </div>
         <div class="speech-controls">
-          <p class="model-status" aria-live="polite">
-            {#if model?.state === 'downloading'}
-              Downloading… {model.totalBytes && model.downloadedBytes
-                ? Math.round((model.downloadedBytes / model.totalBytes) * 100)
-                : 0}%
-            {:else if model?.state === 'installed'}Model installed
-            {:else if model?.state === 'invalid'}Installation needs repair
-            {:else}Model not installed{/if}
-          </p>
+          <div class="model-row">
+            <div class="model-identity">
+              <strong>{model?.label ?? 'Multilingual base'}</strong>
+              <span>Approximately 150 MB</span>
+            </div>
+            <div class="model-management">
+              <span
+                class="model-status"
+                data-state={model?.state ?? 'loading'}
+                aria-live="polite"
+              >
+                {#if !model}Loading model…
+                {:else if model.state === 'downloading'}
+                  Downloading {model.totalBytes && model.downloadedBytes
+                    ? Math.round(
+                        (model.downloadedBytes / model.totalBytes) * 100,
+                      )
+                    : 0}%
+                {:else if model.state === 'installed'}Installed
+                {:else if model.state === 'invalid'}Needs repair
+                {:else}Model not installed{/if}
+              </span>
+              {#if model?.state === 'downloading'}
+                <button
+                  type="button"
+                  class="secondary-action"
+                  disabled={modelBusy}
+                  onclick={() => changeModel('cancel')}>Cancel download</button
+                >
+              {:else if model?.state === 'installed'}
+                <button
+                  type="button"
+                  class="secondary-action quiet-danger"
+                  disabled={modelBusy}
+                  onclick={() => changeModel('remove')}>Remove model</button
+                >
+              {:else if model}
+                <button
+                  type="button"
+                  class="secondary-action"
+                  disabled={modelBusy}
+                  onclick={() => changeModel('install')}
+                  >{modelBusy ? 'Starting…' : 'Install model'}</button
+                >
+              {/if}
+            </div>
+          </div>
           {#if model?.state === 'downloading'}
             <progress
               value={model.downloadedBytes ?? 0}
-              max={model.totalBytes ?? 1}>Download progress</progress
-            >
-            <button
-              type="button"
-              class="secondary-action"
-              disabled={modelBusy}
-              onclick={() => changeModel('cancel')}>Cancel download</button
+              max={model.totalBytes ?? 1}
+              aria-label="Model download progress">Download progress</progress
             >
           {:else if model?.state === 'installed'}
-            <label class="settings-switch">
-              <input
-                type="checkbox"
-                checked={draft.localSpeechEnabled}
-                onchange={(event) =>
-                  (draft = {
-                    ...draft!,
-                    localSpeechEnabled: event.currentTarget.checked,
-                  })}
-              />
-              <span>Automatic local transcription</span>
-            </label>
-            <button
-              type="button"
-              class="secondary-action"
-              disabled={modelBusy}
-              onclick={() => changeModel('remove')}>Remove model</button
-            >
-          {:else}
-            <button
-              type="button"
-              class="secondary-action"
-              disabled={modelBusy}
-              onclick={() => changeModel('install')}
-              >{modelBusy ? 'Starting…' : 'Install model'}</button
-            >
+            <div class="speech-preference">
+              <div>
+                <strong>Automatic transcription</strong>
+                <span>Generate a caption after saving each voice capture.</span>
+              </div>
+              <label class="settings-switch">
+                <input
+                  type="checkbox"
+                  aria-label="Automatic transcription"
+                  checked={draft.localSpeechEnabled}
+                  onchange={(event) => {
+                    draft = {
+                      ...draft!,
+                      localSpeechEnabled: event.currentTarget.checked,
+                    };
+                    savedNotice = false;
+                  }}
+                />
+              </label>
+            </div>
           {/if}
         </div>
       </section>
@@ -310,7 +351,10 @@
         </p>
       {/if}
       <div class="settings-actions">
-        <button type="button" disabled={saving} onclick={save}
+        <span class="settings-change-state" aria-live="polite">
+          {dirty ? 'Unsaved changes' : ''}
+        </span>
+        <button type="button" disabled={saving || !dirty} onclick={save}
           >{saving ? 'Saving…' : 'Save settings'}</button
         >
       </div>
