@@ -1268,6 +1268,10 @@ kbd {
   border-color: currentcolor;
 }
 
+.library-detail > .detail-error {
+  margin: 0 var(--space-5) var(--space-3);
+}
+
 .stream-scroll-region,
 .library-detail {
   overflow-y: auto;

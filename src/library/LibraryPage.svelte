@@ -66,6 +66,7 @@
   let detailRequest = 0;
   let searchInput = $state<HTMLInputElement>();
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let playbackTimer: ReturnType<typeof setTimeout> | undefined;
   let unlistenEnrichment: UnlistenFn | null = null;
 
   const projects = $derived(
@@ -106,8 +107,14 @@
 
   onDestroy(() => {
     clearTimeout(searchTimer);
+    clearTimeout(playbackTimer);
     unlistenEnrichment?.();
   });
+
+  function clearPlaybackTimer() {
+    clearTimeout(playbackTimer);
+    playbackTimer = undefined;
+  }
 
   async function handleEnrichmentUpdate(event: EnrichmentUpdatedEvent) {
     await loadCaptures(false);
@@ -316,6 +323,8 @@
 
   async function closeDetail() {
     const returnId = selectedSummaryId;
+    clearPlaybackTimer();
+    playingMediaId = null;
     selected = null;
     selectedSummaryId = null;
     await tick();
@@ -327,15 +336,23 @@
     if (!media || mediaBusy) return;
     mediaBusy = true;
     error = null;
+    clearPlaybackTimer();
     try {
       if (playingMediaId === media.mediaId) {
         await client.stopPlayback(media.mediaId);
         playingMediaId = null;
       } else {
-        await client.playMedia(media.mediaId);
+        const result = await client.playMedia(media.mediaId);
         playingMediaId = media.mediaId;
+        const durationMs = result.durationMs ?? media.durationMs;
+        if (durationMs != null && durationMs > 0) {
+          playbackTimer = setTimeout(() => {
+            if (playingMediaId === media.mediaId) playingMediaId = null;
+          }, durationMs + 250);
+        }
       }
     } catch (caught) {
+      playingMediaId = null;
       error = errorMessage(caught, 'The voice note could not be played.');
     } finally {
       mediaBusy = false;
@@ -548,6 +565,11 @@
       </aside>
     {:else if selected}
       <aside class="library-detail">
+        {#if error}
+          <div class="library-error detail-error" role="alert">
+            <span>{error}</span>
+          </div>
+        {/if}
         <CaptureDetailPanel
           capture={selected}
           compact={true}

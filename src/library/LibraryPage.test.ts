@@ -10,7 +10,10 @@ import type {
   SearchResultItem,
 } from '../lib/ipc-types';
 import LibraryPage from './LibraryPage.svelte';
-import type { LibraryClient } from './library-client';
+import {
+  LibraryCommandError,
+  type LibraryClient,
+} from './library-client';
 import type { SettingsClient } from '../settings/settings-client';
 
 const project: ContextRef = { id: 'project-1', kind: 'project', name: 'Lyn' };
@@ -52,6 +55,26 @@ const imageCapture: CaptureSummary = {
   },
 };
 
+const audioCapture: CaptureSummary = {
+  id: 'capture-audio',
+  kind: 'audio',
+  context: project,
+  branchName: 'main',
+  capturedAt: '2026-09-04T21:48:00Z',
+  textExcerpt: null,
+  caption: "Et l'autre, on se rend à revoir",
+  captionSource: 'model',
+  media: {
+    mediaId: 'media-audio',
+    kind: 'audio',
+    previewUri: 'lyn-media://capture/media-audio',
+    durationMs: 16000,
+    widthPx: null,
+    heightPx: null,
+    available: true,
+  },
+};
+
 function detail(capture: CaptureSummary): CaptureDetail {
   return {
     ...capture,
@@ -78,7 +101,13 @@ function createClient(overrides: Partial<LibraryClient> = {}): LibraryClient {
       .fn()
       .mockImplementation((id) =>
         Promise.resolve(
-          detail(id === textCapture.id ? textCapture : imageCapture),
+          detail(
+            id === textCapture.id
+              ? textCapture
+              : id === audioCapture.id
+                ? audioCapture
+                : imageCapture,
+          ),
         ),
       ),
     playMedia: vi.fn().mockResolvedValue({ playing: true, durationMs: 1000 }),
@@ -400,5 +429,39 @@ describe('responsive Library', () => {
 
     expect(screen.getByText('beta')).toBeVisible();
     expect(screen.queryByText('stale alpha')).not.toBeInTheDocument();
+  });
+
+  it('surfaces voice playback failures inside the open detail pane', async () => {
+    const playMedia = vi.fn().mockRejectedValue(
+      new LibraryCommandError({
+        code: 'AUDIO_PLAYBACK_FAILED',
+        message: 'The audio could not be played',
+        retryable: true,
+        details: {},
+      }),
+    );
+    const client = createClient({
+      listCaptures: vi.fn().mockResolvedValue({
+        items: [audioCapture],
+        nextCursor: null,
+      }),
+      playMedia,
+    });
+    const { container } = render(LibraryPage, { client });
+
+    await fireEvent.click(
+      await screen.findByRole('button', { name: /audio capture in Lyn/i }),
+    );
+    const play = await screen.findByRole('button', { name: 'Play voice note' });
+    await fireEvent.click(play);
+    await waitFor(() => expect(playMedia).toHaveBeenCalledWith('media-audio'));
+    await waitFor(() =>
+      expect(container.querySelector('.library-error')).toHaveTextContent(
+        'The audio could not be played',
+      ),
+    );
+    expect(
+      screen.getByRole('button', { name: 'Play voice note' }),
+    ).toBeVisible();
   });
 });

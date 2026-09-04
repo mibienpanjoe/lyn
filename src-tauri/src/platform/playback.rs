@@ -12,8 +12,9 @@ pub(crate) trait AudioPlaybackPlatform {
 }
 
 struct ActivePlayback {
-    _output: rodio::MixerDeviceSink,
+    // Drop player before the device sink so teardown does not cut the mixer first.
     player: rodio::Player,
+    _output: rodio::MixerDeviceSink,
     target_id: String,
 }
 
@@ -27,13 +28,14 @@ impl AudioPlaybackPlatform for NativeAudioPlaybackPlatform {
         if let Some(active) = self.active.take() {
             active.player.stop();
         }
-        let output = rodio::DeviceSinkBuilder::open_default_sink()
+        let mut output = rodio::DeviceSinkBuilder::open_default_sink()
             .map_err(|_| AudioPlaybackError::Unavailable)?;
+        output.log_on_drop(false);
         let player = rodio::play(output.mixer(), Cursor::new(bytes))
             .map_err(|_| AudioPlaybackError::Unavailable)?;
         self.active = Some(ActivePlayback {
-            _output: output,
             player,
+            _output: output,
             target_id: target_id.to_owned(),
         });
         Ok(())
