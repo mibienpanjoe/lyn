@@ -213,6 +213,27 @@ describe('Settings', () => {
     expect(settingsClient.update).not.toHaveBeenCalled();
   });
 
+  it('shows a safe retry state when model installation fails', async () => {
+    const failedModel: SpeechModelClient = {
+      ...modelClient,
+      status: vi.fn().mockResolvedValue({
+        state: 'not_installed',
+        modelId: 'whisper-base-multilingual-v1',
+        label: 'Multilingual base',
+        downloadedBytes: null,
+        totalBytes: null,
+        errorCode: 'MODEL_DOWNLOAD_FAILED',
+      }),
+    };
+
+    render(SettingsPanel, { client: client(), modelClient: failedModel });
+
+    expect(await screen.findByText('Installation failed')).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: 'Retry installation' }),
+    ).toBeEnabled();
+  });
+
   it('exposes transcription as a saved preference only after installation', async () => {
     const installedModel: SpeechModelClient = {
       ...modelClient,

@@ -369,7 +369,13 @@
             <div class="model-management">
               <span
                 class="model-status"
-                data-state={model?.state ?? 'loading'}
+                data-state={model?.state === 'downloading'
+                  ? 'downloading'
+                  : model?.state === 'installed'
+                    ? 'installed'
+                    : model?.errorCode
+                      ? 'failed'
+                      : (model?.state ?? 'loading')}
                 aria-live="polite"
               >
                 {#if !model}Loading model…
@@ -380,6 +386,8 @@
                       )
                     : 0}%
                 {:else if model.state === 'installed'}Installed
+                {:else if model.errorCode === 'MODEL_DOWNLOAD_FAILED'}Installation
+                  failed
                 {:else if model.state === 'invalid'}Needs repair
                 {:else}Model not installed{/if}
               </span>
@@ -403,7 +411,11 @@
                   class="secondary-action"
                   disabled={modelBusy}
                   onclick={() => changeModel('install')}
-                  >{modelBusy ? 'Starting…' : 'Install model'}</button
+                  >{modelBusy
+                    ? 'Starting…'
+                    : model.errorCode === 'MODEL_DOWNLOAD_FAILED'
+                      ? 'Retry installation'
+                      : 'Install model'}</button
                 >
               {/if}
             </div>

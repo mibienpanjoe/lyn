@@ -1005,7 +1005,8 @@ kbd {
   color: var(--color-accent);
 }
 
-.model-status[data-state='invalid'] {
+.model-status[data-state='invalid'],
+.model-status[data-state='failed'] {
   color: var(--color-warning);
 }
 
