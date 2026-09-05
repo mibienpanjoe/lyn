@@ -23,6 +23,7 @@ Use Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, and the documented Tauri system pre
 - `pnpm icons` — regenerate platform icons from the tracked SVG master.
 - `cargo fmt --check --manifest-path src-tauri/Cargo.toml` — check Rust formatting.
 - `cargo test --manifest-path src-tauri/Cargo.toml` — run Rust tests.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib perf:: -- --nocapture` — measure provisional latency budgets (text save, 10k search, media reconcile).
 - `pnpm build` — build frontend assets.
 - `pnpm tauri dev` — open the desktop development shell.
 - `pnpm tauri build --no-bundle` — compile the production binary without packaging.
