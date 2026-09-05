@@ -4,6 +4,7 @@ __pycache__/
 dist/
 target/
 src-tauri/target/
+.playwright-mcp/
 
 *.log
 .env

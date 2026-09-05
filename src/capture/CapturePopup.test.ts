@@ -733,6 +733,9 @@ describe('quick-capture popup', () => {
       ),
     );
     expect(draft).toHaveValue('Draft stays');
+    expect(container.textContent).not.toContain('source-1');
+    expect(container.textContent).not.toContain('/home/');
+    expect(container.innerHTML).not.toMatch(/correlation|pid=|process id/i);
     expect((await axe.run(container)).violations).toEqual([]);
   });
 
