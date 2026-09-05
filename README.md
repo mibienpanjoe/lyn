@@ -84,4 +84,6 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 ## License
 
-A repository license file is not published yet; treat the project as source-available for local development until the first release records an SPDX license.
+SPDX: [MIT](LICENSE)
+
+Optional local speech downloads (whisper.cpp / Whisper `base`) are also MIT-licensed upstream; release notes must retain their attribution when those components are documented.

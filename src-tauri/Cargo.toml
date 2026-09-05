@@ -3,6 +3,7 @@ name = "lyn"
 version = "0.1.0"
 description = "A local-first desktop working-memory companion"
 authors = ["Lyn contributors"]
+license = "MIT"
 edition = "2024"
 default-run = "lyn"
 
