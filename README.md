@@ -27,11 +27,30 @@ Traditional note apps interrupt flow: open a notebook, name a page, pick a folde
 - **Context-aware:** optional VS Code, Kitty, and shell providers bind to the pre-popup window; you can always choose manually.
 - **Save first:** enrichment (optional local speech captions) never blocks a successful save.
 
-## Download / run
+## Download / install
 
-**Supported baseline today:** Pop!_OS 22.04 LTS (Ubuntu-compatible, x86_64, X11), Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, plus [Tauri 2 Linux prerequisites](https://v2.tauri.app/start/prerequisites/).
+Installers are published on **[GitHub Releases](https://github.com/mibienpanjoe/lyn/releases)** (manual download; no in-app auto-updater).
 
-macOS, Windows, Wayland, and signed installers are **not** claimed yet. Packaging remains disabled until the distribution gate (G3) is accepted.
+| Artifact | Platform | Notes |
+|---|---|---|
+| `.deb` | Linux (Debian/Ubuntu-family, x86_64) | Preferred on Pop!_OS / Ubuntu |
+| `.tar.gz` | Linux x86_64 | Portable binary + LICENSE + README |
+| `.exe` (NSIS) | Windows x86_64 | **Experimental** until owner smoke-tested |
+
+**Signing:** v1 artifacts are **unsigned**. Windows may show SmartScreen / “unknown publisher”; that is expected until Authenticode is added later.
+
+### Support matrix
+
+| Target | Status |
+|---|---|
+| Pop!_OS 22.04 LTS / Ubuntu-compatible, x86_64, **X11** | Verified baseline (dev); package install pending owner smoke |
+| Windows x86_64 | Expansion — buildable; claim support only after `.exe` smoke |
+| macOS | Deferred |
+| Wayland | Deferred |
+
+Toolchain for from-source builds: Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, plus [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for the host OS.
+
+### From source (development)
 
 ```bash
 git clone https://github.com/mibienpanjoe/lyn.git
@@ -42,12 +61,24 @@ pnpm tauri dev
 
 Default shortcut: `Ctrl+Shift+Space` opens quick capture. The Library window is the main shell.
 
+### Build release packages
+
+```bash
+# Linux host → .deb under src-tauri/target/release/bundle/deb/
+#            → .tar.gz under dist-packages/
+pnpm package:linux
+
+# Windows host → NSIS .exe under src-tauri/target/release/bundle/nsis/
+pnpm package:windows
+```
+
+Upload those assets to a GitHub Release, or push a `v*` tag / run the **release** workflow so CI builds Linux + Windows and attaches them automatically.
+
 Other useful commands (full list in [AGENTS.md](AGENTS.md)):
 
 ```bash
 pnpm test
 cargo test --manifest-path src-tauri/Cargo.toml
-pnpm tauri build --no-bundle   # production binary without installer packaging
 ```
 
 ## Features

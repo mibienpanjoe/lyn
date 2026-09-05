@@ -2,6 +2,7 @@ node_modules/
 __pycache__/
 *.pyc
 dist/
+dist-packages/
 target/
 src-tauri/target/
 .playwright-mcp/

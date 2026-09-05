@@ -19,6 +19,8 @@
     "provider:terminal:test": "cargo test --manifest-path src-tauri/Cargo.toml context::shell_provider && bash integrations/shell/provider-tests.sh && python3 -m unittest discover -s integrations/kitty -p 'test_*.py'",
     "provider:terminal:build": "cargo build --manifest-path src-tauri/Cargo.toml --bin lyn-context",
     "icons": "tauri icon src-tauri/icons/lyn-icon.svg",
+    "package:linux": "pnpm tauri build --bundles deb && bash scripts/package-linux-tarball.sh",
+    "package:windows": "pnpm tauri build --bundles nsis",
     "tauri": "tauri"
   },
   "devDependencies": {

@@ -1,0 +1,88 @@
+# Build unsigned .deb (Linux), NSIS .exe (Windows), and Linux tarball; upload to GitHub Releases.
+# Trigger: version tag (v*) or manual "Run workflow".
+# Official pattern: https://v2.tauri.app/distribute/pipelines/github/
+
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: '--bundles deb'
+          - platform: windows-latest
+            args: '--bundles nsis'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.12.0
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and upload Tauri bundles
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'Lyn v__VERSION__'
+          releaseBody: |
+            Unsigned v1 artifacts (GitHub Releases only — no in-app updater).
+
+            - **Linux:** `.deb` (preferred on Pop!_OS/Ubuntu) and `.tar.gz` portable binary
+            - **Windows:** NSIS `.exe` (experimental; SmartScreen may warn)
+
+            Optional local speech (whisper.cpp / Whisper base) remains MIT-licensed upstream and is installed from Settings, not bundled here.
+          releaseDraft: false
+          prerelease: true
+          args: ${{ matrix.args }}
+
+      - name: Package Linux tarball
+        if: matrix.platform == 'ubuntu-22.04'
+        run: bash scripts/package-linux-tarball.sh
+
+      - name: Upload Linux tarball to release
+        if: matrix.platform == 'ubuntu-22.04'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')"
+          gh release upload "v${VERSION}" dist-packages/*.tar.gz --clobber

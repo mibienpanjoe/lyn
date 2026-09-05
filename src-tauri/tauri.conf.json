@@ -37,6 +37,33 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "createUpdaterArtifacts": false,
+    "targets": ["deb", "nsis"],
+    "category": "Utility",
+    "shortDescription": "Local-first desktop working-memory companion",
+    "longDescription": "Lyn captures titleless text notes, screenshots, and voice notes with project context and keeps them in a local Library with search. Core capture does not require accounts or cloud services.",
+    "copyright": "Copyright (c) 2026 mibienpanjoe",
+    "licenseFile": "../LICENSE",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/share/doc/lyn/LICENSE": "../LICENSE",
+          "/usr/share/doc/lyn/README.md": "../README.md"
+        }
+      }
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

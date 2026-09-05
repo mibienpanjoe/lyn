@@ -25,6 +25,9 @@ Use Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, and the documented Tauri system pre
 - `cargo test --manifest-path src-tauri/Cargo.toml` — run Rust tests.
 - `cargo test --manifest-path src-tauri/Cargo.toml --lib perf:: -- --nocapture` — measure provisional latency budgets (text save, 10k search, media reconcile).
 - `pnpm build` — build frontend assets.
+- `pnpm package:linux` — build unsigned Linux `.deb` plus portable `.tar.gz` (host must be Linux).
+- `pnpm package:windows` — build unsigned Windows NSIS `.exe` (host must be Windows).
+- Prefer CI: push a `v*` tag or run `.github/workflows/release.yml` so GitHub Actions builds Linux and Windows artifacts onto a prerelease.
 - `pnpm tauri dev` — open the desktop development shell.
 - `pnpm tauri build --no-bundle` — compile the production binary without packaging.
 
@@ -33,7 +36,7 @@ For documentation changes, also run:
 - `git diff --check` — detect whitespace errors.
 - `rg -n "FR-|INV-|ERR-" docs/` — inspect cross-document identifiers.
 
-Packaging remains disabled until distribution requirements are accepted and verified. Add new exact commands here and to `README.md` in the same change.
+Packaging targets are `.deb`, Linux binary tarball, and Windows NSIS `.exe`. Artifacts are unsigned for v1 and distributed via GitHub Releases only (no in-app updater). macOS and Wayland remain deferred. Add new exact commands here and to `README.md` in the same change.
 
 ## Coding Style & Naming Conventions
 
