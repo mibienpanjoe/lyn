@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-captures"
+description = "Enables the list_captures command without any pre-configured scope."
+commands.allow = ["list_captures"]
+
+[[permission]]
+identifier = "deny-list-captures"
+description = "Denies the list_captures command without any pre-configured scope."
+commands.deny = ["list_captures"]

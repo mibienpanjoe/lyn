@@ -1,7 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "Minimal core capability for the Lyn application window",
+  "description": "Library window: chronology, search, settings, and optional speech model commands. No capture-session mutation surface.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:event:default",
+    "library-commands"
+  ]
 }

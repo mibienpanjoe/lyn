@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "capture",
+  "description": "Quick-capture window: session, context selection, media staging, and popup chrome only.",
+  "windows": ["capture"],
+  "permissions": [
+    "core:event:default",
+    "capture-commands"
+  ]
+}

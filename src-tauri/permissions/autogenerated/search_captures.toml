@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-search-captures"
+description = "Enables the search_captures command without any pre-configured scope."
+commands.allow = ["search_captures"]
+
+[[permission]]
+identifier = "deny-search-captures"
+description = "Denies the search_captures command without any pre-configured scope."
+commands.deny = ["search_captures"]

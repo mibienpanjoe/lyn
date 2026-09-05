@@ -385,10 +385,14 @@ mod tests {
     struct FakePlayback {
         target: Option<String>,
         bytes: Vec<u8>,
+        fail: bool,
     }
 
     impl AudioPlaybackPlatform for FakePlayback {
         fn play_wav(&mut self, target_id: &str, bytes: Vec<u8>) -> Result<(), AudioPlaybackError> {
+            if self.fail {
+                return Err(AudioPlaybackError::Unavailable);
+            }
             self.target = Some(target_id.to_owned());
             self.bytes = bytes;
             Ok(())
@@ -491,5 +495,37 @@ mod tests {
         assert!(matches!(open_result, CommandResult::Success { .. }));
         assert_eq!(playback.lock().unwrap().bytes, b"wav bytes");
         assert!(opened.path.lock().unwrap().as_ref().unwrap().is_file());
+    }
+
+    #[test]
+    fn committed_playback_failure_keeps_media_and_reports_audio_playback_failed() {
+        let (database, media, media_id) = media_fixture();
+        let playback = Mutex::new(FakePlayback {
+            fail: true,
+            ..FakePlayback::default()
+        });
+        let input = serde_json::json!({"mediaId": media_id});
+
+        let played = play_media_value(input, &database, &media, &playback);
+
+        let CommandResult::Failure { error, .. } = played else {
+            panic!("failing committed playback succeeded")
+        };
+        assert_eq!(error.code, ErrorCode::AudioPlaybackFailed);
+        assert!(!error.message.contains('/'));
+        let still_listed = list_captures_value(
+            serde_json::json!({
+                "scope":{"kind":"all"},
+                "branchName":null,
+                "captureKinds":[],
+                "capturedFrom":null,
+                "capturedTo":null,
+                "cursor":null,
+                "limit":50
+            }),
+            &database,
+            &media,
+        );
+        assert!(matches!(still_listed, CommandResult::Success { .. }));
     }
 }

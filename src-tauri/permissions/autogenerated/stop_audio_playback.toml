@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stop-audio-playback"
+description = "Enables the stop_audio_playback command without any pre-configured scope."
+commands.allow = ["stop_audio_playback"]
+
+[[permission]]
+identifier = "deny-stop-audio-playback"
+description = "Denies the stop_audio_playback command without any pre-configured scope."
+commands.deny = ["stop_audio_playback"]

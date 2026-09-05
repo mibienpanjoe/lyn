@@ -1,0 +1,21 @@
+[[set]]
+identifier = "library-commands"
+description = """
+Commands available to the Library window: chronology, search, committed media
+playback/open, settings, and optional local speech model lifecycle.
+"""
+permissions = [
+  "allow-list-contexts",
+  "allow-list-captures",
+  "allow-get-capture",
+  "allow-search-captures",
+  "allow-play-media",
+  "allow-open-media-external",
+  "allow-stop-audio-playback",
+  "allow-get-settings",
+  "allow-update-settings",
+  "allow-get-speech-model-status",
+  "allow-install-speech-model",
+  "allow-cancel-speech-model-install",
+  "allow-remove-speech-model",
+]

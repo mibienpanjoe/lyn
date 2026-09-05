@@ -1,0 +1,27 @@
+[[set]]
+identifier = "capture-commands"
+description = """
+Commands available to the quick-capture window: session lifecycle, context
+selection, text/image/voice capture, and popup chrome. No Library chronology,
+settings mutation beyond capture needs, or speech-model install surface.
+"""
+permissions = [
+  "allow-get-active-capture-session",
+  "allow-cancel-capture-session",
+  "allow-list-capture-context-sources",
+  "allow-select-capture-context-source",
+  "allow-save-text-capture",
+  "allow-stage-clipboard-image",
+  "allow-discard-staged-media",
+  "allow-save-image-capture",
+  "allow-start-audio-recording",
+  "allow-stop-audio-recording",
+  "allow-play-staged-audio",
+  "allow-stop-audio-playback",
+  "allow-save-audio-capture",
+  "allow-pick-project-directory",
+  "allow-create-context",
+  "allow-list-contexts",
+  "allow-dismiss-capture-popup",
+  "allow-set-capture-popup-layout",
+]

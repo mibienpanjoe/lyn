@@ -474,7 +474,7 @@ fn save_image_capture_value(
                 capture_id,
                 crate::contract::MediaKind::Image,
             )
-            .map_err(|_| media_stage_error())?;
+            .map_err(|_| media_finalize_error())?;
         let dimensions = session
             .staged_media
             .as_ref()
@@ -1000,7 +1000,7 @@ fn save_text_capture_with_registry_value(
 }
 
 #[cfg(test)]
-fn save_text_capture_value(
+pub(crate) fn save_text_capture_value(
     input: serde_json::Value,
     database: &Mutex<Database>,
     service: &Mutex<CaptureSessionService>,
@@ -1293,10 +1293,14 @@ mod tests {
     struct FakePlayback {
         active_target: Option<String>,
         played_bytes: usize,
+        fail: bool,
     }
 
     impl AudioPlaybackPlatform for FakePlayback {
         fn play_wav(&mut self, target_id: &str, bytes: Vec<u8>) -> Result<(), AudioPlaybackError> {
+            if self.fail {
+                return Err(AudioPlaybackError::Unavailable);
+            }
             self.active_target = Some(target_id.to_owned());
             self.played_bytes = bytes.len();
             Ok(())
@@ -2361,5 +2365,233 @@ mod tests {
             .query_row("SELECT count(*) FROM captures", [], |row| row.get(0))
             .unwrap();
         assert_eq!(capture_count, 0);
+    }
+
+    #[test]
+    fn recording_stream_failure_keeps_the_session_idle_for_retry() {
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        let audio_input = Mutex::new(FakeAudioInput {
+            start_result: Err(AudioInputError::RecordingFailed),
+            stop_result: Err(AudioInputError::NotRecording),
+        });
+
+        let result = start_audio_recording_value(
+            json!({ "sessionId": session.session_id, "inputDeviceId": null }),
+            &service,
+            &audio_input,
+        );
+
+        let CommandResult::Failure { error, .. } = result else {
+            panic!("recording failure succeeded")
+        };
+        assert_eq!(error.code, ErrorCode::AudioRecordingFailed);
+        assert!(!error.message.contains('/'));
+        assert_eq!(
+            service
+                .lock()
+                .unwrap()
+                .active_session()
+                .unwrap()
+                .recording_state,
+            RecordingState::Idle
+        );
+    }
+
+    #[test]
+    fn stop_recording_stream_failure_resets_recording_without_staging() {
+        let directory = tempdir().unwrap();
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        let media = Mutex::new(MediaStore::open(directory.path()).unwrap());
+        let audio_input = Mutex::new(FakeAudioInput {
+            start_result: Ok(()),
+            stop_result: Err(AudioInputError::RecordingFailed),
+        });
+
+        let started = start_audio_recording_value(
+            json!({ "sessionId": session.session_id, "inputDeviceId": null }),
+            &service,
+            &audio_input,
+        );
+        let stopped = stop_audio_recording_value(
+            json!({ "sessionId": session.session_id }),
+            &service,
+            &media,
+            &audio_input,
+        );
+
+        assert!(matches!(started, CommandResult::Success { .. }));
+        let CommandResult::Failure { error, .. } = stopped else {
+            panic!("stop failure succeeded")
+        };
+        assert_eq!(error.code, ErrorCode::AudioRecordingFailed);
+        assert_eq!(
+            service
+                .lock()
+                .unwrap()
+                .active_session()
+                .unwrap()
+                .recording_state,
+            RecordingState::Idle
+        );
+        assert!(
+            service
+                .lock()
+                .unwrap()
+                .active_session()
+                .unwrap()
+                .staged_media
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn staged_playback_failure_keeps_media_and_reports_audio_playback_failed() {
+        let directory = tempdir().unwrap();
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        let mut media = MediaStore::open(directory.path()).unwrap();
+        let staged = media
+            .stage_audio_wav(session.session_id, b"wav bytes", 125)
+            .unwrap();
+        service
+            .lock()
+            .unwrap()
+            .set_staged_media(session.session_id, staged.clone())
+            .unwrap();
+        let media = Mutex::new(media);
+        let playback = Mutex::new(FakePlayback {
+            fail: true,
+            ..FakePlayback::default()
+        });
+
+        let played = play_staged_audio_value(
+            json!({
+                "sessionId": session.session_id,
+                "stagedMediaId": staged.staged_media_id
+            }),
+            &service,
+            &media,
+            &playback,
+        );
+
+        let CommandResult::Failure { error, .. } = played else {
+            panic!("failing playback succeeded")
+        };
+        assert_eq!(error.code, ErrorCode::AudioPlaybackFailed);
+        assert_eq!(
+            service
+                .lock()
+                .unwrap()
+                .active_session()
+                .unwrap()
+                .staged_media
+                .as_ref()
+                .map(|media| media.staged_media_id),
+            Some(staged.staged_media_id)
+        );
+    }
+
+    #[test]
+    fn ambiguous_context_blocks_save_and_preserves_the_draft_session() {
+        let database = Mutex::new(Database::open_in_memory().unwrap());
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        service
+            .lock()
+            .unwrap()
+            .set_context_resolution(
+                session.session_id,
+                ContextResolution::Ambiguous {
+                    candidate: (),
+                    selection: (),
+                },
+            )
+            .unwrap();
+
+        let failed = save_text_capture_value(
+            serde_json::to_value(SaveTextCaptureInput {
+                session_id: session.session_id,
+                text_body: "draft that must remain".to_owned(),
+            })
+            .unwrap(),
+            &database,
+            &service,
+        );
+
+        let CommandResult::Failure { error, .. } = failed else {
+            panic!("ambiguous context saved")
+        };
+        assert_eq!(error.code, ErrorCode::ContextAmbiguous);
+        let after = service.lock().unwrap().active_session().unwrap();
+        assert_eq!(after.session_id, session.session_id);
+        assert!(matches!(
+            after.context_resolution,
+            ContextResolution::Ambiguous { .. }
+        ));
+        let capture_count: i64 = database
+            .lock()
+            .unwrap()
+            .connection()
+            .query_row("SELECT count(*) FROM captures", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(capture_count, 0);
+    }
+
+    #[test]
+    fn image_finalize_kind_mismatch_reports_media_finalize_failed() {
+        let directory = tempdir().unwrap();
+        let database = Database::open_in_memory().unwrap();
+        let context = ContextRepository::new(database.connection())
+            .create_standalone("Screenshots")
+            .unwrap();
+        let service = Mutex::new(CaptureSessionService::default());
+        let session = service.lock().unwrap().get_or_prepare();
+        service
+            .lock()
+            .unwrap()
+            .set_context_resolution(
+                session.session_id,
+                ContextResolution::Resolved {
+                    candidate: ContextCandidate {
+                        context,
+                        branch_name: None,
+                        provider: ContextProviderKind::Manual,
+                        requires_confirmation: false,
+                    },
+                    selection: None,
+                },
+            )
+            .unwrap();
+        let mut media = MediaStore::open(directory.path()).unwrap();
+        let staged = media
+            .stage_audio_wav(session.session_id, b"wav bytes", 100)
+            .unwrap();
+        service
+            .lock()
+            .unwrap()
+            .set_staged_media(session.session_id, staged.clone())
+            .unwrap();
+        let database = Mutex::new(database);
+        let media = Mutex::new(media);
+
+        let result = save_image_capture_value(
+            serde_json::to_value(SaveImageCaptureInput {
+                session_id: session.session_id,
+                staged_media_id: staged.staged_media_id,
+                caption: None,
+            })
+            .unwrap(),
+            &database,
+            &service,
+            &media,
+        );
+
+        let CommandResult::Failure { error, .. } = result else {
+            panic!("kind mismatch image save succeeded")
+        };
+        assert_eq!(error.code, ErrorCode::MediaFinalizeFailed);
+        assert!(service.lock().unwrap().active_session().is_some());
     }
 }

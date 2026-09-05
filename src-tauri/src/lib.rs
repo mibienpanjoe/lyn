@@ -15,6 +15,7 @@ mod intelligence;
 mod library;
 mod media;
 mod platform;
+mod security;
 mod settings;
 mod storage;
 

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-discard-staged-media"
+description = "Enables the discard_staged_media command without any pre-configured scope."
+commands.allow = ["discard_staged_media"]
+
+[[permission]]
+identifier = "deny-discard-staged-media"
+description = "Denies the discard_staged_media command without any pre-configured scope."
+commands.deny = ["discard_staged_media"]

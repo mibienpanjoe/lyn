@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-play-staged-audio"
+description = "Enables the play_staged_audio command without any pre-configured scope."
+commands.allow = ["play_staged_audio"]
+
+[[permission]]
+identifier = "deny-play-staged-audio"
+description = "Denies the play_staged_audio command without any pre-configured scope."
+commands.deny = ["play_staged_audio"]
