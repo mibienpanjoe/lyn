@@ -1,104 +1,87 @@
 # Lyn
 
-Lyn is a fast, lightweight, local-first desktop working-memory companion for developers and focused computer work.
+<p align="center">
+  <img src="src-tauri/icons/lyn-icon.svg" alt="" width="128" height="128" />
+</p>
 
-`local-first` · `desktop` · `developer-tools` · `tauri` · `rust` · `svelte` · `sqlite`
+<p align="center">
+  <strong>Lyn</strong><br />
+  A fast, local-first desktop working-memory companion for developers and focused computer work.
+</p>
+
+<p align="center">
+  <code>local-first</code> · <code>desktop</code> · <code>tauri</code> · <code>rust</code> · <code>svelte</code> · <code>sqlite</code>
+</p>
 
 ```text
 global shortcut → type, paste, or record → Enter → return to work
 ```
 
-Lyn captures titleless text notes, screenshots, and voice notes, associates them with project and Git-branch context, and keeps them accessible through a chronological Library and local search.
+Lyn captures titleless text notes, screenshots, and voice notes, associates them with the project and Git branch you were just in, and keeps them in a chronological Library with local search. Everything stays on your machine.
 
-## Status
+## Why Lyn
 
-Implementation has started. Phase 0 provides a verified Svelte 5/Vite shell, a minimal Tauri 2/Rust desktop shell, narrow window capabilities, and frontend/Rust smoke-test harnesses. Phase 1 now includes Rust-owned shared IPC primitives, startup initialization of the canonical SQLite/FTS schema through ordered migrations, validated manual contexts, a single-active-session state machine, durable titleless text capture with FTS projection, and the quick-capture popup. Project directories enter only through a native picker and an expiring one-use token; raw paths remain inside Rust. Phase 2 now includes invocation-bound X11 foreground capture, Git worktree identity, the provider feasibility boundary, an ephemeral live-source registry, deterministic evidence ranking, safe source-list IPC, selection/save-time revalidation, an accessible focused source chooser, and delivered local VS Code, Kitty, and bounded shell/terminal providers for Linux X11. Checkpoint B is verified through the owner-confirmed VS Code and Kitty desktop flow plus automated ambiguity, staleness, privacy-boundary, and draft-preservation coverage. Phase 3 implements recoverable Lyn-owned media staging plus screenshot and WAV voice capture, opaque preview/playback, optional exact captions, cancellation, and durable save. Phase 4 implements the separate responsive Library window, deterministic context chronology and detail reads, opaque committed-media preview/play/open, explicit unavailable-media states, bounded local FTS5 search, canonical index rebuild, accessible filters, and stale-response protection. Phase 5 now includes transactional local settings, shortcut rollback, deterministic theme selection, configurable equal-evidence provider ordering, and a persistent bounded post-commit enrichment queue that preserves user caption authority. Local speech delivery remains unavailable until the G2 model-distribution policy is accepted.
+Traditional note apps interrupt flow: open a notebook, name a page, pick a folder. Lyn is the opposite—an always-available capture surface that preserves the thought **with** the context it came from, then gets out of the way.
 
-The first implementation baseline is Pop!_OS 22.04 LTS (Ubuntu-compatible, x86_64, X11), Node 24.12.0 with pnpm 10.28.0, and Rust 1.96.1. macOS, Windows, Wayland, and packaging support remain unverified and are not yet claimed.
+- **Local-first:** core capture never depends on accounts, cloud APIs, or remote AI.
+- **Context-aware:** optional VS Code, Kitty, and shell providers bind to the pre-popup window; you can always choose manually.
+- **Save first:** enrichment (optional local speech captions) never blocks a successful save.
 
-## Development
+## Download / run
 
-Install the [Tauri 2 Linux prerequisites](https://v2.tauri.app/start/prerequisites/), then run:
+**Supported baseline today:** Pop!_OS 22.04 LTS (Ubuntu-compatible, x86_64, X11), Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, plus [Tauri 2 Linux prerequisites](https://v2.tauri.app/start/prerequisites/).
+
+macOS, Windows, Wayland, and signed installers are **not** claimed yet. Packaging remains disabled until the distribution gate (G3) is accepted.
 
 ```bash
+git clone https://github.com/mibienpanjoe/lyn.git
+cd lyn
 pnpm install
-pnpm bindings
-pnpm dev
-pnpm format:check
-pnpm check
+pnpm tauri dev
+```
+
+Default shortcut: `Ctrl+Shift+Space` opens quick capture. The Library window is the main shell.
+
+Other useful commands (full list in [AGENTS.md](AGENTS.md)):
+
+```bash
 pnpm test
-pnpm provider:vscode:test
-pnpm provider:vscode:package
-pnpm provider:terminal:test
-pnpm provider:terminal:build
-pnpm icons
-cargo fmt --check --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml
-pnpm build
-pnpm tauri dev
-pnpm tauri build --no-bundle
+pnpm tauri build --no-bundle   # production binary without installer packaging
 ```
 
-`pnpm bindings` regenerates the tracked TypeScript IPC contract from Rust. `pnpm dev` runs only the frontend. `pnpm icons` regenerates platform icons from the tracked SVG master. `pnpm tauri dev` opens the Library window and initializes `lyn.db` in Tauri's application-data directory; `Ctrl+Shift+Space` opens the separate quick-capture window. Application packaging remains disabled until the distribution gate is resolved.
+## Features
 
-## Library and search
+| Area | What you get |
+|---|---|
+| Quick capture | Text, screenshot paste, voice note; Enter saves and dismisses |
+| Context | Live sessions + saved contexts; ambiguity never guesses |
+| Library | Chronology by project, detail, play/open media by opaque ID |
+| Search | Bounded local FTS over note bodies and user-visible captions |
+| Settings | Shortcut, theme, provider tie-break order, optional local speech model |
 
-The main Lyn window is the Library. Recent and All captures share the same deterministic chronology; selecting a project shows one stream across all of its branches, with branch remaining an optional filter. Capture detail renders exact text and captions, lazily previews screenshots, plays committed voice notes, and keeps metadata visible when a media file is unavailable.
+## Optional local speech
 
-Search is local, literal, and limited to text-note bodies plus user-visible screenshot and voice captions. It does not execute raw FTS syntax, search editor or terminal content, or imply semantic/AI interpretation. Context, branch, capture-type, and date filters remain bounded and preserve the single-stream model.
+Settings can install a **CPU-only** whisper.cpp engine and multilingual Whisper `base` model after an explicit user action. Model install is the only network-capable path; capture and Library work offline without it. See [`docs/09_local_speech_distribution_decision.md`](docs/09_local_speech_distribution_decision.md).
 
-## Context providers on Linux X11
+## Context providers (Linux X11)
 
-Context detection is optional enrichment: Lyn still captures when a provider is unavailable. Start Lyn first so its private user-only sockets exist:
+Providers are optional. Start Lyn first so private user-only sockets exist, focus the editor or terminal that owns the work, then invoke the shortcut.
 
-```bash
-pnpm tauri dev
-```
+- **VS Code:** [`integrations/vscode/`](integrations/vscode/README.md) — `pnpm provider:vscode:package` → install `/tmp/lyn-context-provider.vsix`
+- **Kitty:** [`integrations/kitty/`](integrations/kitty/README.md) — watcher path in `kitty.conf`
+- **Shell helper:** [`integrations/shell/`](integrations/shell/README.md) — bounded `lyn-context` observations
 
-The default development shortcut is `Ctrl+Shift+Space`. Focus the editor window or terminal pane that owns the work, then invoke Lyn with the shortcut. Automatic selection is bound to that exact pre-popup window. Focusing another provider after Lyn is already open does not silently replace the capture context; use the context chooser when you intentionally want another live session or saved context.
-
-### VS Code
-
-The VS Code provider is a separate local extension. Test, package, and install it with:
-
-```bash
-pnpm provider:vscode:test
-pnpm provider:vscode:package
-code --install-extension /tmp/lyn-context-provider.vsix --force
-```
-
-Reload existing VS Code windows after installation. While Lyn is running, the extension reconnects to its user-only runtime socket automatically. It reports only per-window focus state and local workspace folders; remote and multi-root workspaces remain manual rather than guessed.
-
-### Kitty
-
-Add the watcher to `~/.config/kitty/kitty.conf`, using the absolute path to this checkout:
-
-```text
-watcher /absolute/path/to/lyn/integrations/kitty/lyn_context_watcher.py
-```
-
-Fully restart Kitty after adding or updating the watcher; config reloads affect only newly created Kitty windows. Keep Lyn running, allow up to two seconds for the first heartbeat, focus the intended pane, and invoke Lyn with `Ctrl+Shift+Space`. The watcher retains the originating pane while Lyn owns focus, replaces it when another Kitty pane takes focus, and revokes it when the pane closes. Kitty remote control is neither required nor enabled.
-
-### Live and saved contexts
-
-- **Live sessions** are ephemeral provider observations. A row marked **Current window** is associated with the window that invoked the current capture.
-- **Saved contexts** are durable manual choices. They remain available without a provider.
-- Lyn automatically selects only exact invocation-bound evidence. Being the only or most recently reported live session is intentionally insufficient.
-- Unsupported multi-session cases remain ambiguous or require manual selection. The generic helper supports one distinguishable GNOME Terminal or VS Code integrated-terminal session per OS window; it does not guess between several sessions sharing that window.
-- Changing context preserves the current text, screenshot, recording, and capture session.
-
-If a provider does not appear, confirm Lyn was running before the provider heartbeat, reload the VS Code window or fully restart Kitty, wait two seconds, and reopen Lyn from the source window using the shortcut. If a live source appears but is not marked **Current window**, dismiss the capture with `Esc`, focus the intended source, and invoke Lyn again instead of clicking the existing Lyn window.
-
-Detailed provider boundaries and tests are documented under [`integrations/vscode/`](integrations/vscode/README.md), [`integrations/kitty/`](integrations/kitty/README.md), and [`integrations/shell/`](integrations/shell/README.md).
+Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 ## Documentation
 
 - [Project overview](docs/project_overview.md)
-- [Product requirements](docs/01_requirements_prd.md)
-- [Software requirements](docs/02_requirements_srs.md)
-- [System architecture](docs/05_architecture.md)
-- [Typed Tauri IPC specification](docs/06_api_specification.md)
+- [Requirements](docs/01_requirements_prd.md) · [SRS](docs/02_requirements_srs.md)
+- [Architecture](docs/05_architecture.md) · [IPC](docs/06_api_specification.md)
 - [Visual identity](docs/07_visual_identity.md)
-- [Context provider feasibility](docs/08_context_provider_feasibility.md)
+- [Contributor guidelines](AGENTS.md)
 
-The implemented shell uses Tauri 2, Rust, Svelte 5, TypeScript, Vite, tree-shaken `@lucide/svelte` action icons, and bundled SQLite through `rusqlite`. Rust owns the shared domain and IPC primitives, generated TypeScript bindings, database initialization, canonical schema, transactional migrations, context and text/media capture repositories, native project-directory selection, capture-session lifecycle, recoverable Lyn-owned media staging, microphone input and playback, Library queries, FTS query compilation/rebuild, committed-media resolution, and bounded native popup sizing. Screenshot paste and voice recording expose only opaque media IDs to the popup; Library preview/play/open operations likewise accept opaque IDs rather than paths. The popup switches between compact, completed-audio, inline-error, context-chooser, and screenshot-preview layouts so each state stays dense without accepting arbitrary frontend dimensions.
+## License
+
+A repository license file is not published yet; treat the project as source-available for local development until the first release records an SPDX license.
