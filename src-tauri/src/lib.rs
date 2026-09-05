@@ -14,6 +14,7 @@ pub mod error;
 mod intelligence;
 mod library;
 mod media;
+mod perf;
 mod platform;
 mod security;
 mod settings;
