@@ -19,6 +19,14 @@ global shortcut → type, paste, or record → Enter → return to work
 
 Lyn captures titleless text notes, screenshots, and voice notes, associates them with the project and Git branch you were just in, and keeps them in a chronological Library with local search. Everything stays on your machine.
 
+<p align="center">
+  <img src="docs/screenshots/quick-capture.png" alt="Lyn Quick Capture popup" width="720" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/library-recent.png" alt="Lyn Library stream and detail inspection" width="900" />
+</p>
+
 ## Why Lyn
 
 Traditional note apps interrupt flow: open a notebook, name a page, pick a folder. Lyn is the opposite—an always-available capture surface that preserves the thought **with** the context it came from, then gets out of the way.
