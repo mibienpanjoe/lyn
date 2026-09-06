@@ -1,0 +1,31 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="92" y1="72" x2="420" y2="444" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#202826"/>
+      <stop offset="0.62" stop-color="#102018"/>
+      <stop offset="1" stop-color="#0F1412"/>
+    </linearGradient>
+    <linearGradient id="ribbon" x1="168" y1="140" x2="360" y2="352" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="0.54" stop-color="#D9EDE4"/>
+      <stop offset="1" stop-color="#3FC59F"/>
+    </linearGradient>
+    <filter id="glow" x="112" y="100" width="316" height="316" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+  </defs>
+
+  <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#bg)"/>
+  <rect x="32.5" y="32.5" width="447" height="447" rx="111.5" stroke="#79C4A9" stroke-opacity="0.22"/>
+
+  <!-- subtle glow under the fold -->
+  <path d="M170 180C170 162.327 184.327 148 202 148H224V302H349C364.464 302 373.277 319.657 363.97 332.007L340.827 362.721C334.77 370.756 325.31 375.5 315.247 375.5H226C195.072 375.5 170 350.428 170 319.5V180Z"
+        fill="#3FC59F" opacity="0.24" filter="url(#glow)"/>
+
+  <!-- folded L ribbon -->
+  <path d="M170 180C170 162.327 184.327 148 202 148H224V302H349C364.464 302 373.277 319.657 363.97 332.007L340.827 362.721C334.77 370.756 325.31 375.5 315.247 375.5H226C195.072 375.5 170 350.428 170 319.5V180Z"
+        fill="url(#ribbon)"/>
+
+  <!-- fold/shadow plane -->
+  <path d="M224 302L286 302L224 364V302Z" fill="#286B59" fill-opacity="0.62"/>
+</svg>
