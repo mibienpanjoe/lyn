@@ -24,6 +24,7 @@
   import SearchFilters from './SearchFilters.svelte';
   import SettingsPanel from '../settings/SettingsPanel.svelte';
   import type { SettingsClient } from '../settings/settings-client';
+  import type { SpeechModelClient } from '../settings/model-client';
   import {
     LibraryCommandError,
     libraryClient,
@@ -33,9 +34,10 @@
   interface Props {
     client?: LibraryClient;
     settings?: SettingsClient;
+    modelClient?: SpeechModelClient;
   }
 
-  let { client = libraryClient, settings }: Props = $props();
+  let { client = libraryClient, settings, modelClient }: Props = $props();
   let contexts = $state<ContextRef[]>([]);
   let scope = $state<LibraryScope>({ kind: 'recent' });
   let captures = $state<CaptureSummary[]>([]);
@@ -378,7 +380,7 @@
   }
 
   function isCurrent(candidate: LibraryScope) {
-    if (searchMode) return false;
+    if (searchMode || settingsMode) return false;
     if (scope.kind !== candidate.kind) return false;
     return (
       scope.kind !== 'context' ||
@@ -447,7 +449,7 @@
   </aside>
 
   {#if settingsMode}
-    <SettingsPanel client={settings} />
+    <SettingsPanel client={settings} {modelClient} />
   {:else}
     <section class="library-stream" aria-labelledby="library-title">
       <header class="library-toolbar">

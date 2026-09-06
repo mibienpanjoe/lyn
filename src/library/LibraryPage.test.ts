@@ -10,10 +10,7 @@ import type {
   SearchResultItem,
 } from '../lib/ipc-types';
 import LibraryPage from './LibraryPage.svelte';
-import {
-  LibraryCommandError,
-  type LibraryClient,
-} from './library-client';
+import { LibraryCommandError, type LibraryClient } from './library-client';
 import type { SettingsClient } from '../settings/settings-client';
 
 const project: ContextRef = { id: 'project-1', kind: 'project', name: 'Lyn' };
@@ -63,7 +60,7 @@ const audioCapture: CaptureSummary = {
   capturedAt: '2026-09-04T21:48:00Z',
   textExcerpt: null,
   caption: "Et l'autre, on se rend à revoir",
-  captionSource: 'model',
+  captionSource: 'transcript_generated',
   media: {
     mediaId: 'media-audio',
     kind: 'audio',
