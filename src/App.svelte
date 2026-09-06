@@ -1,14 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { isTauri } from '@tauri-apps/api/core';
 
   import CapturePopup from './capture/CapturePopup.svelte';
   import LibraryPage from './library/LibraryPage.svelte';
   import { applyTheme, settingsClient } from './settings/settings-client';
+  import {
+    devCaptureClient,
+    devLibraryClient,
+    devSettingsClient,
+    devSpeechModelClient,
+  } from './lib/dev-mocks';
 
   const surface = new URLSearchParams(window.location.search).get('surface');
+  const tauriActive = isTauri();
 
   onMount(() => {
-    void settingsClient
+    const client = tauriActive ? settingsClient : devSettingsClient;
+    void client
       .get()
       .then((settings) => applyTheme(settings.theme))
       .catch(() => undefined);
@@ -23,7 +32,11 @@
 </svelte:head>
 
 {#if surface === 'capture'}
-  <CapturePopup />
+  <CapturePopup client={tauriActive ? undefined : devCaptureClient} />
 {:else}
-  <LibraryPage />
+  <LibraryPage
+    client={tauriActive ? undefined : devLibraryClient}
+    settings={tauriActive ? undefined : devSettingsClient}
+    modelClient={tauriActive ? undefined : devSpeechModelClient}
+  />
 {/if}
