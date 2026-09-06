@@ -67,4 +67,21 @@ describe('Library IPC client', () => {
       },
     });
   });
+
+  it('delegates deleteCapture with captureId payload', async () => {
+    const call = vi.fn().mockResolvedValue({
+      ok: true,
+      data: { deleted: true },
+    });
+
+    const client = createLibraryClient(call);
+    const result = await client.deleteCapture('capture-to-delete');
+
+    expect(result).toEqual({ deleted: true });
+    expect(call).toHaveBeenCalledWith('delete_capture', {
+      input: {
+        captureId: 'capture-to-delete',
+      },
+    });
+  });
 });

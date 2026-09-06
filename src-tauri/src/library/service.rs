@@ -6,10 +6,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     contract::{
         CaptionSource, CaptureDetail, CaptureId, CaptureKind, CaptureSummary, ContextKind,
-        ContextRef, EnrichmentStatus, LibraryScope, ListCapturesInput, MediaId, MediaKind,
-        MediaSummary, Page, Timestamp,
+        ContextRef, DeleteCaptureResult, EnrichmentStatus, LibraryScope, ListCapturesInput,
+        MediaId, MediaKind, MediaSummary, Page, Timestamp,
     },
     media::staging::MediaStore,
+    storage::captures::{CaptureRepository, DeleteCaptureOutcome},
 };
 
 const TEXT_EXCERPT_CHARS: usize = 280;
@@ -154,6 +155,28 @@ impl<'a> LibraryService<'a> {
                 rusqlite::Error::QueryReturnedNoRows => LibraryError::CaptureNotFound,
                 error => LibraryError::Storage(error),
             })
+    }
+
+    pub(crate) fn delete(
+        connection: &mut Connection,
+        media_store: &MediaStore,
+        capture_id: CaptureId,
+    ) -> Result<DeleteCaptureResult, LibraryError> {
+        let outcome = CaptureRepository::new(connection)
+            .delete(capture_id)
+            .map_err(|error| match error {
+                crate::storage::StorageError::Sql(error) => LibraryError::Storage(error),
+                _ => LibraryError::Storage(rusqlite::Error::ExecuteReturnedResults),
+            })?;
+        match outcome {
+            DeleteCaptureOutcome::NotFound => Err(LibraryError::CaptureNotFound),
+            DeleteCaptureOutcome::Deleted { relative_path } => {
+                if let Some(relative_path) = relative_path {
+                    let _ = media_store.remove_final(&relative_path);
+                }
+                Ok(DeleteCaptureResult { deleted: true })
+            }
+        }
     }
 
     fn context_exists(&self, context_id: crate::contract::ContextId) -> Result<bool, LibraryError> {
@@ -755,5 +778,92 @@ mod tests {
         assert_eq!(stored.width_px, Some(640));
         assert_eq!(detail.caption.as_deref(), Some("Exact caption"));
         assert_eq!(detail.source_app.as_deref(), Some("Code"));
+    }
+
+    #[test]
+    fn delete_removes_capture_and_physical_media_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut media = MediaStore::open(temp_dir.path()).unwrap();
+        let mut database = Database::open_in_memory().unwrap();
+        let context = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let capture_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1";
+        insert_context(&database, context, "Project");
+        database
+            .connection()
+            .execute(
+                "INSERT INTO captures (
+                id, session_id, context_id, kind, text_body, caption, caption_source,
+                branch_name, source_app, source_window_title, captured_at, updated_at
+             ) VALUES (?1, ?2, ?3, 'image', NULL, 'Test image', 'user',
+                'feature', 'Code', 'Editor', ?4, ?4)",
+                (
+                    capture_id,
+                    "bbbbbbbb-1111-4111-8111-111111111111",
+                    context,
+                    "2026-09-01T12:00:00Z",
+                ),
+            )
+            .unwrap();
+        let staged = media
+            .stage_bytes(
+                CaptureSessionId::new(),
+                MediaKind::Image,
+                MediaMimeType::ImagePng,
+                b"image bytes to delete",
+            )
+            .unwrap();
+        let finalized = media
+            .finalize(
+                staged.staged_media_id,
+                CaptureId::from_str(capture_id).unwrap(),
+                MediaKind::Image,
+            )
+            .unwrap();
+        database
+            .connection()
+            .execute(
+                "INSERT INTO media_assets (
+                id, capture_id, kind, relative_path, mime_type, byte_size, checksum,
+                duration_ms, width_px, height_px, created_at
+             ) VALUES (?1, ?2, 'image', ?3, 'image/png', ?4, ?5, NULL, 640, 480,
+                '2026-09-01T12:00:00Z')",
+                (
+                    finalized.media_id.to_string(),
+                    capture_id,
+                    &finalized.relative_path,
+                    finalized.byte_size as i64,
+                    &finalized.checksum,
+                ),
+            )
+            .unwrap();
+
+        let physical_path = media.final_path(&finalized.relative_path).unwrap();
+        assert!(physical_path.exists());
+
+        let result = LibraryService::delete(
+            database.connection_mut(),
+            &media,
+            CaptureId::from_str(capture_id).unwrap(),
+        )
+        .unwrap();
+        assert!(result.deleted);
+
+        // Physical media is gone
+        assert!(!physical_path.exists());
+
+        // Subsequent get returns CaptureNotFound
+        let get_err = LibraryService::new(database.connection(), &media)
+            .get(CaptureId::from_str(capture_id).unwrap())
+            .unwrap_err();
+        assert!(matches!(get_err, super::LibraryError::CaptureNotFound));
+
+        // Subsequent delete returns CaptureNotFound
+        let del_err = LibraryService::delete(
+            database.connection_mut(),
+            &media,
+            CaptureId::from_str(capture_id).unwrap(),
+        )
+        .unwrap_err();
+        assert!(matches!(del_err, super::LibraryError::CaptureNotFound));
     }
 }

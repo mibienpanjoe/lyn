@@ -112,6 +112,7 @@ function createClient(overrides: Partial<LibraryClient> = {}): LibraryClient {
       .fn()
       .mockResolvedValue({ playing: false, durationMs: null }),
     openMedia: vi.fn().mockResolvedValue({ opened: true }),
+    deleteCapture: vi.fn().mockResolvedValue({ deleted: true }),
     ...overrides,
   };
 }
@@ -121,7 +122,12 @@ describe('responsive Library', () => {
     const settings: SettingsClient = {
       get: vi.fn().mockResolvedValue({
         globalShortcut: 'Control+Shift+Space',
-        providerTieBreakOrder: ['vscode', 'shell', 'foreground_window'],
+        providerTieBreakOrder: [
+          'vscode',
+          'cursor',
+          'shell',
+          'foreground_window',
+        ],
         theme: 'system',
         localSpeechEnabled: false,
       }),
@@ -460,5 +466,65 @@ describe('responsive Library', () => {
     expect(
       screen.getByRole('button', { name: 'Play voice note' }),
     ).toBeVisible();
+  });
+
+  it('deletes capture after user confirmation and removes it from stream', async () => {
+    const deleteCapture = vi.fn().mockResolvedValue({ deleted: true });
+    const client = createClient({ deleteCapture });
+    render(LibraryPage, { client });
+
+    await fireEvent.click(
+      await screen.findByRole('button', { name: /text capture in Lyn/i }),
+    );
+    expect(screen.getByRole('heading', { name: 'Lyn' })).toBeVisible();
+
+    const deleteBtn = await screen.findByRole('button', {
+      name: /delete capture/i,
+    });
+    await fireEvent.click(deleteBtn);
+
+    // Confirmation appears
+    expect(screen.getByText('Delete this capture permanently?')).toBeVisible();
+
+    const confirmBtn = screen.getByRole('button', { name: 'Delete' });
+    await fireEvent.click(confirmBtn);
+
+    await waitFor(() =>
+      expect(deleteCapture).toHaveBeenCalledWith('capture-text'),
+    );
+
+    // Detail closed, capture removed from list
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: /text capture in Lyn/i }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it('cancels deletion confirmation when cancel is clicked', async () => {
+    const deleteCapture = vi.fn().mockResolvedValue({ deleted: true });
+    const client = createClient({ deleteCapture });
+    render(LibraryPage, { client });
+
+    await fireEvent.click(
+      await screen.findByRole('button', { name: /text capture in Lyn/i }),
+    );
+    const deleteBtn = await screen.findByRole('button', {
+      name: /delete capture/i,
+    });
+    await fireEvent.click(deleteBtn);
+
+    expect(screen.getByText('Delete this capture permanently?')).toBeVisible();
+
+    const cancelBtn = screen.getByRole('button', { name: 'Cancel' });
+    await fireEvent.click(cancelBtn);
+
+    expect(
+      screen.queryByText('Delete this capture permanently?'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /delete capture/i }),
+    ).toBeVisible();
+    expect(deleteCapture).not.toHaveBeenCalled();
   });
 });

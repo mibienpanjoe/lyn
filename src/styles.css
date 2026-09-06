@@ -1842,6 +1842,108 @@ kbd {
   padding-inline: 0;
 }
 
+.detail-actions {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-divider);
+}
+
+.delete-capture-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    color 120ms ease-out,
+    background-color 120ms ease-out,
+    border-color 120ms ease-out;
+}
+
+.delete-capture-button:hover:not(:disabled) {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 20%, transparent);
+}
+
+.delete-capture-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.delete-confirmation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-error) 6%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--color-error) 24%, transparent);
+}
+
+.delete-warning-text {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+.delete-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.cancel-delete-button,
+.confirm-delete-button {
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    opacity 120ms ease-out,
+    background-color 120ms ease-out,
+    border-color 120ms ease-out;
+}
+
+.cancel-delete-button {
+  background: var(--color-surface);
+  border: 1px solid var(--color-input-border);
+  color: var(--color-text);
+}
+
+.cancel-delete-button:hover:not(:disabled) {
+  background: var(--color-surface-subtle);
+}
+
+.confirm-delete-button {
+  background: var(--color-error);
+  border: 1px solid transparent;
+  color: #ffffff;
+}
+
+.confirm-delete-button:hover:not(:disabled) {
+  opacity: 0.92;
+}
+
+.confirm-delete-button:active:not(:disabled),
+.cancel-delete-button:active:not(:disabled) {
+  opacity: 0.8;
+}
+
+.cancel-delete-button:disabled,
+.confirm-delete-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 @media (max-width: 899px) {
   .library-shell {
     grid-template-columns: 208px minmax(0, 1fr);

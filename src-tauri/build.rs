@@ -21,6 +21,7 @@ fn main() {
         "list_contexts",
         "list_captures",
         "get_capture",
+        "delete_capture",
         "search_captures",
         "play_media",
         "open_media_external",

@@ -3,6 +3,7 @@
   import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
   import PauseIcon from '@lucide/svelte/icons/pause';
   import PlayIcon from '@lucide/svelte/icons/play';
+  import Trash2Icon from '@lucide/svelte/icons/trash-2';
 
   import type { CaptureDetail } from '../lib/ipc-types';
 
@@ -12,9 +13,11 @@
     backLabel?: string;
     playing?: boolean;
     busy?: boolean;
+    deleting?: boolean;
     onback?: () => void;
     onplay: () => void;
     onopen: () => void;
+    ondelete: () => void;
   }
 
   let {
@@ -23,10 +26,20 @@
     backLabel = 'All captures',
     playing = false,
     busy = false,
+    deleting = false,
     onback,
     onplay,
     onopen,
+    ondelete,
   }: Props = $props();
+
+  let confirmingDelete = $state(false);
+
+  $effect(() => {
+    // Reset confirmation state whenever selected capture changes
+    capture.id;
+    confirmingDelete = false;
+  });
 
   function fullDate(value: string) {
     return new Intl.DateTimeFormat(undefined, {
@@ -128,12 +141,50 @@
       <button
         class="open-media-button"
         type="button"
-        disabled={busy}
+        disabled={busy || deleting}
         onclick={onopen}
       >
         <ExternalLinkIcon aria-hidden="true" />
         Open in default app
       </button>
     {/if}
+
+    <div class="detail-actions">
+      {#if confirmingDelete}
+        <div class="delete-confirmation" role="alert">
+          <span class="delete-warning-text"
+            >Delete this capture permanently?</span
+          >
+          <div class="delete-buttons">
+            <button
+              class="cancel-delete-button"
+              type="button"
+              disabled={deleting}
+              onclick={() => (confirmingDelete = false)}
+            >
+              Cancel
+            </button>
+            <button
+              class="confirm-delete-button"
+              type="button"
+              disabled={deleting}
+              onclick={ondelete}
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </button>
+          </div>
+        </div>
+      {:else}
+        <button
+          class="delete-capture-button"
+          type="button"
+          disabled={busy || deleting}
+          onclick={() => (confirmingDelete = true)}
+        >
+          <Trash2Icon aria-hidden="true" />
+          Delete capture
+        </button>
+      {/if}
+    </div>
   </div>
 </article>

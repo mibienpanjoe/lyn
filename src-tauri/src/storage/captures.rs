@@ -1,9 +1,15 @@
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::{
     contract::{CaptureId, CaptureSessionId, ContextId, SaveCaptureResult, Timestamp},
     storage::StorageError,
 };
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DeleteCaptureOutcome {
+    NotFound,
+    Deleted { relative_path: Option<String> },
+}
 
 pub(crate) struct CaptureRepository<'connection> {
     connection: &'connection mut Connection,
@@ -136,6 +142,31 @@ impl<'connection> CaptureRepository<'connection> {
             enrichment_scheduled: false,
         })
     }
+
+    pub(crate) fn delete(
+        &mut self,
+        capture_id: CaptureId,
+    ) -> Result<DeleteCaptureOutcome, StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let relative_path: Option<String> = transaction
+            .query_row(
+                "SELECT relative_path FROM media_assets WHERE capture_id = ?1",
+                [capture_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let affected = transaction.execute(
+            "DELETE FROM captures WHERE id = ?1",
+            [capture_id.to_string()],
+        )?;
+        if affected == 0 {
+            return Ok(DeleteCaptureOutcome::NotFound);
+        }
+        transaction.commit()?;
+        Ok(DeleteCaptureOutcome::Deleted { relative_path })
+    }
 }
 
 #[cfg(test)]
@@ -215,5 +246,95 @@ mod tests {
             (capture_count, indexed_count, body),
             (1, 1, "first".to_owned())
         );
+    }
+
+    #[test]
+    fn delete_text_capture_removes_row_and_fts_and_returns_no_media() {
+        let mut database = Database::open_in_memory().unwrap();
+        let context = ContextRepository::new(database.connection())
+            .create_standalone("Notes")
+            .unwrap();
+        let session_id = CaptureSessionId::new();
+        let saved = CaptureRepository::new(database.connection_mut())
+            .save_text(session_id, context.id, "delete me", None)
+            .unwrap();
+
+        let outcome = CaptureRepository::new(database.connection_mut())
+            .delete(saved.capture_id)
+            .unwrap();
+        assert_eq!(
+            outcome,
+            super::DeleteCaptureOutcome::Deleted {
+                relative_path: None
+            }
+        );
+
+        let (capture_count, fts_count): (i64, i64) = database
+            .connection()
+            .query_row(
+                "SELECT (SELECT count(*) FROM captures), (SELECT count(*) FROM captures_fts)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((capture_count, fts_count), (0, 0));
+    }
+
+    #[test]
+    fn delete_image_capture_removes_row_and_returns_relative_path() {
+        let mut database = Database::open_in_memory().unwrap();
+        let context = ContextRepository::new(database.connection())
+            .create_standalone("Notes")
+            .unwrap();
+        let session_id = CaptureSessionId::new();
+        let capture_id = crate::contract::CaptureId::new();
+        let media_id = crate::contract::MediaId::new();
+
+        CaptureRepository::new(database.connection_mut())
+            .save_image(
+                session_id,
+                context.id,
+                None,
+                capture_id,
+                media_id,
+                "images/test.png",
+                128,
+                "dummy-checksum",
+                Some("Image caption"),
+                100,
+                100,
+            )
+            .unwrap();
+
+        let outcome = CaptureRepository::new(database.connection_mut())
+            .delete(capture_id)
+            .unwrap();
+        assert_eq!(
+            outcome,
+            super::DeleteCaptureOutcome::Deleted {
+                relative_path: Some("images/test.png".to_owned())
+            }
+        );
+
+        let (capture_count, media_count, fts_count): (i64, i64, i64) = database
+            .connection()
+            .query_row(
+                "SELECT (SELECT count(*) FROM captures),
+                        (SELECT count(*) FROM media_assets),
+                        (SELECT count(*) FROM captures_fts)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((capture_count, media_count, fts_count), (0, 0, 0));
+    }
+
+    #[test]
+    fn delete_non_existent_capture_returns_not_found() {
+        let mut database = Database::open_in_memory().unwrap();
+        let outcome = CaptureRepository::new(database.connection_mut())
+            .delete(crate::contract::CaptureId::new())
+            .unwrap();
+        assert_eq!(outcome, super::DeleteCaptureOutcome::NotFound);
     }
 }

@@ -9,7 +9,7 @@
   import SettingsIcon from '@lucide/svelte/icons/settings-2';
   import { onDestroy, onMount, tick } from 'svelte';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import logoUrl from '../../src-tauri/icons/lyn-icon.svg?url';
+  import logoUrl from '../assets/lyn-icon.svg';
 
   import type {
     CaptureDetail,
@@ -61,6 +61,7 @@
   let loadingMore = $state(false);
   let detailLoading = $state(false);
   let mediaBusy = $state(false);
+  let deleteBusy = $state(false);
   let playingMediaId = $state<string | null>(null);
   let error = $state<string | null>(null);
   let navigationOpen = $state(false);
@@ -375,6 +376,27 @@
     }
   }
 
+  async function deleteCapture() {
+    if (!selected || deleteBusy) return;
+    const captureId = selected.id;
+    deleteBusy = true;
+    error = null;
+    clearPlaybackTimer();
+    playingMediaId = null;
+    try {
+      await client.deleteCapture(captureId);
+      // Remove from active list
+      captures = captures.filter((c) => c.id !== captureId);
+      // Close detail view
+      selected = null;
+      selectedSummaryId = null;
+    } catch (caught) {
+      error = errorMessage(caught, 'The capture could not be deleted.');
+    } finally {
+      deleteBusy = false;
+    }
+  }
+
   function errorMessage(caught: unknown, fallback: string) {
     return caught instanceof LibraryCommandError ? caught.message : fallback;
   }
@@ -578,9 +600,11 @@
           backLabel={title}
           playing={playingMediaId === selected.media?.mediaId}
           busy={mediaBusy}
+          deleting={deleteBusy}
           onback={closeDetail}
           onplay={toggleAudio}
           onopen={openMedia}
+          ondelete={deleteCapture}
         />
       </aside>
     {:else}

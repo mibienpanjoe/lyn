@@ -399,7 +399,7 @@ impl MediaStore {
         self.ensure_contained(&path)
     }
 
-    fn final_path(&self, relative_path: &str) -> Result<PathBuf, StagingError> {
+    pub(crate) fn final_path(&self, relative_path: &str) -> Result<PathBuf, StagingError> {
         let relative = Path::new(relative_path);
         if relative.is_absolute()
             || relative

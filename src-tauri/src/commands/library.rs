@@ -4,8 +4,9 @@ use tauri::State;
 
 use crate::{
     contract::{
-        AudioPlaybackResult, CaptureDetail, CaptureSummary, GetCaptureInput, ListCapturesInput,
-        MediaByIdInput, MediaKind, OpenMediaResult, Page, SearchCapturesInput, SearchResultItem,
+        AudioPlaybackResult, CaptureDetail, CaptureSummary, DeleteCaptureInput,
+        DeleteCaptureResult, GetCaptureInput, ListCapturesInput, MediaByIdInput, MediaKind,
+        OpenMediaResult, Page, SearchCapturesInput, SearchResultItem,
     },
     error::{AppError, CommandResult, ErrorCode, ErrorDetailKey, ErrorDetailValue, ErrorDetails},
     library::search::{SearchError, SearchService},
@@ -59,6 +60,14 @@ pub(crate) fn get_capture(
     database: State<'_, Mutex<Database>>,
     media_store: State<'_, Mutex<MediaStore>>,
 ) -> CommandResult<CaptureDetail> {
+    get_capture_value(input, database.inner(), media_store.inner())
+}
+
+fn get_capture_value(
+    input: serde_json::Value,
+    database: &Mutex<Database>,
+    media_store: &Mutex<MediaStore>,
+) -> CommandResult<CaptureDetail> {
     let Ok(input) = serde_json::from_value::<GetCaptureInput>(input) else {
         return CommandResult::failure(validation_error("input"));
     };
@@ -70,6 +79,35 @@ pub(crate) fn get_capture(
     };
     match LibraryService::new(database.connection(), &media_store).get(input.capture_id) {
         Ok(capture) => CommandResult::success(capture),
+        Err(error) => CommandResult::failure(library_error(error)),
+    }
+}
+
+#[tauri::command]
+pub(crate) fn delete_capture(
+    input: serde_json::Value,
+    database: State<'_, Mutex<Database>>,
+    media_store: State<'_, Mutex<MediaStore>>,
+) -> CommandResult<DeleteCaptureResult> {
+    delete_capture_value(input, database.inner(), media_store.inner())
+}
+
+fn delete_capture_value(
+    input: serde_json::Value,
+    database: &Mutex<Database>,
+    media_store: &Mutex<MediaStore>,
+) -> CommandResult<DeleteCaptureResult> {
+    let Ok(input) = serde_json::from_value::<DeleteCaptureInput>(input) else {
+        return CommandResult::failure(validation_error("input"));
+    };
+    let Ok(mut database) = database.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    let Ok(media_store) = media_store.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    match LibraryService::delete(database.connection_mut(), &media_store, input.capture_id) {
+        Ok(result) => CommandResult::success(result),
         Err(error) => CommandResult::failure(library_error(error)),
     }
 }
@@ -379,7 +417,10 @@ mod tests {
         storage::Database,
     };
 
-    use super::{list_captures_value, open_media_value, play_media_value};
+    use super::{
+        delete_capture_value, get_capture_value, list_captures_value, open_media_value,
+        play_media_value,
+    };
 
     #[derive(Default)]
     struct FakePlayback {
@@ -527,5 +568,67 @@ mod tests {
             &media,
         );
         assert!(matches!(still_listed, CommandResult::Success { .. }));
+    }
+
+    #[test]
+    fn delete_capture_deletes_capture_and_unlinks_media() {
+        let (database, media, media_id) = media_fixture();
+        let capture_id = "22222222-2222-4222-8222-222222222222";
+
+        let delete_res = delete_capture_value(
+            serde_json::json!({ "captureId": capture_id }),
+            &database,
+            &media,
+        );
+        let CommandResult::Success { data: value, .. } = delete_res else {
+            panic!("delete capture failed");
+        };
+        assert!(value.deleted);
+
+        // Subsequent get returns CaptureNotFound
+        let get_res = get_capture_value(
+            serde_json::json!({ "captureId": capture_id }),
+            &database,
+            &media,
+        );
+        let CommandResult::Failure { error, .. } = get_res else {
+            panic!("deleted capture still retrieved");
+        };
+        assert_eq!(error.code, ErrorCode::CaptureNotFound);
+
+        // Subsequent play returns MediaNotFound
+        let play_res = play_media_value(
+            serde_json::json!({ "mediaId": media_id }),
+            &database,
+            &media,
+            &Mutex::new(FakePlayback::default()),
+        );
+        let CommandResult::Failure { error, .. } = play_res else {
+            panic!("deleted media still playable");
+        };
+        assert_eq!(error.code, ErrorCode::MediaNotFound);
+    }
+
+    #[test]
+    fn delete_capture_validation_and_not_found() {
+        let database = Mutex::new(Database::open_in_memory().unwrap());
+        let media = Mutex::new(MediaStore::open(tempdir().unwrap().path()).unwrap());
+
+        let invalid_input =
+            delete_capture_value(serde_json::json!({ "wrongField": 123 }), &database, &media);
+        let CommandResult::Failure { error, .. } = invalid_input else {
+            panic!("invalid input succeeded");
+        };
+        assert_eq!(error.code, ErrorCode::ValidationError);
+
+        let not_found = delete_capture_value(
+            serde_json::json!({ "captureId": "11111111-1111-4111-8111-111111111111" }),
+            &database,
+            &media,
+        );
+        let CommandResult::Failure { error, .. } = not_found else {
+            panic!("non-existent capture deletion succeeded");
+        };
+        assert_eq!(error.code, ErrorCode::CaptureNotFound);
     }
 }

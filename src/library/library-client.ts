@@ -9,6 +9,7 @@ import type {
   CommandResult,
   ContextId,
   ContextRef,
+  DeleteCaptureResult,
   LibraryScope,
   ListContextsResult,
   OpenMediaResult,
@@ -41,6 +42,7 @@ export interface LibraryClient {
     cursor?: string | null,
   ): Promise<Page<CaptureSummary>>;
   getCapture(captureId: string): Promise<CaptureDetail>;
+  deleteCapture(captureId: string): Promise<DeleteCaptureResult>;
   searchCaptures(
     query: string,
     filters: SearchFilters,
@@ -86,6 +88,8 @@ export function createLibraryClient(call: Invoke = invoke): LibraryClient {
       }),
     getCapture: (captureId) =>
       command<CaptureDetail>(call, 'get_capture', { captureId }),
+    deleteCapture: (captureId) =>
+      command<DeleteCaptureResult>(call, 'delete_capture', { captureId }),
     searchCaptures: (query, filters, cursor = null) =>
       command<Page<SearchResultItem>>(call, 'search_captures', {
         query,

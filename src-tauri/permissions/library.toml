@@ -8,6 +8,7 @@ permissions = [
   "allow-list-contexts",
   "allow-list-captures",
   "allow-get-capture",
+  "allow-delete-capture",
   "allow-search-captures",
   "allow-play-media",
   "allow-open-media-external",
