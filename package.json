@@ -1,7 +1,7 @@
 {
   "name": "lyn",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@10.28.0",
@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "provider:vscode:test": "node integrations/vscode/observation-tests.cjs",
     "provider:vscode:package": "pnpm --dir integrations/vscode exec vsce package --out /tmp/lyn-context-provider.vsix --allow-star-activation --allow-missing-repository --skip-license --no-dependencies",
+    "provider:cursor:install": "cursor --install-extension /tmp/lyn-context-provider.vsix --force",
     "provider:terminal:test": "cargo test --manifest-path src-tauri/Cargo.toml context::shell_provider && bash integrations/shell/provider-tests.sh && python3 -m unittest discover -s integrations/kitty -p 'test_*.py'",
     "provider:terminal:build": "cargo build --manifest-path src-tauri/Cargo.toml --bin lyn-context",
     "icons": "tauri icon src-tauri/icons/lyn-icon.svg",
