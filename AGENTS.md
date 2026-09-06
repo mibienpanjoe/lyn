@@ -18,6 +18,7 @@ Use Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, and the documented Tauri system pre
 - `pnpm test` — run frontend component/accessibility tests once.
 - `pnpm provider:vscode:test` — run the VS Code provider's dependency-free Node contract tests.
 - `pnpm provider:vscode:package` — create `/tmp/lyn-context-provider.vsix` for local installation.
+- `pnpm provider:cursor:install` — install `/tmp/lyn-context-provider.vsix` into local Cursor.
 - `pnpm provider:terminal:test` — run Rust broker, shell bootstrap, and Kitty watcher contract tests.
 - `pnpm provider:terminal:build` — build the bounded `lyn-context` shell observation helper.
 - `pnpm icons` — regenerate platform icons from the tracked SVG master.

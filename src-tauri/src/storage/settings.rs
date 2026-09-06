@@ -25,10 +25,34 @@ impl<'a> SettingsRepository<'a> {
 
 pub(crate) fn load(connection: &Connection) -> Result<AppSettings, StorageError> {
     let defaults = AppSettings::default();
+    let provider_tie_break_order = read(connection, PROVIDER_ORDER)?
+        .map(|order: Vec<ContextProviderKind>| {
+            if valid_provider_order(&order) {
+                order
+            } else {
+                let mut migrated = order;
+                if !migrated.contains(&ContextProviderKind::Cursor) {
+                    if let Some(pos) = migrated
+                        .iter()
+                        .position(|provider| *provider == ContextProviderKind::Vscode)
+                    {
+                        migrated.insert(pos + 1, ContextProviderKind::Cursor);
+                    } else {
+                        migrated.push(ContextProviderKind::Cursor);
+                    }
+                }
+                if valid_provider_order(&migrated) {
+                    migrated
+                } else {
+                    defaults.provider_tie_break_order.clone()
+                }
+            }
+        })
+        .unwrap_or_else(|| defaults.provider_tie_break_order);
+
     Ok(AppSettings {
         global_shortcut: read(connection, GLOBAL_SHORTCUT)?.unwrap_or(defaults.global_shortcut),
-        provider_tie_break_order: read(connection, PROVIDER_ORDER)?
-            .unwrap_or(defaults.provider_tie_break_order),
+        provider_tie_break_order,
         theme: read(connection, THEME)?.unwrap_or(defaults.theme),
         local_speech_enabled: read(connection, LOCAL_SPEECH)?
             .unwrap_or(defaults.local_speech_enabled),
@@ -93,9 +117,10 @@ fn write<T: serde::Serialize>(
 }
 
 pub(crate) fn valid_provider_order(order: &[ContextProviderKind]) -> bool {
-    order.len() == 3
+    order.len() == 4
         && [
             ContextProviderKind::Vscode,
+            ContextProviderKind::Cursor,
             ContextProviderKind::Shell,
             ContextProviderKind::ForegroundWindow,
         ]
@@ -139,6 +164,7 @@ mod tests {
         let updated = AppSettings {
             global_shortcut: "Control+Alt+L".to_owned(),
             provider_tie_break_order: vec![
+                ContextProviderKind::Cursor,
                 ContextProviderKind::Shell,
                 ContextProviderKind::Vscode,
                 ContextProviderKind::ForegroundWindow,
@@ -166,6 +192,7 @@ mod tests {
         assert!(valid_provider_order(&[
             ContextProviderKind::Shell,
             ContextProviderKind::ForegroundWindow,
+            ContextProviderKind::Cursor,
             ContextProviderKind::Vscode,
         ]));
         assert!(!valid_provider_order(&[
@@ -173,5 +200,31 @@ mod tests {
             ContextProviderKind::Shell,
             ContextProviderKind::Vscode,
         ]));
+    }
+
+    #[test]
+    fn migrates_legacy_three_provider_order_to_include_cursor() {
+        let mut database = Database::open_in_memory().unwrap();
+        let transaction = database.connection_mut().transaction().unwrap();
+        let legacy_order = vec![
+            ContextProviderKind::Vscode,
+            ContextProviderKind::Shell,
+            ContextProviderKind::ForegroundWindow,
+        ];
+        super::write(&transaction, super::PROVIDER_ORDER, &legacy_order).unwrap();
+        transaction.commit().unwrap();
+
+        let loaded = SettingsRepository::new(database.connection())
+            .get()
+            .unwrap();
+        assert_eq!(
+            loaded.provider_tie_break_order,
+            vec![
+                ContextProviderKind::Vscode,
+                ContextProviderKind::Cursor,
+                ContextProviderKind::Shell,
+                ContextProviderKind::ForegroundWindow,
+            ]
+        );
     }
 }

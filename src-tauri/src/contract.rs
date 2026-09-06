@@ -121,6 +121,7 @@ pub enum CaptionSource {
 pub enum ContextProviderKind {
     Manual,
     Vscode,
+    Cursor,
     Shell,
     ForegroundWindow,
 }
@@ -148,6 +149,7 @@ impl Default for AppSettings {
             global_shortcut: "Control+Shift+Space".to_owned(),
             provider_tie_break_order: vec![
                 ContextProviderKind::Vscode,
+                ContextProviderKind::Cursor,
                 ContextProviderKind::Shell,
                 ContextProviderKind::ForegroundWindow,
             ],
@@ -221,6 +223,7 @@ pub struct CancelSpeechModelInstallResult {
 #[serde(rename_all = "snake_case")]
 pub enum ContextSourceKind {
     VscodeWindow,
+    CursorWindow,
     IntegratedTerminal,
     ExternalTerminal,
     Shell,
@@ -558,6 +561,18 @@ pub struct GetCaptureInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeleteCaptureInput {
+    pub capture_id: CaptureId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteCaptureResult {
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MediaByIdInput {
     pub media_id: MediaId,
 }
@@ -733,6 +748,8 @@ pub fn typescript_bindings() -> String {
         LibraryScope::decl(&config),
         ListCapturesInput::decl(&config),
         GetCaptureInput::decl(&config),
+        DeleteCaptureInput::decl(&config),
+        DeleteCaptureResult::decl(&config),
         MediaByIdInput::decl(&config),
         OpenMediaResult::decl(&config),
         SearchMatchedField::decl(&config),
@@ -797,6 +814,16 @@ mod tests {
             context: context.clone(),
             branch_name: Some("main".to_owned()),
             is_foreground: true,
+        };
+        let cursor_source = ContextSourceOption {
+            source_id: ContextSourceId::new(),
+            kind: ContextSourceKind::CursorWindow,
+            provider: ContextProviderKind::Cursor,
+            application_name: "Cursor".to_owned(),
+            label: "Lyn".to_owned(),
+            context: context.clone(),
+            branch_name: Some("main".to_owned()),
+            is_foreground: false,
         };
         let staged_media = StagedMedia {
             staged_media_id: StagedMediaId::new(),
@@ -931,6 +958,10 @@ mod tests {
         let get_capture_input = GetCaptureInput {
             capture_id: summary.id,
         };
+        let delete_capture_input = DeleteCaptureInput {
+            capture_id: summary.id,
+        };
+        let delete_capture_result = DeleteCaptureResult { deleted: true };
         let search_input = SearchCapturesInput {
             query: "build output".to_owned(),
             context_id: Some(context.id),
@@ -963,6 +994,7 @@ mod tests {
         round_trip(&candidate);
         round_trip(&selection);
         round_trip(&source);
+        round_trip(&cursor_source);
         round_trip(&staged_media);
         round_trip(&session);
         round_trip(&cancel_input);
@@ -986,6 +1018,8 @@ mod tests {
         round_trip(&create_context_result);
         round_trip(&list_captures_input);
         round_trip(&get_capture_input);
+        round_trip(&delete_capture_input);
+        round_trip(&delete_capture_result);
         round_trip(&search_input);
         round_trip(&search_result);
         round_trip(&CommandResult::<CaptureSession>::failure(error));

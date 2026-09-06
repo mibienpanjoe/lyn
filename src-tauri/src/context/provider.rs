@@ -48,7 +48,9 @@ impl fmt::Debug for CorrelationToken {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderSourceKind {
     VscodeWindow,
+    CursorWindow,
     VscodeIntegratedTerminal,
+    CursorIntegratedTerminal,
     ExternalTerminal,
     ShellSession,
     ForegroundWindow,
@@ -160,6 +162,9 @@ mod tests {
                 ProviderSourceKind::VscodeWindow | ProviderSourceKind::VscodeIntegratedTerminal => {
                     ContextProviderKind::Vscode
                 }
+                ProviderSourceKind::CursorWindow | ProviderSourceKind::CursorIntegratedTerminal => {
+                    ContextProviderKind::Cursor
+                }
                 ProviderSourceKind::ExternalTerminal | ProviderSourceKind::ShellSession => {
                     ContextProviderKind::Shell
                 }
@@ -180,14 +185,16 @@ mod tests {
         let mut provider = FixtureProvider {
             observations: vec![
                 observed(ProviderSourceKind::VscodeWindow),
+                observed(ProviderSourceKind::CursorWindow),
                 observed(ProviderSourceKind::VscodeIntegratedTerminal),
+                observed(ProviderSourceKind::CursorIntegratedTerminal),
                 observed(ProviderSourceKind::ExternalTerminal),
             ],
         };
 
         let observations = provider.observations(Instant::now()).unwrap();
 
-        assert_eq!(observations.len(), 3);
+        assert_eq!(observations.len(), 5);
         assert_ne!(observations[0].source_kind(), observations[1].source_kind());
         assert_ne!(observations[1].source_kind(), observations[2].source_kind());
     }

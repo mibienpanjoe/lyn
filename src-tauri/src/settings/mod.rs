@@ -133,6 +133,7 @@ mod tests {
         let mut platform = platform(false);
         let order = vec![
             ContextProviderKind::Shell,
+            ContextProviderKind::Cursor,
             ContextProviderKind::Vscode,
             ContextProviderKind::ForegroundWindow,
         ];

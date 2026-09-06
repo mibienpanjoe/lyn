@@ -693,7 +693,9 @@ fn list_capture_context_sources_value(
 fn public_source_kind(kind: ProviderSourceKind) -> ContextSourceKind {
     match kind {
         ProviderSourceKind::VscodeWindow => ContextSourceKind::VscodeWindow,
-        ProviderSourceKind::VscodeIntegratedTerminal => ContextSourceKind::IntegratedTerminal,
+        ProviderSourceKind::CursorWindow => ContextSourceKind::CursorWindow,
+        ProviderSourceKind::VscodeIntegratedTerminal
+        | ProviderSourceKind::CursorIntegratedTerminal => ContextSourceKind::IntegratedTerminal,
         ProviderSourceKind::ExternalTerminal => ContextSourceKind::ExternalTerminal,
         ProviderSourceKind::ShellSession => ContextSourceKind::Shell,
         ProviderSourceKind::ForegroundWindow => ContextSourceKind::ForegroundWindow,

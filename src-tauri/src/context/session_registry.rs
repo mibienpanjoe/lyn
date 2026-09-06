@@ -206,6 +206,12 @@ fn valid_contract(observation: &ProviderObservation) -> bool {
             ContextProviderKind::Vscode,
             ProviderSourceKind::VscodeIntegratedTerminal
         ) | (
+            ContextProviderKind::Cursor,
+            ProviderSourceKind::CursorWindow
+        ) | (
+            ContextProviderKind::Cursor,
+            ProviderSourceKind::CursorIntegratedTerminal
+        ) | (
             ContextProviderKind::Shell,
             ProviderSourceKind::ExternalTerminal
         ) | (ContextProviderKind::Shell, ProviderSourceKind::ShellSession)
@@ -215,10 +221,12 @@ fn valid_contract(observation: &ProviderObservation) -> bool {
             )
     );
     let correlations_present = match observation.source_kind() {
-        ProviderSourceKind::VscodeWindow | ProviderSourceKind::ForegroundWindow => {
-            observation.window().is_some()
-        }
-        ProviderSourceKind::VscodeIntegratedTerminal | ProviderSourceKind::ExternalTerminal => {
+        ProviderSourceKind::VscodeWindow
+        | ProviderSourceKind::CursorWindow
+        | ProviderSourceKind::ForegroundWindow => observation.window().is_some(),
+        ProviderSourceKind::VscodeIntegratedTerminal
+        | ProviderSourceKind::CursorIntegratedTerminal
+        | ProviderSourceKind::ExternalTerminal => {
             observation.window().is_some() && observation.session().is_some()
         }
         ProviderSourceKind::ShellSession => {
@@ -241,6 +249,7 @@ fn application_name(source_kind: ProviderSourceKind) -> &'static str {
         ProviderSourceKind::VscodeWindow | ProviderSourceKind::VscodeIntegratedTerminal => {
             "VS Code"
         }
+        ProviderSourceKind::CursorWindow | ProviderSourceKind::CursorIntegratedTerminal => "Cursor",
         ProviderSourceKind::ExternalTerminal => "Terminal",
         ProviderSourceKind::ShellSession => "Shell",
         ProviderSourceKind::ForegroundWindow => "Foreground window",
@@ -305,6 +314,9 @@ mod tests {
         let provider = match source_kind {
             ProviderSourceKind::VscodeWindow | ProviderSourceKind::VscodeIntegratedTerminal => {
                 ContextProviderKind::Vscode
+            }
+            ProviderSourceKind::CursorWindow | ProviderSourceKind::CursorIntegratedTerminal => {
+                ContextProviderKind::Cursor
             }
             ProviderSourceKind::ExternalTerminal | ProviderSourceKind::ShellSession => {
                 ContextProviderKind::Shell

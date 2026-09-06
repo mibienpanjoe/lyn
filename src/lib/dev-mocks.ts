@@ -7,6 +7,7 @@ import type {
   ContextProviderKind,
   ContextRef,
   ContextSourceOption,
+  DeleteCaptureResult,
   LibraryScope,
   OpenMediaResult,
   Page,
@@ -123,6 +124,7 @@ let devSettingsStore: AppSettings = {
   globalShortcut: 'Control+Shift+Space',
   providerTieBreakOrder: [
     'vscode',
+    'cursor',
     'shell',
     'foreground_window',
   ] as ContextProviderKind[],
@@ -192,6 +194,13 @@ export const devLibraryClient: LibraryClient = {
     const item =
       sampleCaptures.find((c) => c.id === captureId) ?? sampleCaptures[0];
     return item;
+  },
+  async deleteCapture(captureId: string): Promise<DeleteCaptureResult> {
+    const index = sampleCaptures.findIndex((c) => c.id === captureId);
+    if (index !== -1) {
+      sampleCaptures.splice(index, 1);
+    }
+    return { deleted: true };
   },
   async searchCaptures(
     query: string,

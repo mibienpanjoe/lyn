@@ -1,7 +1,7 @@
-# Lyn Context Provider for VS Code
+# Lyn Context Provider for VS Code and Cursor
 
 This local extension lets Lyn associate a capture invocation with the exact
-focused VS Code window and its single local workspace folder.
+focused VS Code or Cursor window and its single local workspace folder.
 
 The extension sends only an ephemeral per-window identifier, focus state, and
 local workspace folder over Lyn's user-only Unix socket. It does not inspect or
@@ -11,10 +11,17 @@ automatically.
 
 Package and install the extension from the repository root:
 
+For VS Code:
 ```sh
 pnpm provider:vscode:package
 code --install-extension /tmp/lyn-context-provider.vsix --force
 ```
 
-Reload existing VS Code windows after installation. While Lyn is running, the
+For Cursor:
+```sh
+pnpm provider:vscode:package
+cursor --install-extension /tmp/lyn-context-provider.vsix --force
+```
+
+Reload existing VS Code or Cursor windows after installation. While Lyn is running, the
 extension reconnects to its local socket automatically.

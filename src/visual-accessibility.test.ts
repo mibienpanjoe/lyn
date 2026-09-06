@@ -105,6 +105,7 @@ describe('visual accessibility verification', () => {
       listContexts: vi.fn().mockResolvedValue([]),
       listCaptures: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
       getCapture: vi.fn(),
+      deleteCapture: vi.fn(),
       searchCaptures: vi.fn(),
       playMedia: vi.fn(),
       openMedia: vi.fn(),
@@ -113,7 +114,12 @@ describe('visual accessibility verification', () => {
     const settings: SettingsClient = {
       get: vi.fn().mockResolvedValue({
         globalShortcut: 'Control+Shift+Space',
-        providerTieBreakOrder: ['vscode', 'shell', 'foreground_window'],
+        providerTieBreakOrder: [
+          'vscode',
+          'cursor',
+          'shell',
+          'foreground_window',
+        ],
         theme: 'system',
         localSpeechEnabled: false,
       }),

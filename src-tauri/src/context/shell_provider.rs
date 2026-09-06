@@ -466,6 +466,10 @@ fn apply_message(
             ContextProviderKind::Vscode,
             ProviderSourceKind::VscodeIntegratedTerminal,
         ),
+        ContextWindowKind::Cursor => (
+            ContextProviderKind::Cursor,
+            ProviderSourceKind::CursorIntegratedTerminal,
+        ),
         ContextWindowKind::GnomeTerminal | ContextWindowKind::Kitty => (
             ContextProviderKind::Shell,
             ProviderSourceKind::ExternalTerminal,
@@ -603,6 +607,27 @@ mod tests {
         let source = registry.live_sources(now)[0];
         assert_eq!(source.provider(), ContextProviderKind::Vscode);
         assert_eq!(source.application_name(), "VS Code");
+    }
+
+    #[test]
+    fn cursor_integrated_terminal_is_attributed_to_cursor() {
+        let directory = tempdir().unwrap();
+        let now = Instant::now();
+        let mut registry = ContextSourceRegistry::default();
+        let mut sessions = HashMap::new();
+
+        assert!(apply_message(
+            &mut registry,
+            &mut sessions,
+            live_message(std::process::id(), 73),
+            Some((73, ContextWindowKind::Cursor)),
+            Some(directory.path().to_path_buf()),
+            now,
+        ));
+
+        let source = registry.live_sources(now)[0];
+        assert_eq!(source.provider(), ContextProviderKind::Cursor);
+        assert_eq!(source.application_name(), "Cursor");
     }
 
     #[test]

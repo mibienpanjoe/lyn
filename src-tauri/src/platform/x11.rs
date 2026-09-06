@@ -15,6 +15,7 @@ pub(crate) struct X11CaptureWindowPlatform {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContextWindowKind {
     Vscode,
+    Cursor,
     GnomeTerminal,
     Kitty,
 }
@@ -84,10 +85,10 @@ pub(crate) fn active_window() -> Result<u32, PlatformError> {
         .ok_or(PlatformError::Unsupported)
 }
 
-pub(crate) fn active_vscode_window() -> Result<u32, PlatformError> {
+pub(crate) fn active_editor_window() -> Result<(u32, ContextWindowKind), PlatformError> {
     let (window, kind) = active_context_window()?;
-    if kind == ContextWindowKind::Vscode {
-        Ok(window)
+    if kind == ContextWindowKind::Vscode || kind == ContextWindowKind::Cursor {
+        Ok((window, kind))
     } else {
         Err(PlatformError::Unsupported)
     }
@@ -118,6 +119,8 @@ fn context_window_kind(window_class: &[u8]) -> Option<ContextWindowKind> {
                 || part.eq_ignore_ascii_case(b"vscodium")
             {
                 Some(ContextWindowKind::Vscode)
+            } else if part.eq_ignore_ascii_case(b"cursor") {
+                Some(ContextWindowKind::Cursor)
             } else if part.eq_ignore_ascii_case(b"gnome-terminal")
                 || part.eq_ignore_ascii_case(b"gnome-terminal-server")
             {
@@ -169,7 +172,7 @@ mod tests {
     use super::{ContextWindowKind, context_window_kind};
 
     #[test]
-    fn accepts_supported_vscode_window_classes_only() {
+    fn accepts_supported_vscode_and_cursor_window_classes() {
         assert_eq!(
             context_window_kind(b"code\0code\0"),
             Some(ContextWindowKind::Vscode)
@@ -182,9 +185,17 @@ mod tests {
             context_window_kind(b"codium\0VSCodium\0"),
             Some(ContextWindowKind::Vscode)
         );
+        assert_eq!(
+            context_window_kind(b"cursor\0Cursor\0"),
+            Some(ContextWindowKind::Cursor)
+        );
         assert_ne!(
             context_window_kind(b"terminal\0kitty\0"),
             Some(ContextWindowKind::Vscode)
+        );
+        assert_ne!(
+            context_window_kind(b"terminal\0kitty\0"),
+            Some(ContextWindowKind::Cursor)
         );
         assert_eq!(context_window_kind(b"lyn\0Lyn\0"), None);
     }
@@ -194,6 +205,10 @@ mod tests {
         assert_eq!(
             context_window_kind(b"code\0Code\0"),
             Some(ContextWindowKind::Vscode)
+        );
+        assert_eq!(
+            context_window_kind(b"cursor\0Cursor\0"),
+            Some(ContextWindowKind::Cursor)
         );
         assert_eq!(
             context_window_kind(b"gnome-terminal-server\0Gnome-terminal\0"),

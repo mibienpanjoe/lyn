@@ -9,7 +9,7 @@ import {
 
 const settings: AppSettings = {
   globalShortcut: 'Control+Shift+Space',
-  providerTieBreakOrder: ['vscode', 'shell', 'foreground_window'],
+  providerTieBreakOrder: ['vscode', 'cursor', 'shell', 'foreground_window'],
   theme: 'system',
   localSpeechEnabled: false,
 };

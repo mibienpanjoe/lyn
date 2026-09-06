@@ -34,7 +34,7 @@ export type ContextKind = "project" | "standalone";
 
 export type CaptionSource = "user" | "context_generated" | "transcript_generated";
 
-export type ContextProviderKind = "manual" | "vscode" | "shell" | "foreground_window";
+export type ContextProviderKind = "manual" | "vscode" | "cursor" | "shell" | "foreground_window";
 
 export type ThemeSetting = "system" | "light" | "dark";
 
@@ -56,7 +56,7 @@ export type RemoveSpeechModelResult = { removed: boolean, };
 
 export type CancelSpeechModelInstallResult = { cancelled: boolean, };
 
-export type ContextSourceKind = "vscode_window" | "integrated_terminal" | "external_terminal" | "shell" | "foreground_window";
+export type ContextSourceKind = "vscode_window" | "cursor_window" | "integrated_terminal" | "external_terminal" | "shell" | "foreground_window";
 
 export type MediaKind = "image" | "audio";
 
@@ -127,6 +127,10 @@ export type LibraryScope = { "kind": "all" } | { "kind": "recent" } | { "kind": 
 export type ListCapturesInput = { scope: LibraryScope, branchName: string | null, captureKinds: Array<CaptureKind>, capturedFrom: Timestamp | null, capturedTo: Timestamp | null, cursor: string | null, limit: number, };
 
 export type GetCaptureInput = { captureId: CaptureId, };
+
+export type DeleteCaptureInput = { captureId: CaptureId, };
+
+export type DeleteCaptureResult = { deleted: boolean, };
 
 export type MediaByIdInput = { mediaId: MediaId, };
 

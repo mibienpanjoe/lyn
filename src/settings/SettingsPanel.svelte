@@ -45,6 +45,7 @@
   const providerNames: Record<ContextProviderKind, string> = {
     manual: 'Manual selection',
     vscode: 'VS Code',
+    cursor: 'Cursor',
     shell: 'Terminal',
     foreground_window: 'Foreground window',
   };

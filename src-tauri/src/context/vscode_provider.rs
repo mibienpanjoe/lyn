@@ -23,7 +23,7 @@ use crate::{
         session_registry::ContextSourceRegistry,
     },
     contract::ContextProviderKind,
-    platform::WindowCorrelationToken,
+    platform::{WindowCorrelationToken, x11::ContextWindowKind},
 };
 
 const SOCKET_NAME: &str = "lyn-context-v1.sock";
@@ -79,7 +79,7 @@ fn run(listener: UnixListener, app: AppHandle) {
                     continue;
                 };
                 let active_window = (message.state == WindowState::Focused)
-                    .then(crate::platform::x11::active_vscode_window)
+                    .then(crate::platform::x11::active_editor_window)
                     .and_then(Result::ok);
                 let registry_state = app.state::<std::sync::Mutex<ContextSourceRegistry>>();
                 let Ok(mut registry) = registry_state.lock() else {
@@ -118,9 +118,16 @@ fn run(listener: UnixListener, app: AppHandle) {
 
 fn apply_message(
     registry: &mut ContextSourceRegistry,
-    windows: &mut HashMap<Uuid, WindowCorrelationToken>,
+    windows: &mut HashMap<
+        Uuid,
+        (
+            WindowCorrelationToken,
+            ContextProviderKind,
+            ProviderSourceKind,
+        ),
+    >,
     message: VscodeObservationMessage,
-    active_window: Option<u32>,
+    active_window: Option<(u32, ContextWindowKind)>,
     now: Instant,
 ) -> bool {
     if message.version != 1
@@ -134,19 +141,30 @@ fn apply_message(
     }
 
     let mut removed_previous_window = false;
-    let window = match message.state {
+    let (window, provider, source_kind) = match message.state {
         WindowState::Focused => {
-            let Some(active_window) = active_window else {
+            let Some((active_window, window_kind)) = active_window else {
                 return false;
             };
+            let (provider, source_kind) = match window_kind {
+                ContextWindowKind::Cursor => (
+                    ContextProviderKind::Cursor,
+                    ProviderSourceKind::CursorWindow,
+                ),
+                _ => (
+                    ContextProviderKind::Vscode,
+                    ProviderSourceKind::VscodeWindow,
+                ),
+            };
             let window = WindowCorrelationToken::from_native(u64::from(active_window));
-            if let Some(previous) = windows.insert(message.instance_id, window)
+            if let Some((previous, prev_provider, prev_source)) =
+                windows.insert(message.instance_id, (window, provider, source_kind))
                 && previous != window
             {
                 registry.register(
                     ProviderObservation::new(
-                        ContextProviderKind::Vscode,
-                        ProviderSourceKind::VscodeWindow,
+                        prev_provider,
+                        prev_source,
                         Some(previous),
                         None,
                         None,
@@ -158,13 +176,14 @@ fn apply_message(
                 );
                 removed_previous_window = true;
             }
-            window
+            (window, provider, source_kind)
         }
         WindowState::Unfocused | WindowState::Ended => {
-            let Some(window) = windows.get(&message.instance_id).copied() else {
+            let Some((window, provider, source_kind)) = windows.get(&message.instance_id).copied()
+            else {
                 return false;
             };
-            window
+            (window, provider, source_kind)
         }
     };
 
@@ -180,8 +199,8 @@ fn apply_message(
         .unwrap_or_else(|| PathBuf::from("/"));
     let registered = registry.register(
         ProviderObservation::new(
-            ContextProviderKind::Vscode,
-            ProviderSourceKind::VscodeWindow,
+            provider,
+            source_kind,
             Some(window),
             None,
             None,
@@ -238,7 +257,7 @@ mod tests {
             session_registry::ContextSourceRegistry,
         },
         contract::ContextProviderKind,
-        platform::WindowCorrelationToken,
+        platform::{WindowCorrelationToken, x11::ContextWindowKind},
     };
 
     use super::{VscodeObservationMessage, WindowState, apply_message};
@@ -266,14 +285,14 @@ mod tests {
             &mut registry,
             &mut windows,
             message(first.path(), WindowState::Focused),
-            Some(101),
+            Some((101, ContextWindowKind::Vscode)),
             now,
         ));
         assert!(apply_message(
             &mut registry,
             &mut windows,
             message(second.path(), WindowState::Focused),
-            Some(202),
+            Some((202, ContextWindowKind::Cursor)),
             now,
         ));
 
@@ -303,7 +322,7 @@ mod tests {
             &mut registry,
             &mut windows,
             message(directory.path(), WindowState::Focused),
-            Some(303),
+            Some((303, ContextWindowKind::Vscode)),
             now,
         ));
 
@@ -345,6 +364,47 @@ mod tests {
     }
 
     #[test]
+    fn cursor_focused_workspace_resolves_only_for_its_invocation_window() {
+        let directory = tempdir().unwrap();
+        let mut registry = ContextSourceRegistry::default();
+        let mut windows = HashMap::new();
+        let now = Instant::now();
+        let window = WindowCorrelationToken::from_native(404);
+
+        assert!(apply_message(
+            &mut registry,
+            &mut windows,
+            message(directory.path(), WindowState::Focused),
+            Some((404, ContextWindowKind::Cursor)),
+            now,
+        ));
+
+        let sources = registry.live_sources(now);
+        let source = sources[0];
+        assert_eq!(source.provider(), ContextProviderKind::Cursor);
+        assert_eq!(source.application_name(), "Cursor");
+        let exact = classify(
+            source.source_id(),
+            source.provider(),
+            source.window(),
+            source.process(),
+            source.session(),
+            &InvocationAssociations {
+                foreground_window: Some(window),
+                related_processes: &[],
+                related_sessions: &[],
+                inferred_windows: &[],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve(&[exact], &[ContextProviderKind::Cursor]),
+            ResolutionOutcome::Resolved(source.source_id())
+        );
+    }
+
+    #[test]
     fn remapping_one_extension_window_removes_its_previous_correlation() {
         let directory = tempdir().unwrap();
         let instance_id = Uuid::new_v4();
@@ -358,12 +418,18 @@ mod tests {
             workspace_folders: vec![directory.path().display().to_string()],
         };
 
-        apply_message(&mut registry, &mut windows, focused(), Some(11), now);
         apply_message(
             &mut registry,
             &mut windows,
             focused(),
-            Some(22),
+            Some((11, ContextWindowKind::Vscode)),
+            now,
+        );
+        apply_message(
+            &mut registry,
+            &mut windows,
+            focused(),
+            Some((22, ContextWindowKind::Vscode)),
             now + std::time::Duration::from_secs(1),
         );
 
@@ -388,7 +454,13 @@ mod tests {
             state: WindowState::Focused,
             workspace_folders: vec![directory.path().display().to_string()],
         };
-        apply_message(&mut registry, &mut windows, live, Some(42), now);
+        apply_message(
+            &mut registry,
+            &mut windows,
+            live,
+            Some((42, ContextWindowKind::Vscode)),
+            now,
+        );
         let source_id = registry.live_sources(now)[0].source_id();
 
         apply_message(
@@ -447,7 +519,7 @@ mod tests {
             &mut registry,
             &mut windows,
             rejected,
-            Some(42),
+            Some((42, ContextWindowKind::Vscode)),
             now,
         ));
         assert!(registry.live_sources(now).is_empty());
