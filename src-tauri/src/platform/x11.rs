@@ -16,6 +16,7 @@ pub(crate) struct X11CaptureWindowPlatform {
 pub(crate) enum ContextWindowKind {
     Vscode,
     Cursor,
+    Browser,
     GnomeTerminal,
     Kitty,
 }
@@ -94,6 +95,15 @@ pub(crate) fn active_editor_window() -> Result<(u32, ContextWindowKind), Platfor
     }
 }
 
+pub(crate) fn active_browser_window() -> Result<(u32, ContextWindowKind), PlatformError> {
+    let (window, kind) = active_context_window()?;
+    if kind == ContextWindowKind::Browser {
+        Ok((window, kind))
+    } else {
+        Err(PlatformError::Unsupported)
+    }
+}
+
 pub(crate) fn active_context_window() -> Result<(u32, ContextWindowKind), PlatformError> {
     let (connection, _) = x11rb::connect(None).map_err(|_| PlatformError::Unsupported)?;
     let window = active_window()?;
@@ -127,6 +137,16 @@ fn context_window_kind(window_class: &[u8]) -> Option<ContextWindowKind> {
                 Some(ContextWindowKind::GnomeTerminal)
             } else if part.eq_ignore_ascii_case(b"kitty") {
                 Some(ContextWindowKind::Kitty)
+            } else if part.eq_ignore_ascii_case(b"google-chrome")
+                || part.eq_ignore_ascii_case(b"chromium")
+                || part.eq_ignore_ascii_case(b"chromium-browser")
+                || part.eq_ignore_ascii_case(b"brave-browser")
+                || part.eq_ignore_ascii_case(b"microsoft-edge")
+                || part.eq_ignore_ascii_case(b"microsoft-edge-dev")
+                || part.eq_ignore_ascii_case(b"firefox")
+                || part.eq_ignore_ascii_case(b"navigator")
+            {
+                Some(ContextWindowKind::Browser)
             } else {
                 None
             }
@@ -188,6 +208,22 @@ mod tests {
         assert_eq!(
             context_window_kind(b"cursor\0Cursor\0"),
             Some(ContextWindowKind::Cursor)
+        );
+        assert_eq!(
+            context_window_kind(b"google-chrome\0Google-chrome\0"),
+            Some(ContextWindowKind::Browser)
+        );
+        assert_eq!(
+            context_window_kind(b"chromium\0Chromium\0"),
+            Some(ContextWindowKind::Browser)
+        );
+        assert_eq!(
+            context_window_kind(b"brave-browser\0Brave-browser\0"),
+            Some(ContextWindowKind::Browser)
+        );
+        assert_eq!(
+            context_window_kind(b"firefox\0Firefox\0"),
+            Some(ContextWindowKind::Browser)
         );
         assert_ne!(
             context_window_kind(b"terminal\0kitty\0"),

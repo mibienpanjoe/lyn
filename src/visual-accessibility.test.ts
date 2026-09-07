@@ -117,6 +117,7 @@ describe('visual accessibility verification', () => {
         providerTieBreakOrder: [
           'vscode',
           'cursor',
+          'browser',
           'shell',
           'foreground_window',
         ],

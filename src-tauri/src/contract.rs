@@ -122,6 +122,7 @@ pub enum ContextProviderKind {
     Manual,
     Vscode,
     Cursor,
+    Browser,
     Shell,
     ForegroundWindow,
 }
@@ -150,6 +151,7 @@ impl Default for AppSettings {
             provider_tie_break_order: vec![
                 ContextProviderKind::Vscode,
                 ContextProviderKind::Cursor,
+                ContextProviderKind::Browser,
                 ContextProviderKind::Shell,
                 ContextProviderKind::ForegroundWindow,
             ],
@@ -224,6 +226,7 @@ pub struct CancelSpeechModelInstallResult {
 pub enum ContextSourceKind {
     VscodeWindow,
     CursorWindow,
+    BrowserTab,
     IntegratedTerminal,
     ExternalTerminal,
     Shell,

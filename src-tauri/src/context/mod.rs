@@ -1,5 +1,8 @@
 //! Context providers and invocation-bound resolution.
 
+#[cfg(target_os = "linux")]
+pub(crate) mod browser_provider;
+pub(crate) mod localhost_resolver;
 pub(crate) mod provider;
 pub(crate) mod resolver;
 pub(crate) mod session_registry;

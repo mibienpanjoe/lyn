@@ -140,6 +140,8 @@ pub fn run() {
             // A missing or unusable runtime socket therefore disables only this provider.
             let _ = context::vscode_provider::start(app.handle().clone());
             #[cfg(target_os = "linux")]
+            let _ = context::browser_provider::start(app.handle().clone());
+            #[cfg(target_os = "linux")]
             let _ = context::shell_provider::start(app.handle().clone());
             #[cfg(desktop)]
             {
@@ -244,6 +246,11 @@ pub fn run_shell_context_helper() -> std::process::ExitCode {
 }
 
 #[cfg(target_os = "linux")]
+pub fn run_browser_host_helper() -> std::process::ExitCode {
+    context::browser_provider::run_browser_host_helper()
+}
+
+#[cfg(target_os = "linux")]
 fn invoke_capture_popup(app: &tauri::AppHandle) {
     use crate::platform::CaptureWindowPlatform;
 
@@ -319,6 +326,7 @@ fn resolve_invocation_context(
                 vec![
                     ContextProviderKind::Vscode,
                     ContextProviderKind::Cursor,
+                    ContextProviderKind::Browser,
                     ContextProviderKind::Shell,
                     ContextProviderKind::ForegroundWindow,
                 ]

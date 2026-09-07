@@ -125,6 +125,7 @@ let devSettingsStore: AppSettings = {
   providerTieBreakOrder: [
     'vscode',
     'cursor',
+    'browser',
     'shell',
     'foreground_window',
   ] as ContextProviderKind[],

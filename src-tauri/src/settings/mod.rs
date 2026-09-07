@@ -134,6 +134,7 @@ mod tests {
         let order = vec![
             ContextProviderKind::Shell,
             ContextProviderKind::Cursor,
+            ContextProviderKind::Browser,
             ContextProviderKind::Vscode,
             ContextProviderKind::ForegroundWindow,
         ];
