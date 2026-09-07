@@ -1,0 +1,7 @@
+{
+  "name": "com.mibienpanjoe.lyn",
+  "description": "Lyn Desktop Browser Context Host",
+  "path": "/usr/local/bin/lyn-browser-host",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://*/*"]
+}

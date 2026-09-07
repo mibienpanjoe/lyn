@@ -108,6 +108,7 @@ Settings can install a **CPU-only** whisper.cpp engine and multilingual Whisper 
 Providers are optional. Start Lyn first so private user-only sockets exist, focus the editor or terminal that owns the work, then invoke the shortcut.
 
 - **VS Code & Cursor:** [`integrations/vscode/`](integrations/vscode/README.md) — `pnpm provider:vscode:package` → install `/tmp/lyn-context-provider.vsix` via `code` or `cursor` (`pnpm provider:cursor:install`)
+- **Browser (Chrome, Chromium, Brave, Edge, Firefox):** [`integrations/browser/`](integrations/browser/README.md) — `pnpm provider:browser:install` → load unpacked extension in browser
 - **Kitty:** [`integrations/kitty/`](integrations/kitty/README.md) — watcher path in `kitty.conf`
 - **Shell helper:** [`integrations/shell/`](integrations/shell/README.md) — bounded `lyn-context` observations
 
