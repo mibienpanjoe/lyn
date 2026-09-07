@@ -694,6 +694,7 @@ fn public_source_kind(kind: ProviderSourceKind) -> ContextSourceKind {
     match kind {
         ProviderSourceKind::VscodeWindow => ContextSourceKind::VscodeWindow,
         ProviderSourceKind::CursorWindow => ContextSourceKind::CursorWindow,
+        ProviderSourceKind::BrowserTab => ContextSourceKind::BrowserTab,
         ProviderSourceKind::VscodeIntegratedTerminal
         | ProviderSourceKind::CursorIntegratedTerminal => ContextSourceKind::IntegratedTerminal,
         ProviderSourceKind::ExternalTerminal => ContextSourceKind::ExternalTerminal,

@@ -474,6 +474,7 @@ fn apply_message(
             ContextProviderKind::Shell,
             ProviderSourceKind::ExternalTerminal,
         ),
+        ContextWindowKind::Browser => return false,
     };
     let directory = match message.state {
         ShellState::Live => {

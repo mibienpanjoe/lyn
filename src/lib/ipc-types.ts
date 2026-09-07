@@ -34,7 +34,7 @@ export type ContextKind = "project" | "standalone";
 
 export type CaptionSource = "user" | "context_generated" | "transcript_generated";
 
-export type ContextProviderKind = "manual" | "vscode" | "cursor" | "shell" | "foreground_window";
+export type ContextProviderKind = "manual" | "vscode" | "cursor" | "browser" | "shell" | "foreground_window";
 
 export type ThemeSetting = "system" | "light" | "dark";
 
@@ -56,7 +56,7 @@ export type RemoveSpeechModelResult = { removed: boolean, };
 
 export type CancelSpeechModelInstallResult = { cancelled: boolean, };
 
-export type ContextSourceKind = "vscode_window" | "cursor_window" | "integrated_terminal" | "external_terminal" | "shell" | "foreground_window";
+export type ContextSourceKind = "vscode_window" | "cursor_window" | "browser_tab" | "integrated_terminal" | "external_terminal" | "shell" | "foreground_window";
 
 export type MediaKind = "image" | "audio";
 

@@ -41,6 +41,21 @@ pub(crate) fn load(connection: &Connection) -> Result<AppSettings, StorageError>
                         migrated.push(ContextProviderKind::Cursor);
                     }
                 }
+                if !migrated.contains(&ContextProviderKind::Browser) {
+                    if let Some(pos) = migrated
+                        .iter()
+                        .position(|provider| *provider == ContextProviderKind::Cursor)
+                    {
+                        migrated.insert(pos + 1, ContextProviderKind::Browser);
+                    } else if let Some(pos) = migrated
+                        .iter()
+                        .position(|provider| *provider == ContextProviderKind::Vscode)
+                    {
+                        migrated.insert(pos + 1, ContextProviderKind::Browser);
+                    } else {
+                        migrated.push(ContextProviderKind::Browser);
+                    }
+                }
                 if valid_provider_order(&migrated) {
                     migrated
                 } else {
@@ -117,10 +132,11 @@ fn write<T: serde::Serialize>(
 }
 
 pub(crate) fn valid_provider_order(order: &[ContextProviderKind]) -> bool {
-    order.len() == 4
+    order.len() == 5
         && [
             ContextProviderKind::Vscode,
             ContextProviderKind::Cursor,
+            ContextProviderKind::Browser,
             ContextProviderKind::Shell,
             ContextProviderKind::ForegroundWindow,
         ]
@@ -165,6 +181,7 @@ mod tests {
             global_shortcut: "Control+Alt+L".to_owned(),
             provider_tie_break_order: vec![
                 ContextProviderKind::Cursor,
+                ContextProviderKind::Browser,
                 ContextProviderKind::Shell,
                 ContextProviderKind::Vscode,
                 ContextProviderKind::ForegroundWindow,
@@ -192,6 +209,7 @@ mod tests {
         assert!(valid_provider_order(&[
             ContextProviderKind::Shell,
             ContextProviderKind::ForegroundWindow,
+            ContextProviderKind::Browser,
             ContextProviderKind::Cursor,
             ContextProviderKind::Vscode,
         ]));
@@ -203,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_legacy_three_provider_order_to_include_cursor() {
+    fn migrates_legacy_provider_orders_to_include_cursor_and_browser() {
         let mut database = Database::open_in_memory().unwrap();
         let transaction = database.connection_mut().transaction().unwrap();
         let legacy_order = vec![
@@ -222,6 +240,7 @@ mod tests {
             vec![
                 ContextProviderKind::Vscode,
                 ContextProviderKind::Cursor,
+                ContextProviderKind::Browser,
                 ContextProviderKind::Shell,
                 ContextProviderKind::ForegroundWindow,
             ]

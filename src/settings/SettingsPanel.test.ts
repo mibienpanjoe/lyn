@@ -9,7 +9,13 @@ import { SettingsCommandError, type SettingsClient } from './settings-client';
 
 const initial: AppSettings = {
   globalShortcut: 'Control+Shift+Space',
-  providerTieBreakOrder: ['vscode', 'cursor', 'shell', 'foreground_window'],
+  providerTieBreakOrder: [
+    'vscode',
+    'cursor',
+    'browser',
+    'shell',
+    'foreground_window',
+  ],
   theme: 'system',
   localSpeechEnabled: false,
 };
@@ -116,8 +122,9 @@ describe('Settings', () => {
           globalShortcut: 'Control+Alt+L',
           providerTieBreakOrder: [
             'vscode',
-            'shell',
             'cursor',
+            'shell',
+            'browser',
             'foreground_window',
           ],
           theme: 'dark',
@@ -130,8 +137,9 @@ describe('Settings', () => {
         globalShortcut: 'Control+Alt+L',
         providerTieBreakOrder: [
           'vscode',
-          'shell',
           'cursor',
+          'shell',
+          'browser',
           'foreground_window',
         ],
         theme: 'dark',

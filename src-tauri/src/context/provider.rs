@@ -49,6 +49,7 @@ impl fmt::Debug for CorrelationToken {
 pub(crate) enum ProviderSourceKind {
     VscodeWindow,
     CursorWindow,
+    BrowserTab,
     VscodeIntegratedTerminal,
     CursorIntegratedTerminal,
     ExternalTerminal,
@@ -165,6 +166,7 @@ mod tests {
                 ProviderSourceKind::CursorWindow | ProviderSourceKind::CursorIntegratedTerminal => {
                     ContextProviderKind::Cursor
                 }
+                ProviderSourceKind::BrowserTab => ContextProviderKind::Browser,
                 ProviderSourceKind::ExternalTerminal | ProviderSourceKind::ShellSession => {
                     ContextProviderKind::Shell
                 }

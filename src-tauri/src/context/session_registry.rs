@@ -211,10 +211,12 @@ fn valid_contract(observation: &ProviderObservation) -> bool {
         ) | (
             ContextProviderKind::Cursor,
             ProviderSourceKind::CursorIntegratedTerminal
-        ) | (
-            ContextProviderKind::Shell,
-            ProviderSourceKind::ExternalTerminal
-        ) | (ContextProviderKind::Shell, ProviderSourceKind::ShellSession)
+        ) | (ContextProviderKind::Browser, ProviderSourceKind::BrowserTab)
+            | (
+                ContextProviderKind::Shell,
+                ProviderSourceKind::ExternalTerminal
+            )
+            | (ContextProviderKind::Shell, ProviderSourceKind::ShellSession)
             | (
                 ContextProviderKind::ForegroundWindow,
                 ProviderSourceKind::ForegroundWindow
@@ -223,6 +225,7 @@ fn valid_contract(observation: &ProviderObservation) -> bool {
     let correlations_present = match observation.source_kind() {
         ProviderSourceKind::VscodeWindow
         | ProviderSourceKind::CursorWindow
+        | ProviderSourceKind::BrowserTab
         | ProviderSourceKind::ForegroundWindow => observation.window().is_some(),
         ProviderSourceKind::VscodeIntegratedTerminal
         | ProviderSourceKind::CursorIntegratedTerminal
@@ -250,6 +253,7 @@ fn application_name(source_kind: ProviderSourceKind) -> &'static str {
             "VS Code"
         }
         ProviderSourceKind::CursorWindow | ProviderSourceKind::CursorIntegratedTerminal => "Cursor",
+        ProviderSourceKind::BrowserTab => "Browser",
         ProviderSourceKind::ExternalTerminal => "Terminal",
         ProviderSourceKind::ShellSession => "Shell",
         ProviderSourceKind::ForegroundWindow => "Foreground window",
@@ -318,6 +322,7 @@ mod tests {
             ProviderSourceKind::CursorWindow | ProviderSourceKind::CursorIntegratedTerminal => {
                 ContextProviderKind::Cursor
             }
+            ProviderSourceKind::BrowserTab => ContextProviderKind::Browser,
             ProviderSourceKind::ExternalTerminal | ProviderSourceKind::ShellSession => {
                 ContextProviderKind::Shell
             }

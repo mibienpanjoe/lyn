@@ -46,6 +46,7 @@
     manual: 'Manual selection',
     vscode: 'VS Code',
     cursor: 'Cursor',
+    browser: 'Browser',
     shell: 'Terminal',
     foreground_window: 'Foreground window',
   };

@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Lyn Context Provider",
+  "version": "0.1.0",
+  "description": "Privacy-bounded local context integration for Lyn",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["tabs", "windows", "nativeMessaging"]
+}
