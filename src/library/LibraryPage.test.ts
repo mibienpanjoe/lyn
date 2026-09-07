@@ -125,6 +125,7 @@ describe('responsive Library', () => {
         providerTieBreakOrder: [
           'vscode',
           'cursor',
+          'browser',
           'shell',
           'foreground_window',
         ],
@@ -165,7 +166,7 @@ describe('responsive Library', () => {
     expect(screen.queryByText('Library')).not.toBeInTheDocument();
     expect(container.querySelector('.library-brand img')).toHaveAttribute(
       'src',
-      expect.stringContaining('data:image/svg+xml'),
+      expect.stringContaining('lyn-icon'),
     );
   });
 

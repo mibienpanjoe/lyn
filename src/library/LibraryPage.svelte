@@ -9,7 +9,7 @@
   import SettingsIcon from '@lucide/svelte/icons/settings-2';
   import { onDestroy, onMount, tick } from 'svelte';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import logoUrl from '../assets/lyn-icon.svg';
+  import logoUrl from '../assets/lyn-icon.png';
 
   import type {
     CaptureDetail,
