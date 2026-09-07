@@ -257,27 +257,44 @@ pub(crate) fn shell_status(home: &Path) -> IntegrationStatus {
     }
 }
 
-fn locate_browser_host_binary(home: &Path) -> PathBuf {
+fn is_executable_file(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = fs::metadata(path) {
+            return metadata.permissions().mode() & 0o111 != 0;
+        }
+        false
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn locate_browser_host_binary(home: &Path) -> Option<PathBuf> {
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(parent) = current_exe.parent() {
             let candidate = parent.join("lyn-browser-host");
-            if candidate.is_file() {
-                return candidate;
+            if is_executable_file(&candidate) {
+                return Some(candidate);
             }
         }
     }
     for standard in [
+        home.join(".local/bin/lyn-browser-host"),
         PathBuf::from("/usr/bin/lyn-browser-host"),
         PathBuf::from("/usr/local/bin/lyn-browser-host"),
-        home.join(".local/bin/lyn-browser-host"),
     ] {
-        if standard.is_file() {
-            return standard;
+        if is_executable_file(&standard) {
+            return Some(standard);
         }
     }
 
-    // Default to /usr/local/bin/lyn-browser-host
-    PathBuf::from("/usr/local/bin/lyn-browser-host")
+    None
 }
 
 pub(crate) fn install_integration_by_id(
@@ -336,7 +353,15 @@ fn install_vscode(home: &Path) -> InstallIntegrationResult {
 }
 
 fn install_browser(home: &Path) -> InstallIntegrationResult {
-    let host_bin = locate_browser_host_binary(home);
+    let Some(host_bin) = locate_browser_host_binary(home) else {
+        return InstallIntegrationResult {
+            id: IntegrationId::Browser,
+            success: false,
+            message: "Lyn browser host binary ('lyn-browser-host') not found or is not executable."
+                .to_owned(),
+            installed: false,
+        };
+    };
     let host_bin_str = host_bin.to_string_lossy();
 
     // Prepare JSON manifest
@@ -392,15 +417,25 @@ fn install_browser(home: &Path) -> InstallIntegrationResult {
     let _ = fs::write(unpacked_dir.join("background.js"), BROWSER_BACKGROUND_JS);
     let _ = fs::write(unpacked_dir.join("sanitize.cjs"), BROWSER_SANITIZE_CJS);
 
+    if registered_count == 0 {
+        return InstallIntegrationResult {
+            id: IntegrationId::Browser,
+            success: false,
+            message: "Failed to register Native Messaging host manifest in browser configuration directories."
+                .to_owned(),
+            installed: false,
+        };
+    }
+
     InstallIntegrationResult {
         id: IntegrationId::Browser,
-        success: registered_count > 0,
+        success: true,
         message: format!(
             "Native host manifest registered for {} browser location(s). Unpacked extension saved to {}.",
             registered_count,
             unpacked_dir.display()
         ),
-        installed: registered_count > 0,
+        installed: true,
     }
 }
 
@@ -579,11 +614,50 @@ mod tests {
         let initial_browser = browser_status(home);
         assert!(!initial_browser.installed);
 
+        let bin_dir = home.join(".local/bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let dummy_host = bin_dir.join("lyn-browser-host");
+        fs::write(&dummy_host, b"#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&dummy_host, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
         let res = install_browser(home);
         assert!(res.success);
         assert!(res.installed);
 
         let after_browser = browser_status(home);
         assert!(after_browser.installed);
+    }
+
+    #[test]
+    fn browser_install_fails_when_host_binary_missing_or_not_executable() {
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+
+        // Host binary completely missing
+        let res = install_browser(home);
+        assert!(!res.success);
+        assert!(!res.installed);
+
+        let after_browser = browser_status(home);
+        assert!(!after_browser.installed);
+
+        // Host binary present but not executable
+        let bin_dir = home.join(".local/bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let dummy_host = bin_dir.join("lyn-browser-host");
+        fs::write(&dummy_host, b"#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&dummy_host, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+
+        let res_non_exec = install_browser(home);
+        assert!(!res_non_exec.success);
+        assert!(!res_non_exec.installed);
     }
 }
