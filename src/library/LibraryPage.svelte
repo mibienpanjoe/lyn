@@ -37,6 +37,7 @@
     settings?: SettingsClient;
     modelClient?: SpeechModelClient;
     intClient?: IntegrationClient;
+    isLinux?: boolean;
   }
 
   let {
@@ -44,6 +45,7 @@
     settings,
     modelClient,
     intClient,
+    isLinux,
   }: Props = $props();
   let contexts = $state<ContextRef[]>([]);
   let scope = $state<LibraryScope>({ kind: 'recent' });
@@ -478,7 +480,7 @@
   </aside>
 
   {#if settingsMode}
-    <SettingsPanel client={settings} {modelClient} {intClient} />
+    <SettingsPanel client={settings} {modelClient} {intClient} {isLinux} />
   {:else}
     <section class="library-stream" aria-labelledby="library-title">
       <header class="library-toolbar">
