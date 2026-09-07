@@ -1,4 +1,7 @@
 const assert = require('node:assert');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 const { createBrowserObservation, sanitizeUrl } = require('./sanitize.cjs');
 
@@ -57,4 +60,26 @@ test('ended state clears url and title', () => {
   assert.strictEqual(obs.state, 'ended');
   assert.strictEqual(obs.url, null);
   assert.strictEqual(obs.title, null);
+});
+
+test('manifest.json defines consistent Chromium key and Firefox Gecko ID', () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8'),
+  );
+  assert.strictEqual(
+    manifest.browser_specific_settings?.gecko?.id,
+    'lyn-context-provider@mibienpanjoe.com',
+  );
+
+  assert.ok(manifest.key, 'manifest.key must be present');
+  const der = Buffer.from(manifest.key, 'base64');
+  const hash = crypto.createHash('sha256').update(der).digest();
+  const id = Array.from(hash.subarray(0, 16))
+    .map(
+      (b) =>
+        String.fromCharCode(97 + (b >> 4)) +
+        String.fromCharCode(97 + (b & 0xf)),
+    )
+    .join('');
+  assert.strictEqual(id, 'aecihlceemkggejjmpphmnhpdcgnhife');
 });

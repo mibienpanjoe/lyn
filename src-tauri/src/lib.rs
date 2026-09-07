@@ -185,7 +185,9 @@ pub fn run() {
             commands::platform::set_capture_popup_layout,
             commands::settings::get_settings,
             commands::settings::update_settings,
+            #[cfg(target_os = "linux")]
             commands::integrations::get_integration_statuses,
+            #[cfg(target_os = "linux")]
             commands::integrations::install_integration,
             commands::model::get_speech_model_status,
             commands::model::install_speech_model,

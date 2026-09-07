@@ -21,8 +21,43 @@ const BROWSER_MANIFEST_JSON: &str = include_str!("../../../integrations/browser/
 const BROWSER_BACKGROUND_JS: &str = include_str!("../../../integrations/browser/background.js");
 const BROWSER_SANITIZE_CJS: &str = include_str!("../../../integrations/browser/sanitize.cjs");
 
+pub(crate) const CHROMIUM_EXTENSION_ID: &str = "aecihlceemkggejjmpphmnhpdcgnhife";
+pub(crate) const FIREFOX_ADDON_ID: &str = "lyn-context-provider@mibienpanjoe.com";
+
 const EXTENSION_FOLDER_NAME: &str = "mibienpanjoe.lyn-context-provider-0.1.1";
 const NATIVE_HOST_NAME: &str = "com.mibienpanjoe.lyn.json";
+
+pub(crate) fn chromium_manifest_content(host_bin_str: &str) -> String {
+    format!(
+        r#"{{
+  "name": "com.mibienpanjoe.lyn",
+  "description": "Lyn Desktop Browser Context Host",
+  "path": "{}",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://{}/"
+  ]
+}}
+"#,
+        host_bin_str, CHROMIUM_EXTENSION_ID
+    )
+}
+
+pub(crate) fn firefox_manifest_content(host_bin_str: &str) -> String {
+    format!(
+        r#"{{
+  "name": "com.mibienpanjoe.lyn",
+  "description": "Lyn Desktop Browser Context Host",
+  "path": "{}",
+  "type": "stdio",
+  "allowed_extensions": [
+    "{}"
+  ]
+}}
+"#,
+        host_bin_str, FIREFOX_ADDON_ID
+    )
+}
 
 pub(crate) fn user_home_dir() -> PathBuf {
     std::env::var_os("HOME")
@@ -80,6 +115,12 @@ fn install_vscode_style_extension(extensions_dir: &Path) -> Result<PathBuf, Stri
 }
 
 pub(crate) fn list_integration_statuses(home: &Path) -> Vec<IntegrationStatus> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = home;
+        Vec::new()
+    }
+    #[cfg(target_os = "linux")]
     vec![
         cursor_status(home),
         vscode_status(home),
@@ -301,6 +342,17 @@ pub(crate) fn install_integration_by_id(
     home: &Path,
     input: InstallIntegrationInput,
 ) -> InstallIntegrationResult {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = home;
+        InstallIntegrationResult {
+            id: input.id,
+            success: false,
+            message: "Context integrations are only supported on Linux in this release.".to_owned(),
+            installed: false,
+        }
+    }
+    #[cfg(target_os = "linux")]
     match input.id {
         IntegrationId::Cursor => install_cursor(home),
         IntegrationId::Vscode => install_vscode(home),
@@ -364,36 +416,25 @@ fn install_browser(home: &Path) -> InstallIntegrationResult {
     };
     let host_bin_str = host_bin.to_string_lossy();
 
-    // Prepare JSON manifest
-    let manifest_content = format!(
-        r#"{{
-  "name": "com.mibienpanjoe.lyn",
-  "description": "Lyn Desktop Browser Context Host",
-  "path": "{}",
-  "type": "stdio",
-  "allowed_origins": [
-    "chrome-extension://*/*"
-  ]
-}}
-"#,
-        host_bin_str
-    );
+    let chromium_manifest = chromium_manifest_content(&host_bin_str);
+    let firefox_manifest = firefox_manifest_content(&host_bin_str);
 
-    let target_dirs = [
+    let chromium_target_dirs = [
         home.join(".config/google-chrome/NativeMessagingHosts"),
         home.join(".config/chromium/NativeMessagingHosts"),
         home.join(".config/BraveSoftware/Brave-Browser/NativeMessagingHosts"),
         home.join(".config/microsoft-edge/NativeMessagingHosts"),
-        home.join(".mozilla/native-messaging-hosts"),
     ];
 
+    let firefox_target_dirs = [home.join(".mozilla/native-messaging-hosts")];
+
     let mut registered_count = 0;
-    for dir in target_dirs {
+    for dir in chromium_target_dirs {
         if let Some(parent) = dir.parent() {
             if parent.is_dir() || dir.is_dir() {
                 if fs::create_dir_all(&dir).is_ok() {
                     let file_path = dir.join(NATIVE_HOST_NAME);
-                    if fs::write(&file_path, &manifest_content).is_ok() {
+                    if fs::write(&file_path, &chromium_manifest).is_ok() {
                         registered_count += 1;
                     }
                 }
@@ -401,28 +442,85 @@ fn install_browser(home: &Path) -> InstallIntegrationResult {
         }
     }
 
-    // If none existed, create google-chrome directory as default
+    for dir in firefox_target_dirs {
+        if let Some(parent) = dir.parent() {
+            if parent.is_dir() || dir.is_dir() {
+                if fs::create_dir_all(&dir).is_ok() {
+                    let file_path = dir.join(NATIVE_HOST_NAME);
+                    if fs::write(&file_path, &firefox_manifest).is_ok() {
+                        registered_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // If none existed, create default directories for both Chrome and Firefox
     if registered_count == 0 {
-        let fallback = home.join(".config/google-chrome/NativeMessagingHosts");
-        if fs::create_dir_all(&fallback).is_ok() {
-            let _ = fs::write(fallback.join(NATIVE_HOST_NAME), &manifest_content);
-            registered_count += 1;
+        let mut fallback_error = None;
+        let chrome_fallback = home.join(".config/google-chrome/NativeMessagingHosts");
+        match fs::create_dir_all(&chrome_fallback)
+            .and_then(|_| fs::write(chrome_fallback.join(NATIVE_HOST_NAME), &chromium_manifest))
+        {
+            Ok(_) => registered_count += 1,
+            Err(e) => fallback_error = Some(e),
+        }
+        let firefox_fallback = home.join(".mozilla/native-messaging-hosts");
+        match fs::create_dir_all(&firefox_fallback)
+            .and_then(|_| fs::write(firefox_fallback.join(NATIVE_HOST_NAME), &firefox_manifest))
+        {
+            Ok(_) => registered_count += 1,
+            Err(e) => {
+                if fallback_error.is_none() {
+                    fallback_error = Some(e);
+                }
+            }
+        }
+
+        if registered_count == 0 {
+            let detail = fallback_error.map(|e| format!(": {e}")).unwrap_or_default();
+            return InstallIntegrationResult {
+                id: IntegrationId::Browser,
+                success: false,
+                message: format!(
+                    "Failed to register Native Messaging host manifest in browser configuration directories{detail}"
+                ),
+                installed: false,
+            };
         }
     }
 
     // Write unpacked companion extension into ~/.local/share/lyn/integrations/browser/
     let unpacked_dir = home.join(".local/share/lyn/integrations/browser");
-    let _ = fs::create_dir_all(&unpacked_dir);
-    let _ = fs::write(unpacked_dir.join("manifest.json"), BROWSER_MANIFEST_JSON);
-    let _ = fs::write(unpacked_dir.join("background.js"), BROWSER_BACKGROUND_JS);
-    let _ = fs::write(unpacked_dir.join("sanitize.cjs"), BROWSER_SANITIZE_CJS);
-
-    if registered_count == 0 {
+    if let Err(e) = fs::create_dir_all(&unpacked_dir) {
         return InstallIntegrationResult {
             id: IntegrationId::Browser,
             success: false,
-            message: "Failed to register Native Messaging host manifest in browser configuration directories."
-                .to_owned(),
+            message: format!("Failed to create browser companion directory: {e}"),
+            installed: false,
+        };
+    }
+    if let Err(e) = fs::write(unpacked_dir.join("manifest.json"), BROWSER_MANIFEST_JSON) {
+        return InstallIntegrationResult {
+            id: IntegrationId::Browser,
+            success: false,
+            message: format!("Failed to write extension manifest: {e}"),
+            installed: false,
+        };
+    }
+    if let Err(e) = fs::write(unpacked_dir.join("background.js"), BROWSER_BACKGROUND_JS) {
+        return InstallIntegrationResult {
+            id: IntegrationId::Browser,
+            success: false,
+            message: format!("Failed to write extension background script: {e}"),
+            installed: false,
+        };
+    }
+    if let Err(e) = fs::write(unpacked_dir.join("sanitize.cjs"), BROWSER_SANITIZE_CJS) {
+        return InstallIntegrationResult {
+            id: IntegrationId::Browser,
+            success: false,
+            message: format!("Failed to write extension sanitize script: {e}"),
             installed: false,
         };
     }
@@ -517,31 +615,86 @@ fn install_shell(home: &Path) -> InstallIntegrationResult {
     );
 
     let bashrc = home.join(".bashrc");
-    if bashrc.is_file() {
-        let content = fs::read_to_string(&bashrc).unwrap_or_default();
-        if !content.contains("lyn-context.sh") {
-            let mut updated = content;
-            updated.push_str(&snippet);
-            let _ = fs::write(&bashrc, updated);
-        }
-    }
-
     let zshrc = home.join(".zshrc");
-    if zshrc.is_file() {
-        let content = fs::read_to_string(&zshrc).unwrap_or_default();
-        if !content.contains("lyn-context.sh") {
-            let mut updated = content;
-            updated.push_str(&snippet);
-            let _ = fs::write(&zshrc, updated);
+
+    let has_bashrc = bashrc.is_file();
+    let has_zshrc = zshrc.is_file();
+
+    let mut configured_targets = Vec::new();
+
+    if has_bashrc || has_zshrc {
+        if has_bashrc {
+            let content = match fs::read_to_string(&bashrc) {
+                Ok(c) => c,
+                Err(e) => {
+                    return InstallIntegrationResult {
+                        id: IntegrationId::Shell,
+                        success: false,
+                        message: format!("Failed to read ~/.bashrc: {e}"),
+                        installed: false,
+                    };
+                }
+            };
+            if !content.contains("lyn-context.sh") {
+                let mut updated = content;
+                updated.push_str(&snippet);
+                if let Err(e) = fs::write(&bashrc, updated) {
+                    return InstallIntegrationResult {
+                        id: IntegrationId::Shell,
+                        success: false,
+                        message: format!("Failed to write ~/.bashrc: {e}"),
+                        installed: false,
+                    };
+                }
+            }
+            configured_targets.push("~/.bashrc");
         }
+        if has_zshrc {
+            let content = match fs::read_to_string(&zshrc) {
+                Ok(c) => c,
+                Err(e) => {
+                    return InstallIntegrationResult {
+                        id: IntegrationId::Shell,
+                        success: false,
+                        message: format!("Failed to read ~/.zshrc: {e}"),
+                        installed: false,
+                    };
+                }
+            };
+            if !content.contains("lyn-context.sh") {
+                let mut updated = content;
+                updated.push_str(&snippet);
+                if let Err(e) = fs::write(&zshrc, updated) {
+                    return InstallIntegrationResult {
+                        id: IntegrationId::Shell,
+                        success: false,
+                        message: format!("Failed to write ~/.zshrc: {e}"),
+                        installed: false,
+                    };
+                }
+            }
+            configured_targets.push("~/.zshrc");
+        }
+    } else {
+        // Neither exists: create intended startup file (~/.bashrc)
+        if let Err(e) = fs::write(&bashrc, &snippet) {
+            return InstallIntegrationResult {
+                id: IntegrationId::Shell,
+                success: false,
+                message: format!("Failed to create ~/.bashrc: {e}"),
+                installed: false,
+            };
+        }
+        configured_targets.push("~/.bashrc");
     }
 
     InstallIntegrationResult {
         id: IntegrationId::Shell,
         success: true,
-        message:
-            "Shell integration saved to ~/.local/share/lyn/shell/ and appended to ~/.bashrc. Start a new terminal session to activate."
-                .to_owned(),
+        message: format!(
+            "Shell integration saved to ~/.local/share/lyn/shell/ and configured in {}. Start a new terminal session to activate.",
+            configured_targets.join(" and ")
+        ),
         installed: true,
     }
 }
@@ -630,6 +783,50 @@ mod tests {
 
         let after_browser = browser_status(home);
         assert!(after_browser.installed);
+
+        // Verify Chromium manifest output
+        let chrome_manifest_file = home
+            .join(".config/google-chrome/NativeMessagingHosts")
+            .join(NATIVE_HOST_NAME);
+        assert!(chrome_manifest_file.is_file());
+        let chrome_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&chrome_manifest_file).unwrap()).unwrap();
+        assert_eq!(chrome_json["name"], "com.mibienpanjoe.lyn");
+        assert_eq!(chrome_json["path"], dummy_host.to_string_lossy().as_ref());
+        let origins = chrome_json["allowed_origins"].as_array().unwrap();
+        assert_eq!(origins.len(), 1);
+        assert_eq!(
+            origins[0],
+            format!("chrome-extension://{}/", CHROMIUM_EXTENSION_ID)
+        );
+        assert!(chrome_json.get("allowed_extensions").is_none());
+
+        // Verify Firefox manifest output
+        let firefox_manifest_file = home
+            .join(".mozilla/native-messaging-hosts")
+            .join(NATIVE_HOST_NAME);
+        assert!(firefox_manifest_file.is_file());
+        let firefox_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&firefox_manifest_file).unwrap()).unwrap();
+        assert_eq!(firefox_json["name"], "com.mibienpanjoe.lyn");
+        assert_eq!(firefox_json["path"], dummy_host.to_string_lossy().as_ref());
+        let extensions = firefox_json["allowed_extensions"].as_array().unwrap();
+        assert_eq!(extensions.len(), 1);
+        assert_eq!(extensions[0], FIREFOX_ADDON_ID);
+        assert!(firefox_json.get("allowed_origins").is_none());
+
+        // Verify unpacked extension manifest consistency
+        let unpacked_manifest_file = home
+            .join(".local/share/lyn/integrations/browser")
+            .join("manifest.json");
+        assert!(unpacked_manifest_file.is_file());
+        let manifest_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&unpacked_manifest_file).unwrap()).unwrap();
+        assert_eq!(
+            manifest_json["browser_specific_settings"]["gecko"]["id"],
+            FIREFOX_ADDON_ID
+        );
+        assert!(manifest_json["key"].is_string());
     }
 
     #[test]
@@ -659,5 +856,70 @@ mod tests {
         let res_non_exec = install_browser(home);
         assert!(!res_non_exec.success);
         assert!(!res_non_exec.installed);
+    }
+
+    #[test]
+    fn shell_install_creates_bashrc_when_neither_exists() {
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+
+        let initial_shell = shell_status(home);
+        assert!(!initial_shell.installed);
+
+        let res = install_shell(home);
+        assert!(res.success);
+        assert!(res.installed);
+
+        let bashrc = home.join(".bashrc");
+        assert!(bashrc.is_file());
+        let content = fs::read_to_string(&bashrc).unwrap();
+        assert!(content.contains("lyn-context.sh"));
+
+        let after_shell = shell_status(home);
+        assert!(after_shell.installed);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn shell_install_fails_when_startup_file_unwritable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+
+        let bashrc = home.join(".bashrc");
+        fs::write(&bashrc, "# existing bashrc\n").unwrap();
+        fs::set_permissions(&bashrc, fs::Permissions::from_mode(0o444)).unwrap();
+
+        let res = install_shell(home);
+        assert!(!res.success);
+        assert!(!res.installed);
+
+        let after_shell = shell_status(home);
+        assert!(!after_shell.installed);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn browser_install_fails_when_companion_write_unwritable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+
+        let bin_dir = home.join(".local/bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let dummy_host = bin_dir.join("lyn-browser-host");
+        fs::write(&dummy_host, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&dummy_host, fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Make companion unpacked directory unwritable
+        let unpacked_dir = home.join(".local/share/lyn/integrations/browser");
+        fs::create_dir_all(&unpacked_dir).unwrap();
+        fs::set_permissions(&unpacked_dir, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let res = install_browser(home);
+        assert!(!res.success);
+        assert!(!res.installed);
     }
 }
