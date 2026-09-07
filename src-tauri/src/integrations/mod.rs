@@ -89,7 +89,10 @@ fn has_extension_installed(extensions_dir: &Path) -> bool {
         let name_str = name.to_string_lossy();
         if name_str.starts_with("mibienpanjoe.lyn-context-provider") {
             let path = entry.path();
-            if path.join("extension.cjs").is_file() || path.join("package.json").is_file() {
+            if path.join("package.json").is_file()
+                && path.join("extension.cjs").is_file()
+                && path.join("observation.cjs").is_file()
+            {
                 return true;
             }
         }
@@ -725,6 +728,34 @@ mod tests {
 
         let after_vscode = vscode_status(home);
         assert!(after_vscode.installed);
+    }
+
+    #[test]
+    fn has_extension_installed_requires_all_three_files() {
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let ext_dir = home.join(".cursor/extensions");
+        let target_dir = ext_dir.join("mibienpanjoe.lyn-context-provider-0.1.1");
+        fs::create_dir_all(&target_dir).unwrap();
+
+        // Empty directory
+        assert!(!has_extension_installed(&ext_dir));
+
+        // Only package.json
+        fs::write(target_dir.join("package.json"), "{}").unwrap();
+        assert!(!has_extension_installed(&ext_dir));
+
+        // package.json + extension.cjs (missing observation.cjs)
+        fs::write(target_dir.join("extension.cjs"), "// ext").unwrap();
+        assert!(!has_extension_installed(&ext_dir));
+
+        // observation.cjs added: now all 3 exist
+        fs::write(target_dir.join("observation.cjs"), "// obs").unwrap();
+        assert!(has_extension_installed(&ext_dir));
+
+        // Remove package.json: missing package.json
+        fs::remove_file(target_dir.join("package.json")).unwrap();
+        assert!(!has_extension_installed(&ext_dir));
     }
 
     #[test]
