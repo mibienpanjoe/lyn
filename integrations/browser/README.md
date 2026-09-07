@@ -21,6 +21,13 @@ pnpm provider:browser:install
 ```
 
 ### 2. Load the companion extension in your browser
+
+#### Chrome, Chromium, Brave, and Edge
 1. Open `chrome://extensions` (or `brave://extensions`, `edge://extensions`).
 2. Enable **Developer mode** (toggle in upper right).
-3. Click **Load unpacked** and select the `integrations/browser/` directory.
+3. Click **Load unpacked** and select the `integrations/browser/` directory (or `~/.local/share/lyn/integrations/browser/` if generated via Settings).
+
+#### Firefox
+1. Open `about:debugging#/runtime/this-firefox`.
+2. Click **Load Temporary Add-on…**.
+3. Select `integrations/browser/manifest.json` (or `~/.local/share/lyn/integrations/browser/manifest.json`).

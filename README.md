@@ -32,7 +32,7 @@ Lyn captures titleless text notes, screenshots, and voice notes, associates them
 Traditional note apps interrupt flow: open a notebook, name a page, pick a folder. Lyn is the opposite—an always-available capture surface that preserves the thought **with** the context it came from, then gets out of the way.
 
 - **Local-first:** core capture never depends on accounts, cloud APIs, or remote AI.
-- **Context-aware:** optional VS Code, Kitty, and shell providers bind to the pre-popup window; you can always choose manually.
+- **Context-aware:** optional VS Code, Cursor, Browser, Kitty, and shell providers bind to the pre-popup window; you can always choose manually.
 - **Save first:** enrichment (optional local speech captions) never blocks a successful save.
 
 ## Download / install
@@ -95,7 +95,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 |---|---|
 | Quick capture | Text, screenshot paste, voice note; Enter saves and dismisses |
 | Context | Live sessions + saved contexts; ambiguity never guesses |
-| Library | Chronology by project, detail, play/open media by opaque ID |
+| Library | Chronology by project, detail inspection, capture deletion, play/open media by opaque ID |
 | Search | Bounded local FTS over note bodies and user-visible captions |
 | Settings | Shortcut, theme, provider tie-break order, 1-click integrations installer, optional local speech model |
 
