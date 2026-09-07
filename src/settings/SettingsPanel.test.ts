@@ -2,10 +2,14 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import axe from 'axe-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppSettings } from '../lib/ipc-types';
+import type { AppSettings, IntegrationStatus } from '../lib/ipc-types';
 import SettingsPanel from './SettingsPanel.svelte';
 import type { SpeechModelClient } from './model-client';
 import { SettingsCommandError, type SettingsClient } from './settings-client';
+import {
+  type IntegrationClient,
+  IntegrationCommandError,
+} from './integration-client';
 
 const initial: AppSettings = {
   globalShortcut: 'Control+Shift+Space',
@@ -56,11 +60,25 @@ const modelClient: SpeechModelClient = {
   subscribe: vi.fn().mockResolvedValue(() => {}),
 };
 
+const defaultIntClient: IntegrationClient = {
+  list: vi.fn().mockResolvedValue([]),
+  install: vi.fn().mockResolvedValue({
+    id: 'cursor',
+    success: true,
+    message: 'Extension installed',
+    installed: true,
+  }),
+};
+
 afterEach(() => document.documentElement.removeAttribute('data-theme'));
 
 describe('Settings', () => {
   it('presents the global shortcut as keycaps until editing is requested', async () => {
-    render(SettingsPanel, { client: client(), modelClient });
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient: defaultIntClient,
+    });
 
     await screen.findByRole('heading', { name: 'Quick capture' });
     expect(screen.getByText('Ctrl', { selector: 'kbd' })).toBeVisible();
@@ -81,7 +99,11 @@ describe('Settings', () => {
   });
 
   it('pairs each theme label with a distinct decorative icon', async () => {
-    render(SettingsPanel, { client: client(), modelClient });
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient: defaultIntClient,
+    });
     await screen.findByRole('heading', { name: 'Appearance' });
 
     for (const name of ['System', 'Light', 'Dark']) {
@@ -96,6 +118,7 @@ describe('Settings', () => {
     const { container } = render(SettingsPanel, {
       client: settingsClient,
       modelClient,
+      intClient: defaultIntClient,
     });
     await fireEvent.click(
       await screen.findByRole('button', { name: 'Change shortcut' }),
@@ -166,7 +189,11 @@ describe('Settings', () => {
         Promise.resolve({ ...initial, theme: patch.theme ?? initial.theme }),
       );
     const settingsClient = client({ update });
-    render(SettingsPanel, { client: settingsClient, modelClient });
+    render(SettingsPanel, {
+      client: settingsClient,
+      modelClient,
+      intClient: defaultIntClient,
+    });
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Light' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Dark' }));
@@ -192,7 +219,11 @@ describe('Settings', () => {
         }),
       ),
     });
-    render(SettingsPanel, { client: settingsClient, modelClient });
+    render(SettingsPanel, {
+      client: settingsClient,
+      modelClient,
+      intClient: defaultIntClient,
+    });
     await fireEvent.click(
       await screen.findByRole('button', { name: 'Change shortcut' }),
     );
@@ -212,7 +243,11 @@ describe('Settings', () => {
 
   it('offers an explicit model install while leaving core capture independent', async () => {
     const settingsClient = client();
-    render(SettingsPanel, { client: settingsClient, modelClient });
+    render(SettingsPanel, {
+      client: settingsClient,
+      modelClient,
+      intClient: defaultIntClient,
+    });
     expect(await screen.findByText('Model not installed')).toBeVisible();
     expect(screen.getByText('Multilingual base')).toBeVisible();
     expect(screen.getByText('Approximately 150 MB')).toBeVisible();
@@ -244,7 +279,11 @@ describe('Settings', () => {
       }),
     };
 
-    render(SettingsPanel, { client: client(), modelClient: failedModel });
+    render(SettingsPanel, {
+      client: client(),
+      modelClient: failedModel,
+      intClient: defaultIntClient,
+    });
 
     expect(await screen.findByText('Installation failed')).toBeVisible();
     expect(
@@ -268,6 +307,7 @@ describe('Settings', () => {
     render(SettingsPanel, {
       client: settingsClient,
       modelClient: installedModel,
+      intClient: defaultIntClient,
     });
     const toggle = await screen.findByRole('checkbox', {
       name: 'Automatic transcription',
@@ -281,5 +321,236 @@ describe('Settings', () => {
     expect(await screen.findByRole('status')).toHaveTextContent(
       'Settings saved',
     );
+  });
+
+  it('displays integrations with statuses and allows 1-click installation', async () => {
+    const installMock = vi.fn().mockResolvedValue({
+      id: 'cursor',
+      success: true,
+      message: 'Extension installed successfully!',
+      installed: true,
+    });
+    const intClient: IntegrationClient = {
+      list: vi.fn().mockResolvedValue([
+        {
+          id: 'cursor',
+          name: 'Cursor IDE',
+          description:
+            'Reports the focused Cursor workspace folder to Lyn on capture.',
+          detected: true,
+          installed: false,
+          details: 'Cursor detected on this system',
+        },
+        {
+          id: 'vscode',
+          name: 'Visual Studio Code',
+          description:
+            'Reports the focused VS Code workspace folder to Lyn on capture.',
+          detected: true,
+          installed: true,
+          details: 'Extension active in ~/.vscode/extensions/',
+        },
+      ]),
+      install: installMock,
+    };
+
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient,
+    });
+
+    await screen.findByRole('heading', {
+      name: 'Integrations & Context Providers',
+    });
+    expect(screen.getByText('Cursor IDE')).toBeVisible();
+    expect(screen.getByText('Visual Studio Code')).toBeVisible();
+
+    const installButtons = screen.getAllByRole('button', {
+      name: 'Install Extension',
+    });
+    expect(installButtons.length).toBeGreaterThan(0);
+
+    await fireEvent.click(installButtons[0]);
+    expect(installMock).toHaveBeenCalledWith({ id: 'cursor' });
+    expect(
+      await screen.findByText('Extension installed successfully!'),
+    ).toBeVisible();
+  });
+
+  it('handles overlapping list requests and discards out-of-order stale responses', async () => {
+    let resolveFirst!: (value: IntegrationStatus[]) => void;
+    const firstPromise = new Promise<IntegrationStatus[]>((resolve) => {
+      resolveFirst = resolve;
+    });
+
+    let resolveSecond!: (value: IntegrationStatus[]) => void;
+    const secondPromise = new Promise<IntegrationStatus[]>((resolve) => {
+      resolveSecond = resolve;
+    });
+
+    let callCount = 0;
+    const listMock = vi.fn().mockImplementation(() => {
+      callCount++;
+      return callCount === 1 ? firstPromise : secondPromise;
+    });
+
+    const intClient: IntegrationClient = {
+      list: listMock,
+      install: vi.fn(),
+    };
+
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient,
+      isLinux: true,
+    });
+
+    // Request 1 initiated on mount
+    expect(listMock).toHaveBeenCalledTimes(1);
+
+    // Trigger Request 2 via refresh button
+    const refreshBtn = await screen.findByRole('button', {
+      name: 'Refresh integration statuses',
+    });
+    await fireEvent.click(refreshBtn);
+    expect(listMock).toHaveBeenCalledTimes(2);
+
+    // Resolve second request first (out-of-order)
+    const secondData: IntegrationStatus[] = [
+      {
+        id: 'browser',
+        name: 'Fresh Browser Integration',
+        description: 'Latest status',
+        detected: true,
+        installed: true,
+        details: 'Active',
+      },
+    ];
+    resolveSecond(secondData);
+
+    expect(await screen.findByText('Fresh Browser Integration')).toBeVisible();
+
+    // Now resolve first request later with stale data
+    const firstData: IntegrationStatus[] = [
+      {
+        id: 'browser',
+        name: 'Stale Browser Integration',
+        description: 'Old status',
+        detected: true,
+        installed: false,
+        details: 'Outdated',
+      },
+    ];
+    resolveFirst(firstData);
+
+    // Wait microtasks/timers
+    await new Promise((r) => setTimeout(r, 25));
+
+    // Stale data must NOT overwrite fresh data
+    expect(screen.queryByText('Stale Browser Integration')).toBeNull();
+    expect(screen.getByText('Fresh Browser Integration')).toBeVisible();
+  });
+
+  it('gates integrations section to Linux and prevents non-Linux builds from rendering it', async () => {
+    const listMock = vi.fn().mockResolvedValue([]);
+    const intClient: IntegrationClient = {
+      list: listMock,
+      install: vi.fn(),
+    };
+
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient,
+      isLinux: false,
+    });
+
+    await screen.findByRole('heading', { name: 'Appearance' });
+    expect(
+      screen.queryByRole('heading', {
+        name: 'Integrations & Context Providers',
+      }),
+    ).toBeNull();
+    expect(listMock).not.toHaveBeenCalled();
+  });
+
+  it('renders an alert with a retry action when integration discovery fails and recovers on retry', async () => {
+    const mockSuccessData: IntegrationStatus[] = [
+      {
+        id: 'cursor',
+        name: 'Cursor IDE',
+        description: 'Reports focused Cursor workspace.',
+        detected: true,
+        installed: false,
+        details: 'Cursor detected',
+      },
+    ];
+
+    const listMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Discovery service offline'))
+      .mockResolvedValueOnce(mockSuccessData);
+
+    const intClient: IntegrationClient = {
+      list: listMock,
+      install: vi.fn(),
+    };
+
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient,
+      isLinux: true,
+    });
+
+    await screen.findByRole('heading', {
+      name: 'Integrations & Context Providers',
+    });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Integration discovery failed.');
+    expect(screen.queryByText('Cursor IDE')).toBeNull();
+
+    const retryBtn = screen.getByRole('button', { name: 'Retry' });
+    expect(retryBtn).toBeVisible();
+
+    await fireEvent.click(retryBtn);
+    expect(listMock).toHaveBeenCalledTimes(2);
+
+    expect(await screen.findByText('Cursor IDE')).toBeVisible();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('preserves typed IntegrationCommandError message when discovery fails', async () => {
+    const listMock = vi.fn().mockRejectedValueOnce(
+      new IntegrationCommandError({
+        code: 'VALIDATION_ERROR',
+        message: 'Custom backend validation error',
+        retryable: false,
+        details: {},
+      }),
+    );
+
+    const intClient: IntegrationClient = {
+      list: listMock,
+      install: vi.fn(),
+    };
+
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient,
+      isLinux: true,
+    });
+
+    await screen.findByRole('heading', {
+      name: 'Integrations & Context Providers',
+    });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Custom backend validation error');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
   });
 });

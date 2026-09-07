@@ -3,6 +3,12 @@
   "name": "Lyn Context Provider",
   "version": "0.1.0",
   "description": "Privacy-bounded local context integration for Lyn",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwTNqWHxMuKzHcbfkUpmgNFj7zvlttilaM8xT5EljwW8qhttyVRJpca7hKciEh/qMLCLJqOdBxeGGifscbbmRNyiw2vOYLEyZD9gBCoWKTAddKEYPNVyfh+CAfMYYV3sAQxyq/Uezt+wkK7xzaG0MMy1y/5IWCrEGP7/gVppNtAdLpZnZnQkv4H2rDG1uq0UCfZ8ZjqP1GTL+Bcq/1FDgGQz1QQ17FfaItqasV0+56Cf6j0DJi7vr41vNhydNG7+rTJz/M9oSzfAXNjkDvgmcQeWE7FADGkfFrsHLGiz5qp2j9nZ19u0b1jB3cdLF/kub5GzH8XZuyXNCF1Na1ZVcLwIDAQAB",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "lyn-context-provider@mibienpanjoe.com"
+    }
+  },
   "background": {
     "service_worker": "background.js"
   },

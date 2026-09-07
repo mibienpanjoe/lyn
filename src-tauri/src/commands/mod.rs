@@ -2,6 +2,7 @@
 
 pub(crate) mod capture;
 pub(crate) mod context;
+pub(crate) mod integrations;
 pub(crate) mod library;
 pub(crate) mod model;
 pub(crate) mod platform;

@@ -161,3 +161,11 @@ export type PlayStagedAudioInput = { sessionId: CaptureSessionId, stagedMediaId:
 export type StopAudioPlaybackInput = { playbackTargetId: string, };
 
 export type AudioPlaybackResult = { playing: boolean, durationMs: number | null, };
+
+export type IntegrationId = "cursor" | "vscode" | "browser" | "kitty" | "shell";
+
+export type IntegrationStatus = { id: IntegrationId, name: string, description: string, detected: boolean, installed: boolean, details: string | null, };
+
+export type InstallIntegrationInput = { id: IntegrationId, };
+
+export type InstallIntegrationResult = { id: IntegrationId, success: boolean, message: string, installed: boolean, };

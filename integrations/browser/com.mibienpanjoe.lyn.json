@@ -3,5 +3,5 @@
   "description": "Lyn Desktop Browser Context Host",
   "path": "/usr/local/bin/lyn-browser-host",
   "type": "stdio",
-  "allowed_origins": ["chrome-extension://*/*"]
+  "allowed_origins": ["chrome-extension://aecihlceemkggejjmpphmnhpdcgnhife/"]
 }

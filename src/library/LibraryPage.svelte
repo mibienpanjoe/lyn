@@ -25,6 +25,7 @@
   import SettingsPanel from '../settings/SettingsPanel.svelte';
   import type { SettingsClient } from '../settings/settings-client';
   import type { SpeechModelClient } from '../settings/model-client';
+  import type { IntegrationClient } from '../settings/integration-client';
   import {
     LibraryCommandError,
     libraryClient,
@@ -35,9 +36,17 @@
     client?: LibraryClient;
     settings?: SettingsClient;
     modelClient?: SpeechModelClient;
+    intClient?: IntegrationClient;
+    isLinux?: boolean;
   }
 
-  let { client = libraryClient, settings, modelClient }: Props = $props();
+  let {
+    client = libraryClient,
+    settings,
+    modelClient,
+    intClient,
+    isLinux,
+  }: Props = $props();
   let contexts = $state<ContextRef[]>([]);
   let scope = $state<LibraryScope>({ kind: 'recent' });
   let captures = $state<CaptureSummary[]>([]);
@@ -471,7 +480,7 @@
   </aside>
 
   {#if settingsMode}
-    <SettingsPanel client={settings} {modelClient} />
+    <SettingsPanel client={settings} {modelClient} {intClient} {isLinux} />
   {:else}
     <section class="library-stream" aria-labelledby="library-title">
       <header class="library-toolbar">

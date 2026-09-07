@@ -29,6 +29,8 @@ fn main() {
         "set_capture_popup_layout",
         "get_settings",
         "update_settings",
+        "get_integration_statuses",
+        "install_integration",
         "get_speech_model_status",
         "install_speech_model",
         "cancel_speech_model_install",

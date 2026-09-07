@@ -14,6 +14,7 @@ import type {
   SearchResultItem,
   SpeechModelStatus,
   ThemeSetting,
+  IntegrationStatus,
 } from './ipc-types';
 import type {
   CaptureFilters,
@@ -22,6 +23,7 @@ import type {
 } from '../library/library-client';
 import type { SettingsClient } from '../settings/settings-client';
 import type { SpeechModelClient } from '../settings/model-client';
+import type { IntegrationClient } from '../settings/integration-client';
 import type { CaptureClient } from '../capture/capture-client';
 
 const sampleContexts: ContextRef[] = [
@@ -453,5 +455,70 @@ export const devCaptureClient: CaptureClient = {
   },
   async onContextSourcesChanged() {
     return () => {};
+  },
+};
+
+let devIntegrations: IntegrationStatus[] = [
+  {
+    id: 'cursor',
+    name: 'Cursor IDE',
+    description:
+      'Reports the focused Cursor workspace folder to Lyn on capture.',
+    detected: true,
+    installed: false,
+    details: 'Cursor detected on this system',
+  },
+  {
+    id: 'vscode',
+    name: 'Visual Studio Code',
+    description:
+      'Reports the focused VS Code workspace folder to Lyn on capture.',
+    detected: true,
+    installed: true,
+    details: 'Extension active in ~/.vscode/extensions/',
+  },
+  {
+    id: 'browser',
+    name: 'Web Browser (Chrome, Brave, Edge, Firefox)',
+    description:
+      'Correlates active localhost development tabs with your repository context.',
+    detected: true,
+    installed: false,
+    details: 'Supported web browser detected',
+  },
+  {
+    id: 'kitty',
+    name: 'Kitty Terminal',
+    description:
+      'Monitors exact focused terminal pane without inspecting commands or output.',
+    detected: false,
+    installed: false,
+    details: null,
+  },
+  {
+    id: 'shell',
+    name: 'Terminal Shell (Bash / Zsh)',
+    description:
+      'Associates GNOME Terminal and external shells with current git repository.',
+    detected: true,
+    installed: false,
+    details: 'Available for Bash and Zsh',
+  },
+];
+
+export const devIntegrationClient: IntegrationClient = {
+  async list() {
+    return [...devIntegrations];
+  },
+  async install(input) {
+    devIntegrations = devIntegrations.map((item) =>
+      item.id === input.id ? { ...item, installed: true } : item,
+    );
+    return {
+      id: input.id,
+      success: true,
+      message: `${input.id} integration installed successfully!`,
+      installed: true,
+    };
   },
 };
