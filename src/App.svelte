@@ -7,6 +7,7 @@
   import { applyTheme, settingsClient } from './settings/settings-client';
   import {
     devCaptureClient,
+    devIntegrationClient,
     devLibraryClient,
     devSettingsClient,
     devSpeechModelClient,
@@ -38,5 +39,6 @@
     client={tauriActive ? undefined : devLibraryClient}
     settings={tauriActive ? undefined : devSettingsClient}
     modelClient={tauriActive ? undefined : devSpeechModelClient}
+    intClient={tauriActive ? undefined : devIntegrationClient}
   />
 {/if}

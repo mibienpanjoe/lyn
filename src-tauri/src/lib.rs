@@ -11,6 +11,7 @@ mod context;
 pub mod contract;
 mod enrichment;
 pub mod error;
+pub mod integrations;
 mod intelligence;
 mod library;
 mod media;
@@ -184,6 +185,8 @@ pub fn run() {
             commands::platform::set_capture_popup_layout,
             commands::settings::get_settings,
             commands::settings::update_settings,
+            commands::integrations::get_integration_statuses,
+            commands::integrations::install_integration,
             commands::model::get_speech_model_status,
             commands::model::install_speech_model,
             commands::model::cancel_speech_model_install,

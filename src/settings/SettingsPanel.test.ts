@@ -6,6 +6,7 @@ import type { AppSettings } from '../lib/ipc-types';
 import SettingsPanel from './SettingsPanel.svelte';
 import type { SpeechModelClient } from './model-client';
 import { SettingsCommandError, type SettingsClient } from './settings-client';
+import type { IntegrationClient } from './integration-client';
 
 const initial: AppSettings = {
   globalShortcut: 'Control+Shift+Space',
@@ -281,5 +282,60 @@ describe('Settings', () => {
     expect(await screen.findByRole('status')).toHaveTextContent(
       'Settings saved',
     );
+  });
+
+  it('displays integrations with statuses and allows 1-click installation', async () => {
+    const installMock = vi.fn().mockResolvedValue({
+      id: 'cursor',
+      success: true,
+      message: 'Extension installed successfully!',
+      installed: true,
+    });
+    const intClient: IntegrationClient = {
+      list: vi.fn().mockResolvedValue([
+        {
+          id: 'cursor',
+          name: 'Cursor IDE',
+          description:
+            'Reports the focused Cursor workspace folder to Lyn on capture.',
+          detected: true,
+          installed: false,
+          details: 'Cursor detected on this system',
+        },
+        {
+          id: 'vscode',
+          name: 'Visual Studio Code',
+          description:
+            'Reports the focused VS Code workspace folder to Lyn on capture.',
+          detected: true,
+          installed: true,
+          details: 'Extension active in ~/.vscode/extensions/',
+        },
+      ]),
+      install: installMock,
+    };
+
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient,
+    });
+
+    await screen.findByRole('heading', {
+      name: 'Integrations & Context Providers',
+    });
+    expect(screen.getByText('Cursor IDE')).toBeVisible();
+    expect(screen.getByText('Visual Studio Code')).toBeVisible();
+
+    const installButtons = screen.getAllByRole('button', {
+      name: 'Install Extension',
+    });
+    expect(installButtons.length).toBeGreaterThan(0);
+
+    await fireEvent.click(installButtons[0]);
+    expect(installMock).toHaveBeenCalledWith({ id: 'cursor' });
+    expect(
+      await screen.findByText('Extension installed successfully!'),
+    ).toBeVisible();
   });
 });

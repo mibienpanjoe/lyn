@@ -15,6 +15,8 @@ permissions = [
   "allow-stop-audio-playback",
   "allow-get-settings",
   "allow-update-settings",
+  "allow-get-integration-statuses",
+  "allow-install-integration",
   "allow-get-speech-model-status",
   "allow-install-speech-model",
   "allow-cancel-speech-model-install",

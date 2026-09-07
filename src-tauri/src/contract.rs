@@ -684,6 +684,42 @@ pub struct AudioPlaybackResult {
     pub duration_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum IntegrationId {
+    Cursor,
+    Vscode,
+    Browser,
+    Kitty,
+    Shell,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegrationStatus {
+    pub id: IntegrationId,
+    pub name: String,
+    pub description: String,
+    pub detected: bool,
+    pub installed: bool,
+    pub details: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InstallIntegrationInput {
+    pub id: IntegrationId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallIntegrationResult {
+    pub id: IntegrationId,
+    pub success: bool,
+    pub message: String,
+    pub installed: bool,
+}
+
 pub fn typescript_bindings() -> String {
     let config = Config::default().with_large_int("number");
     let declarations = [
@@ -768,6 +804,10 @@ pub fn typescript_bindings() -> String {
         PlayStagedAudioInput::decl(&config),
         StopAudioPlaybackInput::decl(&config),
         AudioPlaybackResult::decl(&config),
+        IntegrationId::decl(&config),
+        IntegrationStatus::decl(&config),
+        InstallIntegrationInput::decl(&config),
+        InstallIntegrationResult::decl(&config),
     ]
     .map(|declaration| format!("export {declaration}"));
     format!(

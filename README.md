@@ -97,7 +97,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 | Context | Live sessions + saved contexts; ambiguity never guesses |
 | Library | Chronology by project, detail, play/open media by opaque ID |
 | Search | Bounded local FTS over note bodies and user-visible captions |
-| Settings | Shortcut, theme, provider tie-break order, optional local speech model |
+| Settings | Shortcut, theme, provider tie-break order, 1-click integrations installer, optional local speech model |
 
 ## Optional local speech
 
@@ -105,12 +105,12 @@ Settings can install a **CPU-only** whisper.cpp engine and multilingual Whisper 
 
 ## Context providers (Linux X11)
 
-Providers are optional. Start Lyn first so private user-only sockets exist, focus the editor or terminal that owns the work, then invoke the shortcut.
+Providers are optional. You can configure all of them with **1-click directly in Lyn Settings (under Integrations & Context Providers)** with zero terminal commands, or manually using the guides below:
 
-- **VS Code & Cursor:** [`integrations/vscode/`](integrations/vscode/README.md) — `pnpm provider:vscode:package` → install `/tmp/lyn-context-provider.vsix` via `code` or `cursor` (`pnpm provider:cursor:install`)
-- **Browser (Chrome, Chromium, Brave, Edge, Firefox):** [`integrations/browser/`](integrations/browser/README.md) — `pnpm provider:browser:install` → load unpacked extension in browser
-- **Kitty:** [`integrations/kitty/`](integrations/kitty/README.md) — watcher path in `kitty.conf`
-- **Shell helper:** [`integrations/shell/`](integrations/shell/README.md) — bounded `lyn-context` observations
+- **VS Code & Cursor:** [`integrations/vscode/`](integrations/vscode/README.md) — 1-click install in Lyn Settings, or `pnpm provider:vscode:package` → install `/tmp/lyn-context-provider.vsix` via `code` or `cursor`
+- **Browser (Chrome, Chromium, Brave, Edge, Firefox):** [`integrations/browser/`](integrations/browser/README.md) — 1-click register in Lyn Settings, or `pnpm provider:browser:install` → load unpacked extension in browser
+- **Kitty:** [`integrations/kitty/`](integrations/kitty/README.md) — 1-click configure in Lyn Settings, or watcher path in `kitty.conf`
+- **Shell helper:** [`integrations/shell/`](integrations/shell/README.md) — 1-click add to `~/.bashrc` in Lyn Settings, or bounded `lyn-context` observations
 
 Providers never send terminal output, editor buffers, or agent chat into Lyn.
 

@@ -2,14 +2,20 @@
   import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import CheckIcon from '@lucide/svelte/icons/check';
+  import CodeIcon from '@lucide/svelte/icons/code';
+  import GlobeIcon from '@lucide/svelte/icons/globe';
   import MonitorIcon from '@lucide/svelte/icons/monitor';
   import MoonIcon from '@lucide/svelte/icons/moon';
+  import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
   import SunIcon from '@lucide/svelte/icons/sun';
+  import TerminalIcon from '@lucide/svelte/icons/terminal';
   import { onDestroy, onMount, tick } from 'svelte';
 
   import type {
     AppSettings,
     ContextProviderKind,
+    IntegrationId,
+    IntegrationStatus,
     ThemeSetting,
     SpeechModelStatus,
   } from '../lib/ipc-types';
@@ -20,14 +26,23 @@
     type SettingsClient,
   } from './settings-client';
   import { speechModelClient, type SpeechModelClient } from './model-client';
+  import {
+    integrationClient,
+    type IntegrationClient,
+    IntegrationCommandError,
+  } from './integration-client';
 
   interface Props {
     client?: SettingsClient;
     modelClient?: SpeechModelClient;
+    intClient?: IntegrationClient;
   }
 
-  let { client = settingsClient, modelClient = speechModelClient }: Props =
-    $props();
+  let {
+    client = settingsClient,
+    modelClient = speechModelClient,
+    intClient = integrationClient,
+  }: Props = $props();
   let saved = $state<AppSettings | null>(null);
   let draft = $state<AppSettings | null>(null);
   let loading = $state(true);
@@ -41,6 +56,13 @@
   let shortcutBeforeEdit = '';
   let pendingSave: AppSettings | null = null;
   let unsubscribeModel: (() => void) | null = null;
+
+  let integrations = $state<IntegrationStatus[]>([]);
+  let loadingIntegrations = $state(true);
+  let installingIntegrationId = $state<IntegrationId | null>(null);
+  let integrationFeedback = $state<
+    Record<string, { success: boolean; message: string }>
+  >({});
 
   const providerNames: Record<ContextProviderKind, string> = {
     manual: 'Manual selection',
@@ -69,6 +91,7 @@
   onMount(() => {
     void load();
     void loadModel();
+    void loadIntegrations();
     void modelClient
       .subscribe((status) => (model = status))
       .then((unsubscribe) => {
@@ -79,6 +102,41 @@
   onDestroy(() => {
     unsubscribeModel?.();
   });
+
+  async function loadIntegrations() {
+    loadingIntegrations = true;
+    try {
+      integrations = await intClient.list();
+    } catch {
+      // Keep silent or fallback
+    } finally {
+      loadingIntegrations = false;
+    }
+  }
+
+  async function installIntegration(id: IntegrationId) {
+    if (installingIntegrationId) return;
+    installingIntegrationId = id;
+    try {
+      const result = await intClient.install({ id });
+      integrationFeedback = {
+        ...integrationFeedback,
+        [id]: { success: result.success, message: result.message },
+      };
+      await loadIntegrations();
+    } catch (caught) {
+      const msg =
+        caught instanceof IntegrationCommandError
+          ? caught.message
+          : 'Integration installation failed.';
+      integrationFeedback = {
+        ...integrationFeedback,
+        [id]: { success: false, message: msg },
+      };
+    } finally {
+      installingIntegrationId = null;
+    }
+  }
 
   async function loadModel() {
     try {
@@ -326,6 +384,105 @@
             </li>
           {/each}
         </ol>
+      </section>
+
+      <section
+        class="settings-section integrations-section"
+        aria-labelledby="integrations-title"
+      >
+        <div class="integrations-header">
+          <div>
+            <h2 id="integrations-title">Integrations & Context Providers</h2>
+            <p>
+              Connect your editors, browsers, and terminals with 1-click so Lyn
+              automatically associates captures with your active workspace.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="refresh-integrations-btn"
+            title="Refresh status"
+            aria-label="Refresh integration statuses"
+            onclick={() => loadIntegrations()}
+          >
+            <RefreshCwIcon
+              size={14}
+              class={loadingIntegrations ? 'spin' : ''}
+            />
+          </button>
+        </div>
+
+        <div class="integrations-list">
+          {#if loadingIntegrations && integrations.length === 0}
+            <p class="integrations-loading">Scanning local environment…</p>
+          {:else}
+            {#each integrations as item (item.id)}
+              <div class="integration-card" data-installed={item.installed}>
+                <div class="integration-icon-wrap" aria-hidden="true">
+                  {#if item.id === 'cursor' || item.id === 'vscode'}
+                    <CodeIcon size={18} />
+                  {:else if item.id === 'browser'}
+                    <GlobeIcon size={18} />
+                  {:else}
+                    <TerminalIcon size={18} />
+                  {/if}
+                </div>
+
+                <div class="integration-info">
+                  <div class="integration-title-row">
+                    <strong>{item.name}</strong>
+                    {#if item.installed}
+                      <span class="integration-badge installed">
+                        <CheckIcon size={11} aria-hidden="true" /> Installed
+                      </span>
+                    {:else if item.detected}
+                      <span class="integration-badge detected">Detected</span>
+                    {:else}
+                      <span class="integration-badge ready">Ready</span>
+                    {/if}
+                  </div>
+                  <p class="integration-desc">{item.description}</p>
+
+                  {#if integrationFeedback[item.id]}
+                    <div
+                      class="integration-feedback"
+                      class:success={integrationFeedback[item.id].success}
+                      class:failure={!integrationFeedback[item.id].success}
+                    >
+                      {integrationFeedback[item.id].message}
+                    </div>
+                  {:else if item.details}
+                    <div class="integration-details-text">{item.details}</div>
+                  {/if}
+                </div>
+
+                <div class="integration-action">
+                  <button
+                    type="button"
+                    class="secondary-action"
+                    class:installed-btn={item.installed}
+                    disabled={installingIntegrationId !== null}
+                    onclick={() => installIntegration(item.id)}
+                  >
+                    {#if installingIntegrationId === item.id}
+                      Installing…
+                    {:else if item.installed}
+                      Reinstall
+                    {:else if item.id === 'kitty'}
+                      Enable Watcher
+                    {:else if item.id === 'browser'}
+                      Register Host
+                    {:else if item.id === 'shell'}
+                      Add to Shell
+                    {:else}
+                      Install Extension
+                    {/if}
+                  </button>
+                </div>
+              </div>
+            {/each}
+          {/if}
+        </div>
       </section>
 
       <section class="settings-section" aria-labelledby="theme-title">
