@@ -45,3 +45,16 @@ export KITTY_WINDOW_ID=42
 source "$integration_dir/lyn-context.sh"
 [[ ! -e "$log" ]]
 [[ -z "${LYN_CONTEXT_WATCHER_PID:-}" ]]
+
+unset KITTY_WINDOW_ID LYN_CONTEXT_HELPER LYN_CONTEXT_WATCHER_PID
+export HOME="$fixture_dir/home"
+export XDG_DATA_HOME="$HOME/.local/share"
+mkdir -p "$XDG_DATA_HOME/lyn/bin"
+ln -s "$helper" "$XDG_DATA_HOME/lyn/bin/lyn-context"
+source "$integration_dir/lyn-context.sh"
+watcher_pid=$LYN_CONTEXT_WATCHER_PID
+for _ in {1..20}; do
+  [[ -f "$log" ]] && break
+  sleep 0.01
+done
+[[ $(<"$log") == "watch --process $$" ]]

@@ -152,6 +152,15 @@ pub fn run() {
             let _ = context::browser_provider::start(app.handle().clone());
             #[cfg(target_os = "linux")]
             let _ = context::shell_provider::start(app.handle().clone());
+            #[cfg(target_os = "linux")]
+            {
+                if let Ok(current_exe) = std::env::current_exe() {
+                    let _ = integrations::refresh_shell_helper(
+                        &integrations::user_home_dir(),
+                        &current_exe,
+                    );
+                }
+            }
             #[cfg(desktop)]
             {
                 let _ = app

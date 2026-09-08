@@ -269,6 +269,41 @@ pub(crate) fn kitty_status(home: &Path) -> IntegrationStatus {
     }
 }
 
+fn shell_bootstrap_path(home: &Path) -> PathBuf {
+    home.join(".local/share/lyn/shell/lyn-context.sh")
+}
+
+fn shell_helper_path(home: &Path) -> PathBuf {
+    home.join(".local/share/lyn/bin/lyn-context")
+}
+
+fn write_shell_bootstrap(home: &Path) -> std::io::Result<PathBuf> {
+    let script_file = shell_bootstrap_path(home);
+    if let Some(parent) = script_file.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&script_file, SHELL_BOOTSTRAP_SH)?;
+    Ok(script_file)
+}
+
+pub(crate) fn refresh_shell_helper(home: &Path, current_exe: &Path) -> std::io::Result<PathBuf> {
+    write_shell_bootstrap(home)?;
+    let dest = shell_helper_path(home);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if dest.symlink_metadata().is_ok() {
+        fs::remove_file(&dest)?;
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(current_exe, &dest)?;
+    #[cfg(not(unix))]
+    {
+        let _ = current_exe;
+    }
+    Ok(dest)
+}
+
 pub(crate) fn shell_status(home: &Path) -> IntegrationStatus {
     let bashrc = home.join(".bashrc");
     let zshrc = home.join(".zshrc");
@@ -284,7 +319,9 @@ pub(crate) fn shell_status(home: &Path) -> IntegrationStatus {
 
     let installed = bash_has || zsh_has;
 
-    let details = if installed {
+    let details = if installed && shell_helper_path(home).is_file() {
+        Some("Shell startup script configured. Lyn refreshes the helper on launch.".to_owned())
+    } else if installed {
         Some("Shell startup script configured".to_owned())
     } else {
         Some("Available for Bash and Zsh".to_owned())
@@ -591,18 +628,7 @@ fn install_kitty(home: &Path) -> InstallIntegrationResult {
 }
 
 fn install_shell(home: &Path) -> InstallIntegrationResult {
-    let shell_share_dir = home.join(".local/share/lyn/shell");
-    if let Err(e) = fs::create_dir_all(&shell_share_dir) {
-        return InstallIntegrationResult {
-            id: IntegrationId::Shell,
-            success: false,
-            message: format!("Failed to create shell integration directory: {e}"),
-            installed: false,
-        };
-    }
-
-    let script_file = shell_share_dir.join("lyn-context.sh");
-    if let Err(e) = fs::write(&script_file, SHELL_BOOTSTRAP_SH) {
+    if let Err(e) = write_shell_bootstrap(home) {
         return InstallIntegrationResult {
             id: IntegrationId::Shell,
             success: false,
@@ -610,7 +636,11 @@ fn install_shell(home: &Path) -> InstallIntegrationResult {
             installed: false,
         };
     }
+    if let Ok(current_exe) = std::env::current_exe() {
+        let _ = refresh_shell_helper(home, &current_exe);
+    }
 
+    let script_file = shell_bootstrap_path(home);
     let snippet = format!(
         "\n# Lyn Context Provider\n[ -f \"{}\" ] && source \"{}\"\n",
         script_file.display(),
@@ -695,7 +725,7 @@ fn install_shell(home: &Path) -> InstallIntegrationResult {
         id: IntegrationId::Shell,
         success: true,
         message: format!(
-            "Shell integration saved to ~/.local/share/lyn/shell/ and configured in {}. Start a new terminal session to activate.",
+            "Shell integration saved. Lyn keeps the helper up to date; start a new terminal session to activate. Configured in {}.",
             configured_targets.join(" and ")
         ),
         installed: true,
@@ -908,6 +938,23 @@ mod tests {
 
         let after_shell = shell_status(home);
         assert!(after_shell.installed);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn refresh_shell_helper_points_at_the_running_binary() {
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let exe = std::env::current_exe().unwrap();
+        let dest = refresh_shell_helper(home, &exe).unwrap();
+        assert_eq!(
+            fs::canonicalize(&dest).unwrap(),
+            fs::canonicalize(&exe).unwrap()
+        );
+        let bootstrap =
+            fs::read_to_string(home.join(".local/share/lyn/shell/lyn-context.sh")).unwrap();
+        assert!(bootstrap.contains("lyn/bin/lyn-context"));
+        assert!(dest.is_file());
     }
 
     #[test]

@@ -373,6 +373,14 @@
         'Navigateur web pris en charge détecté',
       )
       .replace('Available for Bash and Zsh', 'Disponible pour Bash et Zsh')
+      .replace(
+        'Shell startup script configured. Lyn refreshes the helper on launch.',
+        'Script de démarrage configuré. Lyn met à jour l’assistant à chaque lancement.',
+      )
+      .replace(
+        'Shell startup script configured',
+        'Script de démarrage du terminal configuré',
+      )
       .replace('Extension active in', 'Extension active dans')
       .replace('Watcher configured in', 'Watcher configuré dans');
   }
