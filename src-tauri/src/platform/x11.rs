@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use tauri::{AppHandle, Manager};
 use x11rb::{
     connection::Connection,
@@ -78,19 +80,23 @@ impl CaptureWindowPlatform for X11CaptureWindowPlatform {
 }
 
 pub(crate) fn is_lyn_window(window: u32) -> bool {
-    let Ok((connection, _)) = x11rb::connect(None) else {
-        return false;
-    };
-    let Ok(reply) =
-        connection.get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64)
-    else {
-        return false;
-    };
-    let Ok(reply) = reply.reply() else {
-        return false;
-    };
-    reply
-        .value
+    window_class(window).is_some_and(|class| is_lyn_class(&class))
+}
+
+fn window_class(window: u32) -> Option<Vec<u8>> {
+    let (connection, _) = x11rb::connect(None).ok()?;
+    Some(
+        connection
+            .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64)
+            .ok()?
+            .reply()
+            .ok()?
+            .value,
+    )
+}
+
+fn is_lyn_class(window_class: &[u8]) -> bool {
+    window_class
         .split(|byte| *byte == 0)
         .any(|part| part.eq_ignore_ascii_case(b"lyn"))
 }
@@ -139,6 +145,8 @@ pub(crate) fn active_browser_window() -> Result<(u32, ContextWindowKind), Platfo
     }
 }
 
+static LAST_ACTIVE_CONTEXT_WINDOW: Mutex<Option<(u32, ContextWindowKind)>> = Mutex::new(None);
+
 pub(crate) fn active_context_window() -> Result<(u32, ContextWindowKind), PlatformError> {
     let (connection, _) = x11rb::connect(None).map_err(|_| PlatformError::Unsupported)?;
     let window = active_window()?;
@@ -148,9 +156,28 @@ pub(crate) fn active_context_window() -> Result<(u32, ContextWindowKind), Platfo
         .reply()
         .map_err(|_| PlatformError::Unsupported)?
         .value;
-    context_window_kind(&window_class)
-        .map(|kind| (window, kind))
-        .ok_or(PlatformError::Unsupported)
+    remember_active_context_window(window, &window_class)
+}
+
+// Showing Lyn necessarily moves OS focus away from the observed window, so a
+// Lyn window keeps the last observed context window authoritative instead of
+// silently expiring the bounded observation the capture was invoked from.
+fn remember_active_context_window(
+    window: u32,
+    window_class: &[u8],
+) -> Result<(u32, ContextWindowKind), PlatformError> {
+    if is_lyn_class(window_class) {
+        return LAST_ACTIVE_CONTEXT_WINDOW
+            .lock()
+            .ok()
+            .and_then(|last| *last)
+            .ok_or(PlatformError::Unsupported);
+    }
+    let active = context_window_kind(window_class).map(|kind| (window, kind));
+    if let Ok(mut last) = LAST_ACTIVE_CONTEXT_WINDOW.lock() {
+        *last = active;
+    }
+    active.ok_or(PlatformError::Unsupported)
 }
 
 fn context_window_kind(window_class: &[u8]) -> Option<ContextWindowKind> {
@@ -224,7 +251,14 @@ fn activate_window(window: u32) -> Result<(), PlatformError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ContextWindowKind, context_window_kind};
+    use std::sync::Mutex;
+
+    use super::{
+        ContextWindowKind, LAST_ACTIVE_CONTEXT_WINDOW, PlatformError, context_window_kind,
+        remember_active_context_window,
+    };
+
+    static ACTIVE_WINDOW_MEMO_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn accepts_supported_vscode_and_cursor_window_classes() {
@@ -291,5 +325,48 @@ mod tests {
         );
         assert_eq!(context_window_kind(b"lyn\0Lyn\0"), None);
         assert_eq!(context_window_kind(b"\0"), None);
+    }
+
+    #[test]
+    fn lyn_focus_keeps_the_pre_popup_context_window_authoritative() {
+        let _guard = ACTIVE_WINDOW_MEMO_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *LAST_ACTIVE_CONTEXT_WINDOW.lock().unwrap() = None;
+
+        assert_eq!(
+            remember_active_context_window(42, b"kitty\0kitty\0"),
+            Ok((42, ContextWindowKind::Kitty))
+        );
+        assert_eq!(
+            remember_active_context_window(7, b"lyn\0Lyn\0"),
+            Ok((42, ContextWindowKind::Kitty))
+        );
+        assert_eq!(
+            remember_active_context_window(9, b"cursor\0Cursor\0"),
+            Ok((9, ContextWindowKind::Cursor))
+        );
+        assert_eq!(
+            remember_active_context_window(7, b"lyn\0Lyn\0"),
+            Ok((9, ContextWindowKind::Cursor))
+        );
+    }
+
+    #[test]
+    fn unsupported_focus_clears_the_remembered_context_window() {
+        let _guard = ACTIVE_WINDOW_MEMO_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *LAST_ACTIVE_CONTEXT_WINDOW.lock().unwrap() = None;
+
+        assert!(remember_active_context_window(42, b"kitty\0kitty\0").is_ok());
+        assert_eq!(
+            remember_active_context_window(11, b"nautilus\0Nautilus\0"),
+            Err(PlatformError::Unsupported)
+        );
+        assert_eq!(
+            remember_active_context_window(7, b"lyn\0Lyn\0"),
+            Err(PlatformError::Unsupported)
+        );
     }
 }
