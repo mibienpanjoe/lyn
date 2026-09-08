@@ -20,6 +20,7 @@
     LanguageSetting,
     LibraryScope,
   } from '../lib/ipc-types';
+  import { copyTextToClipboard } from '../lib/clipboard';
   import { getTranslations } from '../lib/i18n';
   import CaptureDetailPanel from './CaptureDetailPanel.svelte';
   import CaptureStream from './CaptureStream.svelte';
@@ -88,8 +89,18 @@
   let navigationOpen = $state(false);
   let listRequest = 0;
   let detailRequest = 0;
+  let copyRequest = 0;
+  let copyFeedback = $state<{
+    id: string;
+    state: 'copied' | 'failed';
+  } | null>(null);
+  let pendingDeleteId = $state<string | null>(null);
   let searchInput = $state<HTMLInputElement>();
+  let streamScroll = $state<HTMLDivElement>();
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let copyFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
+  // Search returns a ranked answer list, so only browsing reads as a timeline.
+  const conversationOrder = $derived(!searchMode);
   let playbackTimer: ReturnType<typeof setTimeout> | undefined;
   let unlistenEnrichment: UnlistenFn | null = null;
 
@@ -131,6 +142,7 @@
 
   onDestroy(() => {
     clearTimeout(searchTimer);
+    clearTimeout(copyFeedbackTimer);
     clearTimeout(playbackTimer);
     unlistenEnrichment?.();
   });
@@ -202,6 +214,9 @@
     if (append) loadingMore = true;
     else loading = true;
     error = null;
+    // Older pages prepend above the viewport in the conversation order, so the
+    // pre-load height anchors the rows the reader is already looking at.
+    const heightBeforeAppend = streamScroll?.scrollHeight ?? 0;
     try {
       const cursor = append ? nextCursor : null;
       const searchQuery = query.trim();
@@ -255,7 +270,18 @@
       if (request === listRequest) {
         loading = false;
         loadingMore = false;
+        await tick();
+        restoreStreamScroll(append, heightBeforeAppend);
       }
+    }
+  }
+
+  function restoreStreamScroll(append: boolean, heightBeforeAppend: number) {
+    if (!streamScroll || !conversationOrder) return;
+    if (append) {
+      streamScroll.scrollTop += streamScroll.scrollHeight - heightBeforeAppend;
+    } else {
+      streamScroll.scrollTop = streamScroll.scrollHeight;
     }
   }
 
@@ -345,6 +371,25 @@
     }
   }
 
+  async function copyCapture(capture: CaptureSummary) {
+    const request = ++copyRequest;
+    // Row excerpts are truncated, so text bodies come from the capture detail.
+    let text = capture.kind === 'text' ? null : capture.caption;
+    if (capture.kind === 'text') {
+      try {
+        text = (await client.getCapture(capture.id)).textBody;
+      } catch {
+        text = null;
+      }
+    }
+    if (request !== copyRequest) return;
+    const copied = text != null && (await copyTextToClipboard(text));
+    if (request !== copyRequest) return;
+    copyFeedback = { id: capture.id, state: copied ? 'copied' : 'failed' };
+    clearTimeout(copyFeedbackTimer);
+    copyFeedbackTimer = setTimeout(() => (copyFeedback = null), 2000);
+  }
+
   async function closeDetail() {
     const returnId = selectedSummaryId;
     clearPlaybackTimer();
@@ -398,19 +443,25 @@
   }
 
   async function deleteCapture() {
-    if (!selected || deleteBusy) return;
-    const captureId = selected.id;
+    if (!selected) return;
+    await removeCapture(selected.id);
+  }
+
+  async function removeCapture(captureId: string) {
+    if (deleteBusy) return;
     deleteBusy = true;
     error = null;
     clearPlaybackTimer();
     playingMediaId = null;
     try {
       await client.deleteCapture(captureId);
-      // Remove from active list
-      captures = captures.filter((c) => c.id !== captureId);
-      // Close detail view
-      selected = null;
-      selectedSummaryId = null;
+      captures = captures.filter((capture) => capture.id !== captureId);
+      pendingDeleteId = null;
+      // Deleting the open capture must not leave its detail pane behind.
+      if (selectedSummaryId === captureId) {
+        selected = null;
+        selectedSummaryId = null;
+      }
     } catch (caught) {
       error = errorMessage(caught, 'The capture could not be deleted.');
     } finally {
@@ -573,7 +624,11 @@
         </div>
       {/if}
 
-      <div class="stream-scroll-region" aria-busy={loading}>
+      <div
+        bind:this={streamScroll}
+        class="stream-scroll-region"
+        aria-busy={loading}
+      >
         {#if loading}
           <p class="library-status">Loading captures…</p>
         {:else if captures.length === 0}
@@ -592,14 +647,32 @@
             {/if}
           </div>
         {:else}
+          {#if nextCursor && conversationOrder}
+            <button
+              class="load-more-button load-older-button"
+              type="button"
+              disabled={loadingMore}
+              onclick={() => loadCaptures(true)}
+              >{loadingMore ? 'Loading…' : t.loadEarlier}</button
+            >
+          {/if}
           <CaptureStream
             {captures}
             selectedId={selectedSummaryId}
             {snippets}
             query={searchMode ? query.trim() : ''}
+            language={currentLanguage}
+            {copyFeedback}
+            oldestFirst={conversationOrder}
+            {pendingDeleteId}
+            {deleteBusy}
             onselect={inspectCapture}
+            oncopy={copyCapture}
+            onrequestdelete={(capture) => (pendingDeleteId = capture.id)}
+            oncanceldelete={() => (pendingDeleteId = null)}
+            onconfirmdelete={(capture) => void removeCapture(capture.id)}
           />
-          {#if nextCursor}
+          {#if nextCursor && !conversationOrder}
             <button
               class="load-more-button"
               type="button"
@@ -630,6 +703,7 @@
           playing={playingMediaId === selected.media?.mediaId}
           busy={mediaBusy}
           deleting={deleteBusy}
+          language={currentLanguage}
           onback={closeDetail}
           onplay={toggleAudio}
           onopen={openMedia}

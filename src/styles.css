@@ -1520,7 +1520,8 @@ kbd {
 .capture-row:active,
 .icon-label-button:active,
 .load-more-button:active,
-.open-media-button:active {
+.open-media-button:active,
+.copy-text-button:active {
   opacity: 0.88;
 }
 
@@ -1618,6 +1619,7 @@ kbd {
 .library-error button,
 .icon-label-button,
 .open-media-button,
+.copy-text-button,
 .load-more-button {
   display: inline-flex;
   min-height: 36px;
@@ -1879,19 +1881,14 @@ kbd {
   border-bottom: 0;
 }
 
-.capture-row {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  width: 100%;
-  min-height: 76px;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: 12px 14px;
+/* The card lives on the row wrapper so the action sits inside its border. */
+.capture-row-item {
+  display: flex;
+  align-items: stretch;
+  padding-right: 8px;
   border: 1px solid color-mix(in srgb, var(--color-divider) 45%, transparent);
   border-radius: 8px;
   background: var(--color-surface);
-  color: var(--color-text);
-  text-align: left;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
   transition:
     background-color 120ms ease-out,
@@ -1899,13 +1896,137 @@ kbd {
     box-shadow 120ms ease-out;
 }
 
-.capture-row:hover {
-  background: var(--color-surface);
+.capture-row-item > .capture-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The action column is always reserved so revealing it never shifts a row. */
+.capture-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.capture-row-action,
+.capture-row-action-spacer {
+  flex: 0 0 30px;
+  width: 30px;
+}
+
+.capture-row-action {
+  display: grid;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+  opacity: 0;
+  transition:
+    opacity 120ms ease-out,
+    background-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+.capture-row-action svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.5;
+}
+
+.capture-row-item:hover .capture-row-action,
+.capture-row-item:focus-within .capture-row-action,
+.capture-row-item:has(.capture-row.selected) .capture-row-action,
+.capture-row-action.copied,
+.capture-row-action.failed {
+  opacity: 1;
+}
+
+.capture-row-action:hover {
+  background: var(--color-surface-subtle);
+  border-color: color-mix(in srgb, var(--color-input-border) 70%, transparent);
+  color: var(--color-text);
+}
+
+.capture-row-action.copied {
+  color: var(--color-accent);
+}
+
+.capture-row-action.failed,
+.capture-row-delete:hover {
+  color: var(--color-error);
+}
+
+.capture-row-delete:hover {
+  background: var(--color-error-soft);
+  border-color: color-mix(in srgb, var(--color-error) 35%, transparent);
+}
+
+.row-delete-confirm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.row-delete-confirm button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.row-confirm-delete {
+  border-color: color-mix(in srgb, var(--color-error) 60%, transparent);
+  background: color-mix(in srgb, var(--color-error) 16%, var(--color-surface));
+  color: var(--color-error);
+}
+
+.row-confirm-delete:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-error) 26%, var(--color-surface));
+}
+
+.row-cancel-delete {
+  color: var(--color-text-muted);
+}
+
+.row-cancel-delete:hover {
+  background: var(--color-surface-subtle);
+  color: var(--color-text);
+}
+
+/* Touch and other hover-less inputs never get the reveal, so pin it visible. */
+@media (hover: none) {
+  .capture-row-action {
+    opacity: 1;
+  }
+}
+
+.capture-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  min-height: 76px;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+}
+
+.capture-row-item:hover {
   border-color: color-mix(in srgb, var(--color-input-border) 70%, transparent);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
 }
 
-.capture-row.selected {
+.capture-row-item:has(.capture-row.selected) {
   background: var(--color-accent-soft);
   border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
@@ -2029,9 +2150,15 @@ kbd {
   color: var(--color-text-muted);
 }
 
+.load-older-button {
+  margin-top: 0;
+  margin-bottom: var(--space-3);
+}
+
 .load-more-button:hover:not(:disabled),
 .icon-label-button:hover:not(:disabled),
-.open-media-button:hover:not(:disabled) {
+.open-media-button:hover:not(:disabled),
+.copy-text-button:hover:not(:disabled) {
   background: var(--color-surface-subtle);
 }
 
@@ -2141,6 +2268,20 @@ kbd {
   color: var(--color-text-muted);
   border-color: transparent;
   padding-inline: 0;
+}
+
+.copy-text-button {
+  justify-self: start;
+  margin-top: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.copy-text-button svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  stroke-width: 1.5;
 }
 
 .detail-actions {
@@ -2374,6 +2515,10 @@ kbd {
 
   .capture-row {
     grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .capture-row-action-spacer {
+    display: none;
   }
 }
 

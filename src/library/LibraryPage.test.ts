@@ -239,6 +239,179 @@ describe('responsive Library', () => {
     );
   });
 
+  it('copies the untruncated body from the stream without opening the capture', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    const client = createClient({
+      listCaptures: vi.fn().mockResolvedValue({
+        items: [{ ...textCapture, textExcerpt: 'First line…' }],
+        nextCursor: null,
+      }),
+    });
+
+    render(LibraryPage, { client });
+    const copy = await screen.findByRole('button', {
+      name: /Copy text — Lyn/,
+    });
+    await fireEvent.click(copy);
+
+    // The row excerpt is truncated, so the exact body must come from detail.
+    expect(client.getCapture).toHaveBeenCalledWith(textCapture.id);
+    expect(writeText).toHaveBeenCalledWith('First line\nSecond line');
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('status')
+          .some((status) => status.textContent?.includes('Copied')),
+      ).toBe(true),
+    );
+    // Copying must never take over the detail pane.
+    expect(
+      screen.queryByRole('heading', { name: 'Lyn' }),
+    ).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it('offers copy only for captures that carry text', async () => {
+    const client = createClient({
+      listCaptures: vi.fn().mockResolvedValue({
+        items: [
+          textCapture,
+          { ...imageCapture, caption: null, id: 'capture-no-caption' },
+        ],
+        nextCursor: null,
+      }),
+    });
+
+    render(LibraryPage, { client });
+    await screen.findByRole('button', { name: /text capture in Lyn/i });
+
+    expect(screen.getAllByRole('button', { name: /Copy text/ })).toHaveLength(
+      1,
+    );
+  });
+
+  it('copies the exact text body of the open capture to the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+
+    render(LibraryPage, { client: createClient() });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: /text capture in Lyn/i }),
+    );
+
+    const copy = await screen.findByRole('button', { name: 'Copy text' });
+    await fireEvent.click(copy);
+
+    expect(writeText).toHaveBeenCalledWith('First line\nSecond line');
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('status')
+          .some((status) => status.textContent?.includes('Copied')),
+      ).toBe(true),
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it('orders browsing oldest first and search newest first', async () => {
+    const older = { ...textCapture, id: 'capture-older' };
+    const newer = { ...imageCapture, id: 'capture-newer' };
+    const client = createClient({
+      // The backend always pages newest first.
+      listCaptures: vi
+        .fn()
+        .mockResolvedValue({ items: [newer, older], nextCursor: null }),
+      searchCaptures: vi.fn().mockResolvedValue({
+        items: [
+          { capture: newer, snippet: 'newer hit' },
+          { capture: older, snippet: 'older hit' },
+        ],
+        nextCursor: null,
+      }),
+    });
+    const { container } = render(LibraryPage, { client });
+
+    await waitFor(() =>
+      expect(
+        Array.from(container.querySelectorAll('.capture-row')).map(
+          (row) => row.id,
+        ),
+      ).toEqual(['capture-row-capture-older', 'capture-row-capture-newer']),
+    );
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await fireEvent.input(await screen.findByRole('searchbox'), {
+      target: { value: 'hit' },
+    });
+
+    await waitFor(() => {
+      const searching = Array.from(
+        container.querySelectorAll('.capture-row'),
+      ).map((row) => row.id);
+      expect(searching).toEqual([
+        'capture-row-capture-newer',
+        'capture-row-capture-older',
+      ]);
+    });
+  });
+
+  it('deletes from the stream only after an inline confirmation', async () => {
+    const deleteCapture = vi.fn().mockResolvedValue({ deleted: true });
+    const client = createClient({
+      deleteCapture,
+      listCaptures: vi
+        .fn()
+        .mockResolvedValue({ items: [textCapture], nextCursor: null }),
+    });
+    render(LibraryPage, { client });
+
+    const rowDelete = await screen.findByRole('button', {
+      name: /Delete capture — Lyn, .*/,
+    });
+    await fireEvent.click(rowDelete);
+
+    // A single click must never destroy a capture.
+    expect(deleteCapture).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() =>
+      expect(deleteCapture).toHaveBeenCalledWith('capture-text'),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: /text capture in Lyn/i }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it('abandons a stream deletion on cancel and on Escape', async () => {
+    const deleteCapture = vi.fn().mockResolvedValue({ deleted: true });
+    const client = createClient({
+      deleteCapture,
+      listCaptures: vi
+        .fn()
+        .mockResolvedValue({ items: [textCapture], nextCursor: null }),
+    });
+    render(LibraryPage, { client });
+
+    const rowDelete = await screen.findByRole('button', {
+      name: /Delete capture — Lyn, .*/,
+    });
+    await fireEvent.click(rowDelete);
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+
+    await fireEvent.click(
+      await screen.findByRole('button', { name: /Delete capture — Lyn, .*/ }),
+    );
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull(),
+    );
+    expect(deleteCapture).not.toHaveBeenCalled();
+  });
+
   it('keeps project branches in one stream and applies branch only as a filter', async () => {
     const listCaptures = vi.fn().mockResolvedValue({
       items: [textCapture, imageCapture],
@@ -269,7 +442,9 @@ describe('responsive Library', () => {
     render(LibraryPage, { client });
     await screen.findByText(/First line Second line/);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Load earlier captures' }),
+    );
     await waitFor(() =>
       expect(screen.getAllByText(/First line Second line/)).toHaveLength(1),
     );
@@ -549,7 +724,7 @@ describe('responsive Library', () => {
     expect(screen.getByRole('heading', { name: 'Lyn' })).toBeVisible();
 
     const deleteBtn = await screen.findByRole('button', {
-      name: /delete capture/i,
+      name: 'Delete capture',
     });
     await fireEvent.click(deleteBtn);
 
@@ -580,7 +755,7 @@ describe('responsive Library', () => {
       await screen.findByRole('button', { name: /text capture in Lyn/i }),
     );
     const deleteBtn = await screen.findByRole('button', {
-      name: /delete capture/i,
+      name: 'Delete capture',
     });
     await fireEvent.click(deleteBtn);
 
@@ -593,7 +768,7 @@ describe('responsive Library', () => {
       screen.queryByText('Delete this capture permanently?'),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: /delete capture/i }),
+      screen.getByRole('button', { name: 'Delete capture' }),
     ).toBeVisible();
     expect(deleteCapture).not.toHaveBeenCalled();
   });

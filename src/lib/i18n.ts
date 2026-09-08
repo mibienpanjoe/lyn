@@ -87,6 +87,14 @@ export interface Translations {
   searchCapturesLabel: string;
   searchCapturesPlaceholder: string;
   contextFallback: string;
+  copyText: string;
+  copyTextCopied: string;
+  copyTextFailed: string;
+  deleteCapture: string;
+  confirmDelete: string;
+  cancelDelete: string;
+  deleting: string;
+  loadEarlier: string;
 }
 
 const en: Translations = {
@@ -189,6 +197,14 @@ const en: Translations = {
   searchCapturesLabel: 'Search captures',
   searchCapturesPlaceholder: 'Search text and captions',
   contextFallback: 'Context',
+  copyText: 'Copy text',
+  copyTextCopied: 'Copied',
+  copyTextFailed: 'Copy failed',
+  deleteCapture: 'Delete capture',
+  confirmDelete: 'Delete',
+  cancelDelete: 'Cancel',
+  deleting: 'Deleting…',
+  loadEarlier: 'Load earlier captures',
 };
 
 const fr: Translations = {
@@ -296,6 +312,14 @@ const fr: Translations = {
   searchCapturesLabel: 'Rechercher dans les captures',
   searchCapturesPlaceholder: 'Rechercher texte et légendes',
   contextFallback: 'Contexte',
+  copyText: 'Copier le texte',
+  copyTextCopied: 'Copié',
+  copyTextFailed: 'Échec de la copie',
+  deleteCapture: 'Supprimer la capture',
+  confirmDelete: 'Supprimer',
+  cancelDelete: 'Annuler',
+  deleting: 'Suppression…',
+  loadEarlier: 'Charger les captures précédentes',
 };
 
 export function getTranslations(
