@@ -22,6 +22,7 @@ const initial: AppSettings = {
   ],
   theme: 'system',
   localSpeechEnabled: false,
+  language: 'english',
 };
 
 function client(overrides: Partial<SettingsClient> = {}): SettingsClient {
@@ -36,6 +37,7 @@ function client(overrides: Partial<SettingsClient> = {}): SettingsClient {
         theme: patch.theme ?? initial.theme,
         localSpeechEnabled:
           patch.localSpeechEnabled ?? initial.localSpeechEnabled,
+        language: patch.language ?? initial.language,
       }),
     ),
     ...overrides,
@@ -552,5 +554,110 @@ describe('Settings', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Custom backend validation error');
     expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+  });
+
+  it('allows toggling French mode in settings and adapts UI text while keeping English default', async () => {
+    const updateMock = vi.fn().mockImplementation((patch) =>
+      Promise.resolve({
+        ...initial,
+        ...patch,
+      }),
+    );
+    const mockClient = client({ update: updateMock });
+
+    render(SettingsPanel, {
+      client: mockClient,
+      modelClient,
+      intClient: defaultIntClient,
+      isLinux: true,
+    });
+
+    // Default is English
+    expect(
+      await screen.findByRole('heading', { name: 'Settings' }),
+    ).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Appearance' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Language' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'English' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    // Switch to French
+    const frenchBtn = screen.getByRole('button', { name: 'Français' });
+    await fireEvent.click(frenchBtn);
+
+    // Verify UI translated to French
+    expect(
+      await screen.findByRole('heading', { name: 'Paramètres' }),
+    ).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Apparence' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Langue' })).toBeVisible();
+    expect(frenchBtn).toHaveAttribute('aria-pressed', 'true');
+
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ language: 'french' }),
+    );
+
+    // Switch back to English
+    const englishBtn = screen.getByRole('button', { name: 'English' });
+    await fireEvent.click(englishBtn);
+    expect(
+      await screen.findByRole('heading', { name: 'Settings' }),
+    ).toBeVisible();
+  });
+
+  it('renders platform icon wraps and parses titles with subtitle pills cleanly', async () => {
+    const mockStatuses: IntegrationStatus[] = [
+      {
+        id: 'browser',
+        name: 'Web Browser (Chrome, Brave, Edge, Firefox)',
+        description: 'Correlates active localhost tabs.',
+        detected: true,
+        installed: false,
+        details: 'Supported web browser detected',
+      },
+      {
+        id: 'cursor',
+        name: 'Cursor IDE',
+        description: 'Reports focused Cursor workspace.',
+        detected: true,
+        installed: true,
+        details: 'Extension active in ~/.cursor/extensions/',
+      },
+    ];
+
+    const intClient: IntegrationClient = {
+      list: vi.fn().mockResolvedValue(mockStatuses),
+      install: vi.fn(),
+    };
+
+    const { container } = render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient,
+      isLinux: true,
+    });
+
+    await screen.findByRole('heading', {
+      name: 'Integrations & Context Providers',
+    });
+
+    // Verify parsed title and subtitle pill
+    expect(await screen.findByText('Web Browser')).toBeVisible();
+    expect(screen.getByText('Chrome · Brave · Edge · Firefox')).toBeVisible();
+
+    // Verify platform icon wraps are present
+    expect(
+      container.querySelector('[data-platform="browser"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('[data-platform="cursor"]'),
+    ).toBeInTheDocument();
+
+    // Verify path pills in details
+    expect(container.querySelector('.path-pill')).toHaveTextContent(
+      '~/.cursor/extensions/',
+    );
   });
 });

@@ -2,13 +2,10 @@
   import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import CheckIcon from '@lucide/svelte/icons/check';
-  import CodeIcon from '@lucide/svelte/icons/code';
-  import GlobeIcon from '@lucide/svelte/icons/globe';
   import MonitorIcon from '@lucide/svelte/icons/monitor';
   import MoonIcon from '@lucide/svelte/icons/moon';
   import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
   import SunIcon from '@lucide/svelte/icons/sun';
-  import TerminalIcon from '@lucide/svelte/icons/terminal';
   import { onDestroy, onMount, tick } from 'svelte';
 
   import type {
@@ -16,8 +13,9 @@
     ContextProviderKind,
     IntegrationId,
     IntegrationStatus,
-    ThemeSetting,
+    LanguageSetting,
     SpeechModelStatus,
+    ThemeSetting,
   } from '../lib/ipc-types';
   import {
     SettingsCommandError,
@@ -32,12 +30,19 @@
     IntegrationCommandError,
   } from './integration-client';
   import { isLinuxPlatform } from '../lib/platform';
+  import { getTranslations } from '../lib/i18n';
+  import BrowserIcon from '../lib/icons/BrowserIcon.svelte';
+  import CursorIcon from '../lib/icons/CursorIcon.svelte';
+  import KittyIcon from '../lib/icons/KittyIcon.svelte';
+  import ShellIcon from '../lib/icons/ShellIcon.svelte';
+  import VscodeIcon from '../lib/icons/VscodeIcon.svelte';
 
   interface Props {
     client?: SettingsClient;
     modelClient?: SpeechModelClient;
     intClient?: IntegrationClient;
     isLinux?: boolean;
+    onLanguageChange?: (language: LanguageSetting) => void;
   }
 
   let {
@@ -45,7 +50,9 @@
     modelClient = speechModelClient,
     intClient = integrationClient,
     isLinux = isLinuxPlatform(),
+    onLanguageChange,
   }: Props = $props();
+
   let saved = $state<AppSettings | null>(null);
   let draft = $state<AppSettings | null>(null);
   let loading = $state(true);
@@ -69,24 +76,29 @@
   >({});
   let integrationRequestSeq = 0;
 
-  const providerNames: Record<ContextProviderKind, string> = {
-    manual: 'Manual selection',
-    vscode: 'VS Code',
-    cursor: 'Cursor',
-    browser: 'Browser',
-    shell: 'Terminal',
-    foreground_window: 'Foreground window',
-  };
+  const t = $derived(getTranslations(draft?.language ?? 'english'));
+
+  const providerNames = $derived<Record<ContextProviderKind, string>>({
+    manual: t.providers.manual,
+    vscode: t.providers.vscode,
+    cursor: t.providers.cursor,
+    browser: t.providers.browser,
+    shell: t.providers.shell,
+    foreground_window: t.providers.foreground_window,
+  });
+
   const dirty = $derived(
     saved !== null &&
       draft !== null &&
       (saved.globalShortcut !== draft.globalShortcut ||
         saved.theme !== draft.theme ||
+        saved.language !== draft.language ||
         saved.localSpeechEnabled !== draft.localSpeechEnabled ||
         saved.providerTieBreakOrder.some(
           (provider, index) => provider !== draft?.providerTieBreakOrder[index],
         )),
   );
+
   const shortcutParts = $derived(
     (draft?.globalShortcut ?? '')
       .split('+')
@@ -106,6 +118,7 @@
       })
       .catch(() => {});
   });
+
   onDestroy(() => {
     unsubscribeModel?.();
   });
@@ -129,7 +142,7 @@
         integrationError =
           caught instanceof IntegrationCommandError
             ? caught.message
-            : 'Integration discovery failed.';
+            : t.integrationDiscoveryFailed;
       }
     } finally {
       if (seq === integrationRequestSeq) {
@@ -162,41 +175,45 @@
     }
   }
 
-  async function loadModel() {
-    try {
-      model = await modelClient.status();
-    } catch (caught) {
-      error = message(caught, 'Local speech status could not be loaded.');
-    }
-  }
-
-  async function changeModel(action: 'install' | 'cancel' | 'remove') {
-    if (modelBusy) return;
-    modelBusy = true;
-    error = null;
-    try {
-      await modelClient[action]();
-      await loadModel();
-      if (action === 'remove' && draft) {
-        updateDraft({ ...draft, localSpeechEnabled: false });
-      }
-    } catch (caught) {
-      error = message(caught, 'The local speech model could not be changed.');
-    } finally {
-      modelBusy = false;
-    }
-  }
-
   async function load() {
     loading = true;
     error = null;
     try {
-      saved = await client.get();
-      draft = cloneSettings(saved);
-      applyTheme(saved.theme);
+      const settings = await client.get();
+      saved = cloneSettings(settings);
+      draft = cloneSettings(settings);
+      applyTheme(settings.theme);
+      onLanguageChange?.(settings.language);
     } catch (caught) {
-      error = message(caught, 'Settings could not be loaded.');
+      error = message(caught, t.settingsLoadError);
     } finally {
+      loading = false;
+    }
+  }
+
+  async function loadModel() {
+    try {
+      model = await modelClient.status();
+    } catch {
+      model = null;
+    }
+  }
+
+  async function changeModel(action: 'install' | 'remove' | 'cancel') {
+    modelBusy = true;
+    try {
+      if (action === 'install') await modelClient.install();
+      else if (action === 'remove') {
+        await modelClient.remove();
+        if (draft?.localSpeechEnabled) {
+          updateDraft({ ...draft, localSpeechEnabled: false });
+        }
+      } else await modelClient.cancel();
+      model = await modelClient.status();
+    } catch (caught) {
+      error = message(caught, 'Speech model operation failed.');
+    } finally {
+      modelBusy = false;
       loading = false;
     }
   }
@@ -205,6 +222,12 @@
     if (!draft) return;
     updateDraft({ ...draft, theme });
     applyTheme(theme);
+  }
+
+  function chooseLanguage(language: LanguageSetting) {
+    if (!draft) return;
+    updateDraft({ ...draft, language });
+    onLanguageChange?.(language);
   }
 
   function setShortcut(value: string) {
@@ -275,6 +298,7 @@
           providerTieBreakOrder: snapshot.providerTieBreakOrder,
           theme: snapshot.theme,
           localSpeechEnabled: snapshot.localSpeechEnabled,
+          language: snapshot.language,
         });
         saved = cloneSettings(updated);
         if (draft && sameSettings(draft, snapshot)) {
@@ -286,6 +310,7 @@
         if (saved) {
           draft = cloneSettings(saved);
           applyTheme(saved.theme);
+          onLanguageChange?.(saved.language);
         }
         error = message(caught, 'Settings could not be saved.');
         break;
@@ -309,6 +334,7 @@
     return (
       left.globalShortcut === right.globalShortcut &&
       left.theme === right.theme &&
+      left.language === right.language &&
       left.localSpeechEnabled === right.localSpeechEnabled &&
       left.providerTieBreakOrder.length ===
         right.providerTieBreakOrder.length &&
@@ -317,37 +343,90 @@
       )
     );
   }
+
+  function parseIntegrationName(name: string) {
+    if (name.includes('(')) {
+      const match = name.match(/^(.*?)\s*\((.*?)\)$/);
+      if (match) {
+        return {
+          title: match[1].trim(),
+          subtitle: match[2].trim().replace(/,/g, ' ·'),
+        };
+      }
+    }
+    return { title: name, subtitle: null };
+  }
+
+  function getIntegrationDescription(id: string, fallback: string): string {
+    return t.integrationDescriptions[id] ?? fallback;
+  }
+
+  function localizeDetails(detailsText: string): string {
+    if (draft?.language !== 'french') return detailsText;
+    return detailsText
+      .replace(
+        'Cursor detected on this system',
+        'Cursor détecté sur ce système',
+      )
+      .replace(
+        'Supported web browser detected',
+        'Navigateur web pris en charge détecté',
+      )
+      .replace('Available for Bash and Zsh', 'Disponible pour Bash et Zsh')
+      .replace('Extension active in', 'Extension active dans')
+      .replace('Watcher configured in', 'Watcher configuré dans');
+  }
 </script>
+
+{#snippet renderDetails(rawText: string)}
+  {@const detailsText = localizeDetails(rawText)}
+  {#if detailsText.includes('~/') || detailsText.includes('/.')}
+    {@const parts = detailsText.split(/(~[\w./-]+)/)}
+    <div class="integration-details-text">
+      {#each parts as part}
+        {#if part.startsWith('~')}
+          <code class="path-pill">{part}</code>
+        {:else}
+          {part}
+        {/if}
+      {/each}
+    </div>
+  {:else}
+    <div class="integration-details-text">{detailsText}</div>
+  {/if}
+{/snippet}
 
 <section class="settings-page" aria-labelledby="settings-title">
   <header class="settings-header">
     <div>
-      <h1 id="settings-title">Settings</h1>
-      <p>Local preferences for capture, context, and appearance.</p>
+      <h1 id="settings-title">{t.settingsTitle}</h1>
+      <p>{t.settingsSubtitle}</p>
     </div>
     <span class="settings-save-status" role="status" aria-live="polite">
-      {#if saving}Saving…
-      {:else if dirty}Unsaved changes
-      {:else if savedNotice}<CheckIcon aria-hidden="true" />Settings saved{/if}
+      {#if saving}{t.saving}
+      {:else if dirty}{t.unsavedChanges}
+      {:else if savedNotice}<CheckIcon
+          aria-hidden="true"
+        />{t.settingsSaved}{/if}
     </span>
   </header>
 
   {#if loading}
-    <p class="settings-status" aria-live="polite">Loading settings…</p>
+    <p class="settings-status" aria-live="polite">{t.loadingSettings}</p>
   {:else if draft}
     <form class="settings-form" onsubmit={(event) => event.preventDefault()}>
       <section class="settings-section" aria-labelledby="shortcut-title">
         <div>
-          <h2 id="shortcut-title">Quick capture</h2>
-          <p>The global shortcut used to open Lyn from another application.</p>
+          <h2 id="shortcut-title">{t.quickCaptureTitle}</h2>
+          <p>{t.quickCaptureSubtitle}</p>
         </div>
         <div class="shortcut-setting">
-          <span class="control-label">Global shortcut</span>
+          <span class="control-label">{t.globalShortcutLabel}</span>
           {#if editingShortcut}
             <div class="shortcut-editor">
               <input
                 bind:this={shortcutInput}
-                aria-label="Global shortcut"
+                aria-label={t.globalShortcutLabel}
                 type="text"
                 value={draft.globalShortcut}
                 maxlength="100"
@@ -356,7 +435,9 @@
                   setShortcut((event.currentTarget as HTMLInputElement).value)}
                 onkeydown={handleShortcutKeydown}
               />
-              <button type="button" onclick={finishShortcutEdit}>Done</button>
+              <button type="button" onclick={finishShortcutEdit}
+                >{t.done}</button
+              >
             </div>
           {:else}
             <div class="shortcut-display">
@@ -367,7 +448,7 @@
                 {/each}
               </span>
               <button type="button" onclick={beginShortcutEdit}
-                >Change shortcut</button
+                >{t.changeShortcut}</button
               >
             </div>
           {/if}
@@ -376,10 +457,8 @@
 
       <section class="settings-section" aria-labelledby="providers-title">
         <div>
-          <h2 id="providers-title">Context tie-break order</h2>
-          <p>
-            Used only when providers have equally strong invocation evidence.
-          </p>
+          <h2 id="providers-title">{t.contextPriorityTitle}</h2>
+          <p>{t.contextPrioritySubtitle}</p>
         </div>
         <ol class="provider-order">
           {#each draft.providerTieBreakOrder as provider, index (provider)}
@@ -389,22 +468,24 @@
                   >{index + 1}</span
                 >{providerNames[provider]}</span
               >
-              <span class="provider-order-actions">
+              <div class="provider-actions">
                 <button
                   type="button"
+                  aria-label={t.moveEarlier(providerNames[provider])}
                   disabled={index === 0}
-                  aria-label={`Move ${providerNames[provider]} earlier`}
                   onclick={() => moveProvider(index, -1)}
-                  ><ArrowUpIcon aria-hidden="true" /></button
                 >
+                  <ArrowUpIcon aria-hidden="true" />
+                </button>
                 <button
                   type="button"
+                  aria-label={t.moveLater(providerNames[provider])}
                   disabled={index === draft.providerTieBreakOrder.length - 1}
-                  aria-label={`Move ${providerNames[provider]} later`}
                   onclick={() => moveProvider(index, 1)}
-                  ><ArrowDownIcon aria-hidden="true" /></button
                 >
-              </span>
+                  <ArrowDownIcon aria-hidden="true" />
+                </button>
+              </div>
             </li>
           {/each}
         </ol>
@@ -417,66 +498,88 @@
         >
           <div class="integrations-header">
             <div>
-              <h2 id="integrations-title">Integrations & Context Providers</h2>
-              <p>
-                Connect your editors, browsers, and terminals with 1-click so
-                Lyn automatically associates captures with your active
-                workspace.
-              </p>
+              <h2 id="integrations-title">{t.integrationsTitle}</h2>
+              <p>{t.integrationsSubtitle}</p>
             </div>
             <button
               type="button"
               class="refresh-integrations-btn"
-              title="Refresh status"
-              aria-label="Refresh integration statuses"
+              title={t.refreshIntegrations}
+              aria-label={t.refreshIntegrations}
+              disabled={loadingIntegrations}
               onclick={() => loadIntegrations()}
             >
               <RefreshCwIcon
                 size={14}
-                class={loadingIntegrations ? 'spin' : ''}
+                class={loadingIntegrations ? 'spinning' : ''}
+                aria-hidden="true"
               />
             </button>
           </div>
 
           <div class="integrations-list">
             {#if loadingIntegrations && integrations.length === 0}
-              <p class="integrations-loading">Scanning local environment…</p>
+              <p class="integrations-loading">{t.scanningIntegrations}</p>
             {:else if integrationError}
               <div class="settings-error integration-error" role="alert">
                 <span>{integrationError}</span>
                 <button
                   type="button"
                   class="secondary-action"
-                  onclick={() => loadIntegrations()}>Retry</button
+                  onclick={() => loadIntegrations()}>{t.retry}</button
                 >
               </div>
             {:else}
               {#each integrations as item (item.id)}
+                {@const parsed = parseIntegrationName(item.name)}
                 <div class="integration-card" data-installed={item.installed}>
-                  <div class="integration-icon-wrap" aria-hidden="true">
-                    {#if item.id === 'cursor' || item.id === 'vscode'}
-                      <CodeIcon size={18} />
+                  <div
+                    class="integration-icon-wrap"
+                    data-platform={item.id}
+                    aria-hidden="true"
+                  >
+                    {#if item.id === 'cursor'}
+                      <CursorIcon size={22} />
+                    {:else if item.id === 'vscode'}
+                      <VscodeIcon size={22} />
                     {:else if item.id === 'browser'}
-                      <GlobeIcon size={18} />
+                      <BrowserIcon size={22} />
+                    {:else if item.id === 'kitty'}
+                      <KittyIcon size={22} />
                     {:else}
-                      <TerminalIcon size={18} />
+                      <ShellIcon size={22} />
                     {/if}
                   </div>
 
                   <div class="integration-info">
                     <div class="integration-title-row">
-                      <strong>{item.name}</strong>
+                      <div class="integration-title-group">
+                        <strong>{parsed.title}</strong>
+                        {#if parsed.subtitle}
+                          <span class="integration-subname"
+                            >{parsed.subtitle}</span
+                          >
+                        {/if}
+                      </div>
                       {#if item.installed}
                         <span class="integration-badge installed">
-                          <CheckIcon size={11} aria-hidden="true" /> Installed
+                          <CheckIcon size={11} aria-hidden="true" />
+                          {t.badgeInstalled}
                         </span>
                       {:else if item.detected}
-                        <span class="integration-badge detected">Detected</span>
+                        <span class="integration-badge detected"
+                          >{t.badgeDetected}</span
+                        >
                       {:else}
-                        <span class="integration-badge ready">Ready</span>
+                        <span class="integration-badge ready"
+                          >{t.badgeReady}</span
+                        >
                       {/if}
                     </div>
-                    <p class="integration-desc">{item.description}</p>
+
+                    <p class="integration-desc">
+                      {getIntegrationDescription(item.id, item.description)}
+                    </p>
 
                     {#if integrationFeedback[item.id]}
                       <div
@@ -487,7 +590,7 @@
                         {integrationFeedback[item.id].message}
                       </div>
                     {:else if item.details}
-                      <div class="integration-details-text">{item.details}</div>
+                      {@render renderDetails(item.details)}
                     {/if}
                   </div>
 
@@ -500,17 +603,17 @@
                       onclick={() => installIntegration(item.id)}
                     >
                       {#if installingIntegrationId === item.id}
-                        Installing…
+                        {t.btnInstalling}
                       {:else if item.installed}
-                        Reinstall
+                        {t.btnReinstall}
                       {:else if item.id === 'kitty'}
-                        Enable Watcher
+                        {t.btnEnableWatcher}
                       {:else if item.id === 'browser'}
-                        Register Host
+                        {t.btnRegisterHost}
                       {:else if item.id === 'shell'}
-                        Add to Shell
+                        {t.btnAddShell}
                       {:else}
-                        Install Extension
+                        {t.btnInstallExtension}
                       {/if}
                     </button>
                   </div>
@@ -523,8 +626,8 @@
 
       <section class="settings-section" aria-labelledby="theme-title">
         <div>
-          <h2 id="theme-title">Appearance</h2>
-          <p>Follow the system or choose a deterministic Lyn theme.</p>
+          <h2 id="theme-title">{t.appearanceTitle}</h2>
+          <p>{t.appearanceSubtitle}</p>
         </div>
         <div class="theme-options" role="group" aria-label="Theme">
           {#each ['system', 'light', 'dark'] as theme}
@@ -541,25 +644,53 @@
               {:else}
                 <MoonIcon aria-hidden="true" />
               {/if}
-              <span>{theme[0].toUpperCase() + theme.slice(1)}</span></button
+              <span
+                >{theme === 'system'
+                  ? t.themeSystem
+                  : theme === 'light'
+                    ? t.themeLight
+                    : t.themeDark}</span
+              ></button
             >
           {/each}
         </div>
       </section>
 
+      <section class="settings-section" aria-labelledby="language-title">
+        <div>
+          <h2 id="language-title">{t.languageTitle}</h2>
+          <p>{t.languageSubtitle}</p>
+        </div>
+        <div class="language-options" role="group" aria-label={t.languageTitle}>
+          <button
+            type="button"
+            class:active={draft.language === 'english'}
+            aria-pressed={draft.language === 'english'}
+            onclick={() => chooseLanguage('english')}
+          >
+            <span>{t.langEnglish}</span>
+          </button>
+          <button
+            type="button"
+            class:active={draft.language === 'french'}
+            aria-pressed={draft.language === 'french'}
+            onclick={() => chooseLanguage('french')}
+          >
+            <span>{t.langFrench}</span>
+          </button>
+        </div>
+      </section>
+
       <section class="settings-section" aria-labelledby="speech-title">
         <div>
-          <h2 id="speech-title">Local speech</h2>
-          <p>
-            Generate searchable captions for voice captures entirely on this
-            device.
-          </p>
+          <h2 id="speech-title">{t.speechTitle}</h2>
+          <p>{t.speechSubtitle}</p>
         </div>
         <div class="speech-controls">
           <div class="model-row">
             <div class="model-identity">
               <strong>{model?.label ?? 'Multilingual base'}</strong>
-              <span>Approximately 150 MB</span>
+              <span>{t.modelApproxSize}</span>
             </div>
             <div class="model-management">
               <span
@@ -573,32 +704,34 @@
                       : (model?.state ?? 'loading')}
                 aria-live="polite"
               >
-                {#if !model}Loading model…
+                {#if !model}{t.modelLoading}
                 {:else if model.state === 'downloading'}
-                  Downloading {model.totalBytes && model.downloadedBytes
-                    ? Math.round(
-                        (model.downloadedBytes / model.totalBytes) * 100,
-                      )
-                    : 0}%
-                {:else if model.state === 'installed'}Installed
-                {:else if model.errorCode === 'MODEL_DOWNLOAD_FAILED'}Installation
-                  failed
-                {:else if model.state === 'invalid'}Needs repair
-                {:else}Model not installed{/if}
+                  {t.modelDownloading(
+                    model.totalBytes && model.downloadedBytes
+                      ? Math.round(
+                          (model.downloadedBytes / model.totalBytes) * 100,
+                        )
+                      : 0,
+                  )}
+                {:else if model.state === 'installed'}{t.modelInstalled}
+                {:else if model.errorCode === 'MODEL_DOWNLOAD_FAILED'}{t.modelInstallFailed}
+                {:else if model.state === 'invalid'}{t.modelNeedsRepair}
+                {:else}{t.modelNotInstalled}{/if}
               </span>
               {#if model?.state === 'downloading'}
                 <button
                   type="button"
                   class="secondary-action"
                   disabled={modelBusy}
-                  onclick={() => changeModel('cancel')}>Cancel download</button
+                  onclick={() => changeModel('cancel')}
+                  >{t.cancelDownload}</button
                 >
               {:else if model?.state === 'installed'}
                 <button
                   type="button"
                   class="secondary-action quiet-danger"
                   disabled={modelBusy}
-                  onclick={() => changeModel('remove')}>Remove model</button
+                  onclick={() => changeModel('remove')}>{t.removeModel}</button
                 >
               {:else if model}
                 <button
@@ -607,10 +740,10 @@
                   disabled={modelBusy}
                   onclick={() => changeModel('install')}
                   >{modelBusy
-                    ? 'Starting…'
+                    ? t.starting
                     : model.errorCode === 'MODEL_DOWNLOAD_FAILED'
-                      ? 'Retry installation'
-                      : 'Install model'}</button
+                      ? t.retryInstall
+                      : t.installModel}</button
                 >
               {/if}
             </div>
@@ -619,18 +752,18 @@
             <progress
               value={model.downloadedBytes ?? 0}
               max={model.totalBytes ?? 1}
-              aria-label="Model download progress">Download progress</progress
+              aria-label={t.downloadProgress}>{t.downloadProgress}</progress
             >
           {:else if model?.state === 'installed'}
             <div class="speech-preference">
               <div>
-                <strong>Automatic transcription</strong>
-                <span>Generate a caption after saving each voice capture.</span>
+                <strong>{t.autoTranscription}</strong>
+                <span>{t.autoTranscriptionDesc}</span>
               </div>
               <label class="settings-switch">
                 <input
                   type="checkbox"
-                  aria-label="Automatic transcription"
+                  aria-label={t.autoTranscription}
                   checked={draft.localSpeechEnabled}
                   onchange={(event) =>
                     setLocalSpeechEnabled(event.currentTarget.checked)}
@@ -645,8 +778,8 @@
     </form>
   {:else}
     <div class="settings-error" role="alert">
-      <span>{error ?? 'Settings could not be loaded.'}</span>
-      <button type="button" onclick={load}>Retry</button>
+      <span>{error ?? t.settingsLoadError}</span>
+      <button type="button" onclick={load}>{t.retry}</button>
     </div>
   {/if}
 </section>

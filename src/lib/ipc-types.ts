@@ -38,9 +38,11 @@ export type ContextProviderKind = "manual" | "vscode" | "cursor" | "browser" | "
 
 export type ThemeSetting = "system" | "light" | "dark";
 
-export type AppSettings = { globalShortcut: string, providerTieBreakOrder: Array<ContextProviderKind>, theme: ThemeSetting, localSpeechEnabled: boolean, };
+export type LanguageSetting = "english" | "french";
 
-export type SettingsPatch = { globalShortcut: string | null, providerTieBreakOrder: Array<ContextProviderKind> | null, theme: ThemeSetting | null, localSpeechEnabled: boolean | null, };
+export type AppSettings = { globalShortcut: string, providerTieBreakOrder: Array<ContextProviderKind>, theme: ThemeSetting, localSpeechEnabled: boolean, language: LanguageSetting, };
+
+export type SettingsPatch = { globalShortcut: string | null, providerTieBreakOrder: Array<ContextProviderKind> | null, theme: ThemeSetting | null, localSpeechEnabled: boolean | null, language: LanguageSetting | null, };
 
 export type UpdateSettingsInput = { patch: SettingsPatch, };
 

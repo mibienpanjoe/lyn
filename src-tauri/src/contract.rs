@@ -135,6 +135,13 @@ pub enum ThemeSetting {
     Dark,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum LanguageSetting {
+    English,
+    French,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AppSettings {
@@ -142,6 +149,7 @@ pub struct AppSettings {
     pub provider_tie_break_order: Vec<ContextProviderKind>,
     pub theme: ThemeSetting,
     pub local_speech_enabled: bool,
+    pub language: LanguageSetting,
 }
 
 impl Default for AppSettings {
@@ -157,6 +165,7 @@ impl Default for AppSettings {
             ],
             theme: ThemeSetting::System,
             local_speech_enabled: false,
+            language: LanguageSetting::English,
         }
     }
 }
@@ -168,6 +177,7 @@ pub struct SettingsPatch {
     pub provider_tie_break_order: Option<Vec<ContextProviderKind>>,
     pub theme: Option<ThemeSetting>,
     pub local_speech_enabled: Option<bool>,
+    pub language: Option<LanguageSetting>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -742,6 +752,7 @@ pub fn typescript_bindings() -> String {
         CaptionSource::decl(&config),
         ContextProviderKind::decl(&config),
         ThemeSetting::decl(&config),
+        LanguageSetting::decl(&config),
         AppSettings::decl(&config),
         SettingsPatch::decl(&config),
         UpdateSettingsInput::decl(&config),

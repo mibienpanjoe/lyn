@@ -17,8 +17,10 @@
     CaptureSummary,
     ContextRef,
     EnrichmentUpdatedEvent,
+    LanguageSetting,
     LibraryScope,
   } from '../lib/ipc-types';
+  import { getTranslations } from '../lib/i18n';
   import CaptureDetailPanel from './CaptureDetailPanel.svelte';
   import CaptureStream from './CaptureStream.svelte';
   import SearchFilters from './SearchFilters.svelte';
@@ -38,6 +40,7 @@
     modelClient?: SpeechModelClient;
     intClient?: IntegrationClient;
     isLinux?: boolean;
+    initialLanguage?: LanguageSetting;
   }
 
   let {
@@ -46,7 +49,16 @@
     modelClient,
     intClient,
     isLinux,
+    initialLanguage = 'english',
   }: Props = $props();
+
+  let currentLanguage = $state<LanguageSetting>('english');
+
+  $effect(() => {
+    currentLanguage = initialLanguage;
+  });
+
+  const t = $derived(getTranslations(currentLanguage));
   let contexts = $state<ContextRef[]>([]);
   let scope = $state<LibraryScope>({ kind: 'recent' });
   let captures = $state<CaptureSummary[]>([]);
@@ -94,12 +106,12 @@
   });
   const title = $derived(
     searchMode
-      ? 'Search'
+      ? t.navSearch
       : scope.kind === 'recent'
-        ? 'Recent'
+        ? t.navRecent
         : scope.kind === 'all'
-          ? 'All captures'
-          : (activeContext?.name ?? 'Context'),
+          ? t.navAllCaptures
+          : (activeContext?.name ?? t.contextFallback),
   );
   const activeFilterCount = $derived(
     Number(Boolean(searchContextId)) +
@@ -424,7 +436,7 @@
   <aside
     class:open={navigationOpen}
     class="library-navigation"
-    aria-label="Library navigation"
+    aria-label={t.navAriaLabel}
   >
     <div class="library-brand">
       <img src={logoUrl} alt="" /><span>Lyn</span>
@@ -434,23 +446,23 @@
         class:active={isCurrent({ kind: 'recent' })}
         type="button"
         onclick={() => chooseScope({ kind: 'recent' })}
-        ><ClockIcon aria-hidden="true" />Recent</button
+        ><ClockIcon aria-hidden="true" />{t.navRecent}</button
       >
       <button
         class:active={isCurrent({ kind: 'all' })}
         type="button"
         onclick={() => chooseScope({ kind: 'all' })}
-        ><LayersIcon aria-hidden="true" />All captures</button
+        ><LayersIcon aria-hidden="true" />{t.navAllCaptures}</button
       >
       <button class:active={searchMode} type="button" onclick={chooseSearch}
-        ><SearchIcon aria-hidden="true" />Search</button
+        ><SearchIcon aria-hidden="true" />{t.navSearch}</button
       >
       <button class:active={settingsMode} type="button" onclick={chooseSettings}
-        ><SettingsIcon aria-hidden="true" />Settings</button
+        ><SettingsIcon aria-hidden="true" />{t.navSettings}</button
       >
 
       {#if projects.length}
-        <h2>Projects</h2>
+        <h2>{t.navProjects}</h2>
         {#each projects as context (context.id)}
           <button
             class:active={isCurrent({ kind: 'context', contextId: context.id })}
@@ -464,7 +476,7 @@
       {/if}
 
       {#if standalone.length}
-        <h2>Contexts</h2>
+        <h2>{t.navContexts}</h2>
         {#each standalone as context (context.id)}
           <button
             class:active={isCurrent({ kind: 'context', contextId: context.id })}
@@ -480,14 +492,22 @@
   </aside>
 
   {#if settingsMode}
-    <SettingsPanel client={settings} {modelClient} {intClient} {isLinux} />
+    <SettingsPanel
+      client={settings}
+      {modelClient}
+      {intClient}
+      {isLinux}
+      onLanguageChange={(lang) => {
+        currentLanguage = lang;
+      }}
+    />
   {:else}
     <section class="library-stream" aria-labelledby="library-title">
       <header class="library-toolbar">
         <button
           class="navigation-toggle"
           type="button"
-          aria-label="Toggle Library navigation"
+          aria-label={t.navToggleAriaLabel}
           aria-expanded={navigationOpen}
           onclick={() => (navigationOpen = !navigationOpen)}
           ><MenuIcon aria-hidden="true" /></button
@@ -497,9 +517,9 @@
         </div>
         {#if activeContext?.kind === 'project' && knownBranches.length}
           <label class="branch-filter">
-            <span>Branch</span>
+            <span>{t.branchLabel}</span>
             <select value={branchName ?? ''} onchange={changeBranch}>
-              <option value="">All branches</option>
+              <option value="">{t.allBranches}</option>
               {#each knownBranches as branch}
                 <option value={branch}>{branch}</option>
               {/each}
@@ -511,14 +531,14 @@
       {#if searchMode}
         <div class="search-panel">
           <label class="search-field">
-            <span class="sr-only">Search captures</span>
+            <span class="sr-only">{t.searchCapturesLabel}</span>
             <SearchIcon aria-hidden="true" />
             <input
               bind:this={searchInput}
               type="search"
               value={query}
               maxlength="200"
-              placeholder="Search text and captions"
+              placeholder={t.searchCapturesPlaceholder}
               oninput={scheduleSearch}
             />
           </label>

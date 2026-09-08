@@ -123,6 +123,7 @@ describe('visual accessibility verification', () => {
         ],
         theme: 'system',
         localSpeechEnabled: false,
+        language: 'english',
       }),
       update: vi.fn(),
     };

@@ -15,6 +15,7 @@ import type {
   SpeechModelStatus,
   ThemeSetting,
   IntegrationStatus,
+  LanguageSetting,
 } from './ipc-types';
 import type {
   CaptureFilters,
@@ -133,6 +134,7 @@ let devSettingsStore: AppSettings = {
   ] as ContextProviderKind[],
   theme: 'system' as ThemeSetting,
   localSpeechEnabled: true,
+  language: 'english' as LanguageSetting,
 };
 
 let devSpeechStatus: SpeechModelStatus = {
@@ -264,6 +266,7 @@ export const devSettingsClient: SettingsClient = {
       providerTieBreakOrder:
         patch.providerTieBreakOrder ?? devSettingsStore.providerTieBreakOrder,
       theme: patch.theme ?? devSettingsStore.theme,
+      language: patch.language ?? devSettingsStore.language,
       localSpeechEnabled:
         patch.localSpeechEnabled ?? devSettingsStore.localSpeechEnabled,
       globalShortcut: patch.globalShortcut ?? devSettingsStore.globalShortcut,

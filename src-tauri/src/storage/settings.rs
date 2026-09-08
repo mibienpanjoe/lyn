@@ -8,6 +8,7 @@ const GLOBAL_SHORTCUT: &str = "global_shortcut";
 const PROVIDER_ORDER: &str = "provider_tie_break_order";
 const THEME: &str = "theme";
 const LOCAL_SPEECH: &str = "local_speech_enabled";
+const LANGUAGE: &str = "language";
 
 pub(crate) struct SettingsRepository<'a> {
     connection: &'a Connection,
@@ -71,6 +72,7 @@ pub(crate) fn load(connection: &Connection) -> Result<AppSettings, StorageError>
         theme: read(connection, THEME)?.unwrap_or(defaults.theme),
         local_speech_enabled: read(connection, LOCAL_SPEECH)?
             .unwrap_or(defaults.local_speech_enabled),
+        language: read(connection, LANGUAGE)?.unwrap_or(defaults.language),
     })
 }
 
@@ -86,6 +88,7 @@ pub(crate) fn save(
     )?;
     write(transaction, THEME, &settings.theme)?;
     write(transaction, LOCAL_SPEECH, &settings.local_speech_enabled)?;
+    write(transaction, LANGUAGE, &settings.language)?;
     Ok(())
 }
 
@@ -162,7 +165,7 @@ pub(crate) fn valid_shortcut(shortcut: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        contract::{AppSettings, ContextProviderKind, ThemeSetting},
+        contract::{AppSettings, ContextProviderKind, LanguageSetting, ThemeSetting},
         storage::Database,
     };
 
@@ -176,6 +179,7 @@ mod tests {
             .unwrap();
         assert!(!defaults.local_speech_enabled);
         assert_eq!(defaults.theme, ThemeSetting::System);
+        assert_eq!(defaults.language, LanguageSetting::English);
 
         let updated = AppSettings {
             global_shortcut: "Control+Alt+L".to_owned(),
@@ -188,6 +192,7 @@ mod tests {
             ],
             theme: ThemeSetting::Dark,
             local_speech_enabled: true,
+            language: LanguageSetting::French,
         };
         let transaction = database.connection_mut().transaction().unwrap();
         save(&transaction, &updated).unwrap();

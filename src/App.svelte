@@ -5,6 +5,7 @@
   import CapturePopup from './capture/CapturePopup.svelte';
   import LibraryPage from './library/LibraryPage.svelte';
   import { applyTheme, settingsClient } from './settings/settings-client';
+  import type { LanguageSetting } from './lib/ipc-types';
   import {
     devCaptureClient,
     devIntegrationClient,
@@ -15,12 +16,16 @@
 
   const surface = new URLSearchParams(window.location.search).get('surface');
   const tauriActive = isTauri();
+  let initialLanguage = $state<LanguageSetting>('english');
 
   onMount(() => {
     const client = tauriActive ? settingsClient : devSettingsClient;
     void client
       .get()
-      .then((settings) => applyTheme(settings.theme))
+      .then((settings) => {
+        applyTheme(settings.theme);
+        initialLanguage = settings.language;
+      })
       .catch(() => undefined);
   });
 </script>
@@ -40,5 +45,6 @@
     settings={tauriActive ? undefined : devSettingsClient}
     modelClient={tauriActive ? undefined : devSpeechModelClient}
     intClient={tauriActive ? undefined : devIntegrationClient}
+    {initialLanguage}
   />
 {/if}

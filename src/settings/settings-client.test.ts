@@ -18,6 +18,7 @@ const settings: AppSettings = {
   ],
   theme: 'system',
   localSpeechEnabled: false,
+  language: 'english',
 };
 
 describe('settings client', () => {
@@ -37,6 +38,7 @@ describe('settings client', () => {
       providerTieBreakOrder: null,
       theme: 'dark',
       localSpeechEnabled: null,
+      language: null,
     });
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'get_settings', { input: {} });
@@ -47,6 +49,7 @@ describe('settings client', () => {
           providerTieBreakOrder: null,
           theme: 'dark',
           localSpeechEnabled: null,
+          language: null,
         },
       },
     });

@@ -131,6 +131,7 @@ describe('responsive Library', () => {
         ],
         theme: 'system',
         localSpeechEnabled: false,
+        language: 'english',
       }),
       update: vi.fn(),
     };
@@ -143,6 +144,74 @@ describe('responsive Library', () => {
       await screen.findByRole('heading', { name: 'Settings' }),
     ).toBeVisible();
     expect(settings.get).toHaveBeenCalledOnce();
+  });
+
+  it('translates sidebar text to French when set in settings', async () => {
+    const updateMock = vi.fn().mockImplementation((patch) =>
+      Promise.resolve({
+        globalShortcut: 'Control+Shift+Space',
+        providerTieBreakOrder: [
+          'vscode',
+          'cursor',
+          'browser',
+          'shell',
+          'foreground_window',
+        ],
+        theme: 'system',
+        localSpeechEnabled: false,
+        language: 'english',
+        ...patch,
+      }),
+    );
+    const settings: SettingsClient = {
+      get: vi.fn().mockResolvedValue({
+        globalShortcut: 'Control+Shift+Space',
+        providerTieBreakOrder: [
+          'vscode',
+          'cursor',
+          'browser',
+          'shell',
+          'foreground_window',
+        ],
+        theme: 'system',
+        localSpeechEnabled: false,
+        language: 'english',
+      }),
+      update: updateMock,
+    };
+    render(LibraryPage, { client: createClient(), settings });
+
+    // Initial sidebar in English
+    expect(await screen.findByRole('button', { name: 'Recent' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'All captures' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Search' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Projects' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Contexts' })).toBeVisible();
+
+    // Open settings and switch language to French
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const frenchBtn = await screen.findByRole('button', { name: 'Français' });
+    await fireEvent.click(frenchBtn);
+
+    // Sidebar navigation should update to French
+    expect(
+      await screen.findByRole('button', { name: 'Récents' }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: 'Toutes les captures' }),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Recherche' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Paramètres' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Projets' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Contextes' })).toBeVisible();
+
+    // Switch back to English
+    const englishBtn = screen.getByRole('button', { name: 'English' });
+    await fireEvent.click(englishBtn);
+
+    expect(await screen.findByRole('button', { name: 'Recent' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'All captures' })).toBeVisible();
   });
 
   it('renders chronological navigation and faithful text detail accessibly', async () => {

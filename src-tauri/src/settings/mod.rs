@@ -33,6 +33,7 @@ pub(crate) fn update(
         local_speech_enabled: patch
             .local_speech_enabled
             .unwrap_or(current.local_speech_enabled),
+        language: patch.language.unwrap_or(current.language),
     };
     if !settings::valid_shortcut(&next.global_shortcut) {
         return Err(SettingsError::InvalidShortcut);
@@ -66,7 +67,7 @@ pub(crate) fn update(
 #[cfg(test)]
 mod tests {
     use crate::{
-        contract::{ContextProviderKind, SettingsPatch, ThemeSetting},
+        contract::{ContextProviderKind, LanguageSetting, SettingsPatch, ThemeSetting},
         storage::{Database, settings::SettingsRepository},
     };
 
@@ -146,6 +147,7 @@ mod tests {
                 provider_tie_break_order: Some(order.clone()),
                 theme: Some(ThemeSetting::Dark),
                 local_speech_enabled: Some(true),
+                language: Some(LanguageSetting::French),
             },
             &mut platform,
         )
@@ -153,6 +155,7 @@ mod tests {
 
         assert_eq!(updated.provider_tie_break_order, order);
         assert!(updated.local_speech_enabled);
+        assert_eq!(updated.language, LanguageSetting::French);
         assert_eq!(platform.shortcut, "Control+Alt+L");
         assert_eq!(platform.applied_theme, Some(ThemeSetting::Dark));
     }
