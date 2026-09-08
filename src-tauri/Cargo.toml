@@ -1,6 +1,6 @@
 [package]
 name = "lyn"
-version = "0.6.3"
+version = "0.6.4"
 description = "A local-first desktop working-memory companion"
 authors = ["Lyn contributors"]
 license = "MIT"
