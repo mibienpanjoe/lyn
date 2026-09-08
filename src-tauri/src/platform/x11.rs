@@ -128,7 +128,7 @@ pub(crate) fn active_window() -> Result<u32, PlatformError> {
 }
 
 pub(crate) fn active_editor_window() -> Result<(u32, ContextWindowKind), PlatformError> {
-    let (window, kind) = active_context_window()?;
+    let (window, kind) = current_context_window()?;
     if kind == ContextWindowKind::Vscode || kind == ContextWindowKind::Cursor {
         Ok((window, kind))
     } else {
@@ -137,7 +137,7 @@ pub(crate) fn active_editor_window() -> Result<(u32, ContextWindowKind), Platfor
 }
 
 pub(crate) fn active_browser_window() -> Result<(u32, ContextWindowKind), PlatformError> {
-    let (window, kind) = active_context_window()?;
+    let (window, kind) = current_context_window()?;
     if kind == ContextWindowKind::Browser {
         Ok((window, kind))
     } else {
@@ -148,6 +148,32 @@ pub(crate) fn active_browser_window() -> Result<(u32, ContextWindowKind), Platfo
 static LAST_ACTIVE_CONTEXT_WINDOW: Mutex<Option<(u32, ContextWindowKind)>> = Mutex::new(None);
 
 pub(crate) fn active_context_window() -> Result<(u32, ContextWindowKind), PlatformError> {
+    let (window, window_class) = active_window_class()?;
+    remember_active_context_window(window, &window_class)
+}
+
+// Editors and browsers bind one OS window per extension instance. Substituting
+// the last context window while Lyn is focused would remap Cursor/VS Code
+// workspaces onto whichever window happened to be remembered (often another
+// project). Only the shell helper may use that substitution.
+fn current_context_window() -> Result<(u32, ContextWindowKind), PlatformError> {
+    let (window, window_class) = active_window_class()?;
+    bind_current_context_window(window, &window_class)
+}
+
+fn bind_current_context_window(
+    window: u32,
+    window_class: &[u8],
+) -> Result<(u32, ContextWindowKind), PlatformError> {
+    if is_lyn_class(window_class) {
+        return Err(PlatformError::Unsupported);
+    }
+    context_window_kind(window_class)
+        .map(|kind| (window, kind))
+        .ok_or(PlatformError::Unsupported)
+}
+
+fn active_window_class() -> Result<(u32, Vec<u8>), PlatformError> {
     let (connection, _) = x11rb::connect(None).map_err(|_| PlatformError::Unsupported)?;
     let window = active_window()?;
     let window_class = connection
@@ -156,7 +182,7 @@ pub(crate) fn active_context_window() -> Result<(u32, ContextWindowKind), Platfo
         .reply()
         .map_err(|_| PlatformError::Unsupported)?
         .value;
-    remember_active_context_window(window, &window_class)
+    Ok((window, window_class))
 }
 
 // Showing Lyn necessarily moves OS focus away from the observed window, so a
@@ -254,8 +280,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        ContextWindowKind, LAST_ACTIVE_CONTEXT_WINDOW, PlatformError, context_window_kind,
-        remember_active_context_window,
+        ContextWindowKind, LAST_ACTIVE_CONTEXT_WINDOW, PlatformError, bind_current_context_window,
+        context_window_kind, remember_active_context_window,
     };
 
     static ACTIVE_WINDOW_MEMO_LOCK: Mutex<()> = Mutex::new(());
@@ -367,6 +393,23 @@ mod tests {
         assert_eq!(
             remember_active_context_window(7, b"lyn\0Lyn\0"),
             Err(PlatformError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn editor_binding_does_not_inherit_the_last_context_window() {
+        let _guard = ACTIVE_WINDOW_MEMO_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *LAST_ACTIVE_CONTEXT_WINDOW.lock().unwrap() = None;
+        assert!(remember_active_context_window(9, b"cursor\0Cursor\0").is_ok());
+        assert_eq!(
+            bind_current_context_window(7, b"lyn\0Lyn\0"),
+            Err(PlatformError::Unsupported)
+        );
+        assert_eq!(
+            bind_current_context_window(11, b"cursor\0Cursor\0"),
+            Ok((11, ContextWindowKind::Cursor))
         );
     }
 }

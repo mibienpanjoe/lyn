@@ -143,40 +143,39 @@ fn apply_message(
     let mut removed_previous_window = false;
     let (window, provider, source_kind) = match message.state {
         WindowState::Focused => {
-            let Some((active_window, window_kind)) = active_window else {
-                return false;
-            };
-            let (provider, source_kind) = match window_kind {
-                ContextWindowKind::Cursor => (
-                    ContextProviderKind::Cursor,
-                    ProviderSourceKind::CursorWindow,
-                ),
-                _ => (
-                    ContextProviderKind::Vscode,
-                    ProviderSourceKind::VscodeWindow,
-                ),
-            };
-            let window = WindowCorrelationToken::from_native(u64::from(active_window));
-            if let Some((previous, prev_provider, prev_source)) =
-                windows.insert(message.instance_id, (window, provider, source_kind))
-                && previous != window
-            {
-                registry.register(
-                    ProviderObservation::new(
-                        prev_provider,
-                        prev_source,
-                        Some(previous),
-                        None,
-                        None,
-                        PathBuf::from("/"),
+            match active_window {
+                Some((active_window, window_kind)) => {
+                    let (provider, source_kind) = match window_kind {
+                        ContextWindowKind::Cursor => (
+                            ContextProviderKind::Cursor,
+                            ProviderSourceKind::CursorWindow,
+                        ),
+                        _ => (
+                            ContextProviderKind::Vscode,
+                            ProviderSourceKind::VscodeWindow,
+                        ),
+                    };
+                    let window = WindowCorrelationToken::from_native(u64::from(active_window));
+                    claim_window(
+                        windows,
+                        registry,
+                        message.instance_id,
+                        window,
+                        provider,
+                        source_kind,
                         now,
-                        ObservationLiveness::Ended,
-                    ),
-                    now,
-                );
-                removed_previous_window = true;
+                        &mut removed_previous_window,
+                    );
+                    (window, provider, source_kind)
+                }
+                // Opening Lyn takes OS focus. Keep this instance on its last
+                // correlated window instead of dropping the observation or
+                // inheriting another Cursor workspace's window.
+                None => match windows.get(&message.instance_id).copied() {
+                    Some(existing) => existing,
+                    None => return false,
+                },
             }
-            (window, provider, source_kind)
         }
         WindowState::Unfocused | WindowState::Ended => {
             let Some((window, provider, source_kind)) = windows.get(&message.instance_id).copied()
@@ -216,6 +215,67 @@ fn apply_message(
         windows.remove(&message.instance_id);
     }
     changed
+}
+
+fn claim_window(
+    windows: &mut HashMap<
+        Uuid,
+        (
+            WindowCorrelationToken,
+            ContextProviderKind,
+            ProviderSourceKind,
+        ),
+    >,
+    registry: &mut ContextSourceRegistry,
+    instance_id: Uuid,
+    window: WindowCorrelationToken,
+    provider: ContextProviderKind,
+    source_kind: ProviderSourceKind,
+    now: Instant,
+    removed_previous_window: &mut bool,
+) {
+    let displaced: Vec<_> = windows
+        .iter()
+        .filter(|(id, (claimed, _, _))| **id != instance_id && *claimed == window)
+        .map(|(id, value)| (*id, *value))
+        .collect();
+    for (other_id, (claimed, other_provider, other_kind)) in displaced {
+        windows.remove(&other_id);
+        registry.register(
+            ProviderObservation::new(
+                other_provider,
+                other_kind,
+                Some(claimed),
+                None,
+                None,
+                PathBuf::from("/"),
+                now,
+                ObservationLiveness::Ended,
+            ),
+            now,
+        );
+        *removed_previous_window = true;
+    }
+
+    if let Some((previous, prev_provider, prev_source)) =
+        windows.insert(instance_id, (window, provider, source_kind))
+        && previous != window
+    {
+        registry.register(
+            ProviderObservation::new(
+                prev_provider,
+                prev_source,
+                Some(previous),
+                None,
+                None,
+                PathBuf::from("/"),
+                now,
+                ObservationLiveness::Ended,
+            ),
+            now,
+        );
+        *removed_previous_window = true;
+    }
 }
 
 fn socket_path() -> io::Result<PathBuf> {
@@ -439,6 +499,109 @@ mod tests {
             sources[0].window(),
             Some(WindowCorrelationToken::from_native(22))
         );
+    }
+
+    #[test]
+    fn focused_without_os_window_keeps_this_instance_not_another_cursor_window() {
+        let lyn = tempdir().unwrap();
+        let other = tempdir().unwrap();
+        fs::create_dir(lyn.path().join(".git")).unwrap();
+        fs::create_dir(other.path().join(".git")).unwrap();
+        let lyn_id = Uuid::new_v4();
+        let other_id = Uuid::new_v4();
+        let mut registry = ContextSourceRegistry::default();
+        let mut windows = HashMap::new();
+        let now = Instant::now();
+        let focused = |instance_id, directory: &std::path::Path| VscodeObservationMessage {
+            version: 1,
+            instance_id,
+            state: WindowState::Focused,
+            workspace_folders: vec![directory.display().to_string()],
+        };
+
+        apply_message(
+            &mut registry,
+            &mut windows,
+            focused(other_id, other.path()),
+            Some((101, ContextWindowKind::Cursor)),
+            now,
+        );
+        apply_message(
+            &mut registry,
+            &mut windows,
+            focused(lyn_id, lyn.path()),
+            Some((202, ContextWindowKind::Cursor)),
+            now,
+        );
+        apply_message(
+            &mut registry,
+            &mut windows,
+            focused(lyn_id, lyn.path()),
+            None,
+            now + std::time::Duration::from_secs(1),
+        );
+
+        let sources = registry.live_sources(now + std::time::Duration::from_secs(1));
+        assert_eq!(sources.len(), 2);
+        let lyn_source = sources
+            .iter()
+            .find(|source| source.window() == Some(WindowCorrelationToken::from_native(202)))
+            .expect("lyn window stays correlated");
+        assert_eq!(
+            lyn_source.identity().project_path,
+            lyn.path().canonicalize().unwrap().to_string_lossy()
+        );
+        assert!(
+            sources.iter().any(|source| {
+                source.window() == Some(WindowCorrelationToken::from_native(101))
+            })
+        );
+    }
+
+    #[test]
+    fn claiming_a_cursor_window_evicts_the_other_instance() {
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        fs::create_dir(first.path().join(".git")).unwrap();
+        fs::create_dir(second.path().join(".git")).unwrap();
+        let first_id = Uuid::new_v4();
+        let second_id = Uuid::new_v4();
+        let mut registry = ContextSourceRegistry::default();
+        let mut windows = HashMap::new();
+        let now = Instant::now();
+        let focused = |instance_id, directory: &std::path::Path| VscodeObservationMessage {
+            version: 1,
+            instance_id,
+            state: WindowState::Focused,
+            workspace_folders: vec![directory.display().to_string()],
+        };
+
+        apply_message(
+            &mut registry,
+            &mut windows,
+            focused(first_id, first.path()),
+            Some((101, ContextWindowKind::Cursor)),
+            now,
+        );
+        apply_message(
+            &mut registry,
+            &mut windows,
+            focused(second_id, second.path()),
+            Some((101, ContextWindowKind::Cursor)),
+            now,
+        );
+
+        let sources = registry.live_sources(now);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(
+            sources[0].window(),
+            Some(WindowCorrelationToken::from_native(101))
+        );
+        assert_eq!(
+            sources[0].identity().project_path,
+            second.path().canonicalize().unwrap().to_string_lossy()
+        );
+        assert!(!windows.contains_key(&first_id));
     }
 
     #[test]
