@@ -29,7 +29,9 @@
         "minWidth": 520,
         "minHeight": 200,
         "resizable": true,
-        "visible": false
+        "visible": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
       }
     ],
     "security": {

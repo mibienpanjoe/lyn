@@ -94,6 +94,14 @@ pub fn run() {
             })
             .build(),
     );
+    let builder = builder.on_window_event(|window, event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if window.label() == "capture" {
+                api.prevent_close();
+                dismiss_and_cancel_capture(window.app_handle());
+            }
+        }
+    });
     builder
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
@@ -255,6 +263,35 @@ pub fn run_browser_host_helper() -> std::process::ExitCode {
     context::browser_provider::run_browser_host_helper()
 }
 
+fn dismiss_and_cancel_capture(app: &tauri::AppHandle) {
+    use crate::platform::CaptureWindowPlatform;
+
+    if let Ok(mut service) = app
+        .state::<Mutex<capture::session::CaptureSessionService>>()
+        .lock()
+    {
+        if let Some(session) = service.active_session() {
+            let _ = service.cancel(session.session_id);
+            if let Ok(mut media_store) = app.state::<Mutex<media::staging::MediaStore>>().lock() {
+                while let Some(cleanup) = service.take_cleanup_request() {
+                    let _ = media_store.discard_staged(cleanup.session_id, cleanup.staged_media_id);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    let mut platform = platform::x11::X11CaptureWindowPlatform::new(app.clone());
+    #[cfg(not(target_os = "linux"))]
+    let mut platform = platform::UnsupportedCaptureWindowPlatform::new(app.clone());
+
+    if let Ok(mut invocation) = app.state::<Mutex<platform::InvocationContext>>().lock() {
+        let _ = invocation.dismiss(&mut platform);
+    } else {
+        let _ = platform.hide_capture_popup();
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn invoke_capture_popup(app: &tauri::AppHandle) {
     use crate::platform::CaptureWindowPlatform;
@@ -262,7 +299,9 @@ fn invoke_capture_popup(app: &tauri::AppHandle) {
     let mut platform = platform::x11::X11CaptureWindowPlatform::new(app.clone());
     let foreground = platform.capture_foreground().ok();
     if let Ok(mut invocation) = app.state::<Mutex<platform::InvocationContext>>().lock() {
-        invocation.record_foreground(foreground);
+        if foreground.is_some() || !invocation.has_foreground() {
+            invocation.record_foreground(foreground);
+        }
     }
     let session = app
         .state::<Mutex<capture::session::CaptureSessionService>>()
@@ -340,7 +379,10 @@ fn resolve_invocation_context(
     };
 
     let resolution = match outcome {
-        ResolutionOutcome::Required => return session,
+        ResolutionOutcome::Required => ContextResolution::Required {
+            candidate: (),
+            selection: (),
+        },
         ResolutionOutcome::Ambiguous => ContextResolution::Ambiguous {
             candidate: (),
             selection: (),

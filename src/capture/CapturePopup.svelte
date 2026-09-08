@@ -378,11 +378,16 @@
   async function cancel() {
     if (!session) {
       cancelRequested = true;
+      await (dismiss?.() ?? client.dismissPopup()).catch(() => undefined);
       return;
     }
     try {
       await client.cancel(session.sessionId);
       await (dismiss?.() ?? client.dismissPopup());
+      session = null;
+      draft = '';
+      chooserOpen = false;
+      error = null;
     } catch (caught) {
       error = toAppError(
         caught,

@@ -30,26 +30,43 @@ impl X11CaptureWindowPlatform {
 impl CaptureWindowPlatform for X11CaptureWindowPlatform {
     fn capture_foreground(&mut self) -> Result<ForegroundWindowIdentity, PlatformError> {
         let window = active_window()?;
+        if is_lyn_window(window) {
+            return Err(PlatformError::Unsupported);
+        }
         Ok(ForegroundWindowIdentity {
             window: WindowCorrelationToken::from_native(u64::from(window)),
         })
     }
 
     fn show_capture_popup(&mut self) -> Result<(), PlatformError> {
-        let window = self
-            .app
-            .get_webview_window("capture")
-            .ok_or(PlatformError::FocusFailed)?;
+        let window = match self.app.get_webview_window("capture") {
+            Some(w) => w,
+            None => tauri::WebviewWindowBuilder::new(
+                &self.app,
+                "capture",
+                tauri::WebviewUrl::App("index.html?surface=capture".into()),
+            )
+            .title("Lyn")
+            .inner_size(640.0, 210.0)
+            .min_inner_size(520.0, 200.0)
+            .resizable(true)
+            .visible(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .build()
+            .map_err(|_| PlatformError::FocusFailed)?,
+        };
+        let _ = window.unminimize();
         window.show().map_err(|_| PlatformError::FocusFailed)?;
-        window.set_focus().map_err(|_| PlatformError::FocusFailed)
+        let _ = window.set_focus();
+        Ok(())
     }
 
     fn hide_capture_popup(&mut self) -> Result<(), PlatformError> {
-        self.app
-            .get_webview_window("capture")
-            .ok_or(PlatformError::FocusFailed)?
-            .hide()
-            .map_err(|_| PlatformError::FocusFailed)
+        if let Some(window) = self.app.get_webview_window("capture") {
+            window.hide().map_err(|_| PlatformError::FocusFailed)?;
+        }
+        Ok(())
     }
 
     fn restore_foreground(
@@ -58,6 +75,24 @@ impl CaptureWindowPlatform for X11CaptureWindowPlatform {
     ) -> Result<(), PlatformError> {
         activate_window(identity.window.native() as u32)
     }
+}
+
+pub(crate) fn is_lyn_window(window: u32) -> bool {
+    let Ok((connection, _)) = x11rb::connect(None) else {
+        return false;
+    };
+    let Ok(reply) =
+        connection.get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64)
+    else {
+        return false;
+    };
+    let Ok(reply) = reply.reply() else {
+        return false;
+    };
+    reply
+        .value
+        .split(|byte| *byte == 0)
+        .any(|part| part.eq_ignore_ascii_case(b"lyn"))
 }
 
 pub(crate) fn active_window() -> Result<u32, PlatformError> {

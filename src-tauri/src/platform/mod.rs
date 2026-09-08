@@ -74,20 +74,34 @@ impl CaptureWindowPlatform for UnsupportedCaptureWindowPlatform {
     }
 
     fn show_capture_popup(&mut self) -> Result<(), PlatformError> {
-        let window = self
-            .app
-            .get_webview_window("capture")
-            .ok_or(PlatformError::Unsupported)?;
+        let window = match self.app.get_webview_window("capture") {
+            Some(w) => w,
+            None => tauri::WebviewWindowBuilder::new(
+                &self.app,
+                "capture",
+                tauri::WebviewUrl::App("index.html?surface=capture".into()),
+            )
+            .title("Lyn")
+            .inner_size(640.0, 210.0)
+            .min_inner_size(520.0, 200.0)
+            .resizable(true)
+            .visible(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .build()
+            .map_err(|_| PlatformError::Unsupported)?,
+        };
+        let _ = window.unminimize();
         window.show().map_err(|_| PlatformError::FocusFailed)?;
-        window.set_focus().map_err(|_| PlatformError::FocusFailed)
+        let _ = window.set_focus();
+        Ok(())
     }
 
     fn hide_capture_popup(&mut self) -> Result<(), PlatformError> {
-        self.app
-            .get_webview_window("capture")
-            .ok_or(PlatformError::Unsupported)?
-            .hide()
-            .map_err(|_| PlatformError::FocusFailed)
+        if let Some(window) = self.app.get_webview_window("capture") {
+            window.hide().map_err(|_| PlatformError::FocusFailed)?;
+        }
+        Ok(())
     }
 
     fn restore_foreground(
