@@ -95,6 +95,9 @@ export interface Translations {
   cancelDelete: string;
   deleting: string;
   loadEarlier: string;
+  kindText: string;
+  kindImage: string;
+  kindAudio: string;
 }
 
 const en: Translations = {
@@ -205,6 +208,9 @@ const en: Translations = {
   cancelDelete: 'Cancel',
   deleting: 'Deleting…',
   loadEarlier: 'Load earlier captures',
+  kindText: 'Text',
+  kindImage: 'Screenshot',
+  kindAudio: 'Voice note',
 };
 
 const fr: Translations = {
@@ -320,6 +326,9 @@ const fr: Translations = {
   cancelDelete: 'Annuler',
   deleting: 'Suppression…',
   loadEarlier: 'Charger les captures précédentes',
+  kindText: 'Texte',
+  kindImage: 'Capture d’écran',
+  kindAudio: 'Note vocale',
 };
 
 export function getTranslations(

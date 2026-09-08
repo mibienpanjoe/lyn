@@ -226,7 +226,7 @@ describe('responsive Library', () => {
     });
     await fireEvent.click(row);
 
-    await screen.findByRole('heading', { name: 'Lyn' });
+    await screen.findByRole('heading', { name: 'First line' });
     expect(container.querySelector('.detail-text')).toHaveTextContent(
       'First line Second line',
     );
@@ -267,7 +267,7 @@ describe('responsive Library', () => {
     );
     // Copying must never take over the detail pane.
     expect(
-      screen.queryByRole('heading', { name: 'Lyn' }),
+      screen.queryByRole('heading', { name: 'First line' }),
     ).not.toBeInTheDocument();
     vi.unstubAllGlobals();
   });
@@ -721,7 +721,7 @@ describe('responsive Library', () => {
     await fireEvent.click(
       await screen.findByRole('button', { name: /text capture in Lyn/i }),
     );
-    expect(screen.getByRole('heading', { name: 'Lyn' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'First line' })).toBeVisible();
 
     const deleteBtn = await screen.findByRole('button', {
       name: 'Delete capture',

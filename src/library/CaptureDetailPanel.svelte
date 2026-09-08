@@ -76,6 +76,21 @@
     const seconds = Math.round(milliseconds / 1000);
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
   }
+  function kindLabel() {
+    if (capture.kind === 'image') return t.kindImage;
+    if (capture.kind === 'audio') return t.kindAudio;
+    return t.kindText;
+  }
+
+  function heading() {
+    if (capture.kind !== 'text') return kindLabel();
+    return (
+      capture.textBody
+        ?.split('\n')
+        .map((line) => line.trim())
+        .find(Boolean) ?? t.kindText
+    );
+  }
 </script>
 
 <article class="detail-panel" aria-labelledby="capture-detail-title">
@@ -86,12 +101,18 @@
         {backLabel}
       </button>
     {/if}
-    <div>
-      <h2 id="capture-detail-title">{capture.context.name}</h2>
+    <div class="detail-header-identity">
+      <h2 id="capture-detail-title" class="sr-only">{heading()}</h2>
+      <p class="detail-context">
+        <span class="detail-context-name">{capture.context.name}</span>
+        {#if capture.branchName}
+          <span class="detail-context-branch" title={capture.branchName}
+            >{capture.branchName}</span
+          >
+        {/if}
+      </p>
       <p class="detail-eyebrow">
-        {capture.kind[0].toUpperCase() + capture.kind.slice(1)} · {fullDate(
-          capture.capturedAt,
-        )}
+        {kindLabel()} · {fullDate(capture.capturedAt)}
       </p>
     </div>
   </header>
