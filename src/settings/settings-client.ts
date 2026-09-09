@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   AppError,
   AppSettings,
+  AppVersion,
   CommandResult,
   SettingsPatch,
 } from '../lib/ipc-types';
@@ -15,6 +16,7 @@ type Invoke = <T>(
 export interface SettingsClient {
   get(): Promise<AppSettings>;
   update(patch: SettingsPatch): Promise<AppSettings>;
+  version(): Promise<AppVersion>;
 }
 
 export class SettingsCommandError extends Error {
@@ -34,6 +36,7 @@ export function createSettingsClient(call: Invoke = invoke): SettingsClient {
   return {
     get: () => command<AppSettings>(call, 'get_settings', {}),
     update: (patch) => command<AppSettings>(call, 'update_settings', { patch }),
+    version: () => command<AppVersion>(call, 'get_app_version', {}),
   };
 }
 

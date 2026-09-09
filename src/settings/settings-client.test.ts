@@ -29,7 +29,8 @@ describe('settings client', () => {
       .mockResolvedValueOnce({
         ok: true,
         data: { ...settings, theme: 'dark' },
-      });
+      })
+      .mockResolvedValueOnce({ ok: true, data: { version: '0.6.4' } });
     const client = createSettingsClient(invoke);
 
     await client.get();
@@ -40,6 +41,7 @@ describe('settings client', () => {
       localSpeechEnabled: null,
       language: null,
     });
+    await client.version();
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'get_settings', { input: {} });
     expect(invoke).toHaveBeenNthCalledWith(2, 'update_settings', {
@@ -53,6 +55,7 @@ describe('settings client', () => {
         },
       },
     });
+    expect(invoke).toHaveBeenNthCalledWith(3, 'get_app_version', { input: {} });
   });
 
   it('preserves typed command errors', async () => {

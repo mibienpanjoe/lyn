@@ -4,12 +4,26 @@ use tauri::{AppHandle, State};
 
 use crate::{
     commands::is_empty_input,
-    contract::{AppSettings, UpdateSettingsInput},
+    contract::{AppSettings, AppVersion, UpdateSettingsInput},
     error::{AppError, CommandResult, ErrorCode, ErrorDetailKey, ErrorDetailValue, ErrorDetails},
     platform::settings::NativeSettingsPlatform,
     settings::{SettingsError, update},
     storage::{Database, settings::SettingsRepository},
 };
+
+#[tauri::command]
+pub(crate) fn get_app_version(input: serde_json::Value) -> CommandResult<AppVersion> {
+    get_app_version_value(input)
+}
+
+fn get_app_version_value(input: serde_json::Value) -> CommandResult<AppVersion> {
+    if !is_empty_input(&input) {
+        return CommandResult::failure(validation_error("input"));
+    }
+    CommandResult::success(AppVersion {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+    })
+}
 
 #[tauri::command]
 pub(crate) fn get_settings(
@@ -128,11 +142,29 @@ mod tests {
 
     use crate::{
         contract::AppSettings,
+        error::CommandResult,
         settings::SettingsPlatform,
         storage::{Database, settings::SettingsRepository},
     };
 
-    use super::update_settings_value;
+    use super::{get_app_version_value, update_settings_value};
+
+    #[test]
+    fn app_version_returns_the_package_version() {
+        let CommandResult::Success { data, .. } = get_app_version_value(json!({})) else {
+            panic!("expected the installed package version");
+        };
+        assert_eq!(data.version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn app_version_rejects_unknown_fields() {
+        let result = get_app_version_value(json!({ "unexpected": true }));
+        assert_eq!(
+            serde_json::to_value(result).unwrap()["error"]["code"],
+            "VALIDATION_ERROR"
+        );
+    }
 
     struct ConflictingPlatform;
 

@@ -13,6 +13,7 @@ permissions = [
   "allow-play-media",
   "allow-open-media-external",
   "allow-stop-audio-playback",
+  "allow-get-app-version",
   "allow-get-settings",
   "allow-update-settings",
   "allow-get-integration-statuses",

@@ -623,7 +623,7 @@ Image preview uses the read-only opaque `previewUri` returned in media summaries
 
 ## Settings and Local Intelligence Commands
 
-`get_settings` and `update_settings` are implemented. Speech-model commands and model-progress events in this section remain proposed behind G2 and are not registered by the current build.
+`get_settings`, `update_settings`, and `get_app_version` are implemented. Speech-model commands and model-progress events in this section remain proposed behind G2 and are not registered by the current build.
 
 ```ts
 interface AppSettings {
@@ -631,6 +631,10 @@ interface AppSettings {
   providerTieBreakOrder: ContextProviderKind[];
   theme: "system" | "light" | "dark";
   localSpeechEnabled: boolean;
+}
+
+interface AppVersion {
+  version: string;
 }
 ```
 
@@ -641,6 +645,16 @@ interface AppSettings {
 **Success:** `CommandResult<AppSettings>`
 
 **Errors:** `STORAGE_UNAVAILABLE`.
+
+### `get_app_version`
+
+Read the version of the running Lyn binary. This is package metadata, not a user preference.
+
+**Input:** `{}`
+
+**Success:** `CommandResult<{ version: string }>`
+
+**Errors:** `VALIDATION_ERROR`.
 
 ### `update_settings`
 
@@ -819,6 +833,7 @@ No concrete model distributor is selected in the source overview. A release MUST
 | Search | `search_captures` | Library Service | No |
 | Media | `open_media_external` | Media Service | No |
 | Media | `play_media` | Media Service | No |
+| Settings | `get_app_version` | Command Gateway | No |
 | Settings | `get_settings` | Storage Service | No |
 | Settings | `update_settings` | Storage Service | Yes |
 | Intelligence | `get_speech_model_status` | Local Speech Adapter | No |

@@ -126,6 +126,7 @@ describe('visual accessibility verification', () => {
         language: 'english',
       }),
       update: vi.fn(),
+      version: vi.fn().mockResolvedValue({ version: '0.6.4' }),
     };
 
     const { container } = render(LibraryPage, {

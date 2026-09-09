@@ -273,6 +273,9 @@ export const devSettingsClient: SettingsClient = {
     };
     return { ...devSettingsStore };
   },
+  async version() {
+    return { version: '0.6.4' };
+  },
 };
 
 export const devSpeechModelClient: SpeechModelClient = {

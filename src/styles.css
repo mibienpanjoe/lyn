@@ -672,7 +672,8 @@ kbd {
 }
 
 .settings-header,
-.settings-form {
+.settings-form,
+.about-section {
   width: min(100%, 704px);
   margin-inline: auto;
 }
@@ -716,6 +717,23 @@ kbd {
   height: 14px;
   color: var(--color-accent);
   stroke-width: 1.5;
+}
+
+.app-version {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.app-version strong {
+  font-size: 15px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.about-section {
+  padding: 0 var(--space-4) var(--space-5);
 }
 
 .settings-form {
@@ -2178,9 +2196,11 @@ kbd {
 
 .detail-header {
   display: flex;
+  flex-direction: column;
   min-height: 56px;
-  align-items: center;
-  gap: var(--space-3);
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
   padding: 10px var(--space-5);
   border-bottom: 1px solid var(--color-divider);
 }
@@ -2191,43 +2211,31 @@ kbd {
   gap: 2px;
 }
 
-.detail-context {
-  display: flex;
+.detail-back {
+  display: inline-flex;
   min-width: 0;
+  min-height: 28px;
   align-items: center;
-  gap: var(--space-2);
-  margin: 0;
-}
-
-.detail-context-name {
-  min-width: 0;
-  overflow: hidden;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
   color: var(--color-text);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 24px;
 }
 
-.detail-context-branch {
-  max-width: 160px;
-  overflow: hidden;
-  padding: 1px 6px;
-  border: 1px solid color-mix(in srgb, var(--color-divider) 60%, transparent);
-  border-radius: 4px;
-  background: var(--color-surface-subtle);
+.detail-back svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  stroke-width: 1.75;
+}
+
+.detail-back:hover {
   color: var(--color-text-muted);
-  font-size: 11px;
-  font-weight: 550;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.detail-header > .icon-label-button {
-  display: none;
-  padding-inline: 0;
-  border-color: transparent;
 }
 
 .detail-content {
@@ -2441,18 +2449,6 @@ kbd {
 
   .library-shell.detail-open .library-detail {
     display: block;
-  }
-
-  .detail-header {
-    flex-direction: column;
-    align-items: stretch;
-    min-height: 0;
-    gap: 6px;
-  }
-
-  .detail-header > .icon-label-button {
-    display: inline-flex;
-    align-self: flex-start;
   }
 
   .detail-placeholder {

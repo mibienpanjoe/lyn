@@ -61,6 +61,7 @@
   let savedNotice = $state(false);
   let model = $state<SpeechModelStatus | null>(null);
   let modelBusy = $state(false);
+  let appVersion = $state<string | null | undefined>(undefined);
   let editingShortcut = $state(false);
   let shortcutInput = $state<HTMLInputElement>();
   let shortcutBeforeEdit = '';
@@ -107,6 +108,7 @@
 
   onMount(() => {
     void load();
+    void loadVersion();
     void loadModel();
     if (isLinux) {
       void loadIntegrations();
@@ -188,6 +190,14 @@
       error = message(caught, t.settingsLoadError);
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadVersion() {
+    try {
+      appVersion = (await client.version()).version;
+    } catch {
+      appVersion = null;
     }
   }
 
@@ -790,4 +800,17 @@
       <button type="button" onclick={load}>{t.retry}</button>
     </div>
   {/if}
+
+  <section class="settings-section about-section" aria-labelledby="about-title">
+    <div>
+      <h2 id="about-title">{t.aboutTitle}</h2>
+      <p>{t.aboutSubtitle}</p>
+    </div>
+    <div class="app-version">
+      <span class="control-label">{t.appVersionLabel}</span>
+      {#if appVersion !== undefined}
+        <strong>{appVersion ?? t.appVersionUnavailable}</strong>
+      {/if}
+    </div>
+  </section>
 </section>

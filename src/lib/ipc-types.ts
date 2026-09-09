@@ -46,6 +46,8 @@ export type SettingsPatch = { globalShortcut: string | null, providerTieBreakOrd
 
 export type UpdateSettingsInput = { patch: SettingsPatch, };
 
+export type AppVersion = { version: string, };
+
 export type SpeechModelState = "not_installed" | "downloading" | "installed" | "invalid";
 
 export type SpeechModelStatus = { state: SpeechModelState, modelId: string | null, label: string, downloadedBytes: number | null, totalBytes: number | null, errorCode: ErrorCode | null, };

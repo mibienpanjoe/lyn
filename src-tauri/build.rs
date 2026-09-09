@@ -27,6 +27,7 @@ fn main() {
         "open_media_external",
         "dismiss_capture_popup",
         "set_capture_popup_layout",
+        "get_app_version",
         "get_settings",
         "update_settings",
         "get_integration_statuses",

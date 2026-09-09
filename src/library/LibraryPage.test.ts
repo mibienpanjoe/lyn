@@ -134,6 +134,7 @@ describe('responsive Library', () => {
         language: 'english',
       }),
       update: vi.fn(),
+      version: vi.fn().mockResolvedValue({ version: '0.6.4' }),
     };
     render(LibraryPage, { client: createClient(), settings });
     await screen.findByRole('heading', { name: 'Recent' });
@@ -178,6 +179,7 @@ describe('responsive Library', () => {
         language: 'english',
       }),
       update: updateMock,
+      version: vi.fn().mockResolvedValue({ version: '0.6.4' }),
     };
     render(LibraryPage, { client: createClient(), settings });
 
@@ -227,6 +229,9 @@ describe('responsive Library', () => {
     await fireEvent.click(row);
 
     await screen.findByRole('heading', { name: 'First line' });
+    expect(
+      screen.getByRole('button', { name: 'Back to Recent' }),
+    ).toBeVisible();
     expect(container.querySelector('.detail-text')).toHaveTextContent(
       'First line Second line',
     );

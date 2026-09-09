@@ -98,6 +98,11 @@ export interface Translations {
   kindText: string;
   kindImage: string;
   kindAudio: string;
+  aboutTitle: string;
+  aboutSubtitle: string;
+  appVersionLabel: string;
+  appVersionUnavailable: string;
+  backToScope: (name: string) => string;
 }
 
 const en: Translations = {
@@ -211,6 +216,11 @@ const en: Translations = {
   kindText: 'Text',
   kindImage: 'Screenshot',
   kindAudio: 'Voice note',
+  aboutTitle: 'About',
+  aboutSubtitle: 'The version of Lyn running on this computer.',
+  appVersionLabel: 'Version',
+  appVersionUnavailable: 'Unavailable',
+  backToScope: (name: string) => `Back to ${name}`,
 };
 
 const fr: Translations = {
@@ -329,6 +339,11 @@ const fr: Translations = {
   kindText: 'Texte',
   kindImage: 'Capture d’écran',
   kindAudio: 'Note vocale',
+  aboutTitle: 'À propos',
+  aboutSubtitle: 'La version de Lyn installée sur cet ordinateur.',
+  appVersionLabel: 'Version',
+  appVersionUnavailable: 'Indisponible',
+  backToScope: (name: string) => `Retour vers ${name}`,
 };
 
 export function getTranslations(

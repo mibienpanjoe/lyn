@@ -186,6 +186,12 @@ pub struct UpdateSettingsInput {
     pub patch: SettingsPatch,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AppVersion {
+    pub version: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum SpeechModelState {
@@ -756,6 +762,7 @@ pub fn typescript_bindings() -> String {
         AppSettings::decl(&config),
         SettingsPatch::decl(&config),
         UpdateSettingsInput::decl(&config),
+        AppVersion::decl(&config),
         SpeechModelState::decl(&config),
         SpeechModelStatus::decl(&config),
         SpeechModelInput::decl(&config),
@@ -1053,6 +1060,9 @@ mod tests {
         round_trip(&session);
         round_trip(&cancel_input);
         round_trip(&cancel_result);
+        round_trip(&AppVersion {
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+        });
         round_trip(&popup_layout_input);
         round_trip(&popup_layout_result);
         round_trip(&select_context_input);

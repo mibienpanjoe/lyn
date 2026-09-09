@@ -97,7 +97,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 | Context | Live sessions + saved contexts; ambiguity never guesses |
 | Library | Chronology by project, detail inspection, capture deletion, play/open media by opaque ID |
 | Search | Bounded local FTS over note bodies and user-visible captions |
-| Settings | Shortcut, theme, provider tie-break order, 1-click integrations installer, optional local speech model |
+| Settings | Shortcut, theme, provider tie-break order, 1-click integrations installer, optional local speech model, installed app version |
 
 ## Optional local speech
 

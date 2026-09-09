@@ -96,21 +96,18 @@
 <article class="detail-panel" aria-labelledby="capture-detail-title">
   <header class="detail-header">
     {#if compact}
-      <button class="icon-label-button" type="button" onclick={onback}>
+      <button
+        class="detail-back"
+        type="button"
+        aria-label={t.backToScope(backLabel)}
+        onclick={onback}
+      >
         <ArrowLeftIcon aria-hidden="true" />
         {backLabel}
       </button>
     {/if}
     <div class="detail-header-identity">
       <h2 id="capture-detail-title" class="sr-only">{heading()}</h2>
-      <p class="detail-context">
-        <span class="detail-context-name">{capture.context.name}</span>
-        {#if capture.branchName}
-          <span class="detail-context-branch" title={capture.branchName}
-            >{capture.branchName}</span
-          >
-        {/if}
-      </p>
       <p class="detail-eyebrow">
         {kindLabel()} · {fullDate(capture.capturedAt)}
       </p>

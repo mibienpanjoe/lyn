@@ -40,6 +40,7 @@ function client(overrides: Partial<SettingsClient> = {}): SettingsClient {
         language: patch.language ?? initial.language,
       }),
     ),
+    version: vi.fn().mockResolvedValue({ version: '0.6.4' }),
     ...overrides,
   };
 }
@@ -659,5 +660,16 @@ describe('Settings', () => {
     expect(container.querySelector('.path-pill')).toHaveTextContent(
       '~/.cursor/extensions/',
     );
+  });
+
+  it('shows the installed app version', async () => {
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient: defaultIntClient,
+    });
+
+    expect(await screen.findByRole('heading', { name: 'About' })).toBeVisible();
+    expect(await screen.findByText('0.6.4')).toBeVisible();
   });
 });

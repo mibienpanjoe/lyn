@@ -200,6 +200,7 @@ pub fn run() {
             commands::library::open_media_external,
             commands::platform::dismiss_capture_popup,
             commands::platform::set_capture_popup_layout,
+            commands::settings::get_app_version,
             commands::settings::get_settings,
             commands::settings::update_settings,
             #[cfg(target_os = "linux")]
