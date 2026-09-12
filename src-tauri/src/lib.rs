@@ -145,10 +145,9 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             {
                 if let Ok(current_exe) = std::env::current_exe() {
-                    let _ = integrations::refresh_shell_helper(
-                        &integrations::user_home_dir(),
-                        &current_exe,
-                    );
+                    let home = integrations::user_home_dir();
+                    let _ = integrations::refresh_shell_helper(&home, &current_exe);
+                    let _ = integrations::refresh_browser_host(&home, &current_exe);
                 }
             }
             #[cfg(desktop)]
@@ -261,6 +260,33 @@ pub fn run_shell_context_helper() -> std::process::ExitCode {
 #[cfg(target_os = "linux")]
 pub fn run_browser_host_helper() -> std::process::ExitCode {
     context::browser_provider::run_browser_host_helper()
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxHelperMode {
+    ShellWatch,
+    BrowserHost,
+}
+
+#[cfg(target_os = "linux")]
+pub fn linux_helper_mode(
+    argv0: Option<&std::ffi::OsStr>,
+    argv1: Option<&std::ffi::OsStr>,
+) -> Option<LinuxHelperMode> {
+    use std::path::Path;
+
+    let invoked_as_browser_host = argv0
+        .map(Path::new)
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "lyn-browser-host");
+    if invoked_as_browser_host || argv1.is_some_and(|argument| argument == "browser-host") {
+        return Some(LinuxHelperMode::BrowserHost);
+    }
+    if argv1.is_some_and(|argument| argument == "watch") {
+        return Some(LinuxHelperMode::ShellWatch);
+    }
+    None
 }
 
 fn dismiss_and_cancel_capture(app: &tauri::AppHandle) {
@@ -452,5 +478,33 @@ mod tests {
     #[test]
     fn rust_test_harness_is_available() {
         assert_eq!(2 + 2, 4);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_messaging_invocation_runs_the_browser_host_not_the_gui() {
+        use std::ffi::OsStr;
+
+        use super::{LinuxHelperMode, linux_helper_mode};
+
+        assert_eq!(
+            linux_helper_mode(
+                Some(OsStr::new("/home/me/.local/share/lyn/bin/lyn-browser-host")),
+                Some(OsStr::new("chrome-extension://abc/"))
+            ),
+            Some(LinuxHelperMode::BrowserHost)
+        );
+        assert_eq!(
+            linux_helper_mode(Some(OsStr::new("lyn")), Some(OsStr::new("browser-host"))),
+            Some(LinuxHelperMode::BrowserHost)
+        );
+        assert_eq!(
+            linux_helper_mode(Some(OsStr::new("lyn-context")), Some(OsStr::new("watch"))),
+            Some(LinuxHelperMode::ShellWatch)
+        );
+        assert_eq!(
+            linux_helper_mode(Some(OsStr::new("/usr/bin/lyn")), None),
+            None
+        );
     }
 }

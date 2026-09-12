@@ -219,7 +219,7 @@ pub(crate) fn browser_status(home: &Path) -> IntegrationStatus {
     let installed = manifest_paths.iter().any(|p| p.is_file());
 
     let details = if installed {
-        Some("Native Messaging host registered for local browsers".to_owned())
+        Some("Native Messaging host registered. Lyn refreshes the helper on launch.".to_owned())
     } else if detected {
         Some("Supported web browser detected".to_owned())
     } else {
@@ -277,6 +277,26 @@ fn shell_helper_path(home: &Path) -> PathBuf {
     home.join(".local/share/lyn/bin/lyn-context")
 }
 
+fn browser_host_path(home: &Path) -> PathBuf {
+    home.join(".local/share/lyn/bin/lyn-browser-host")
+}
+
+fn replace_helper_symlink(dest: &Path, current_exe: &Path) -> std::io::Result<PathBuf> {
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if dest.symlink_metadata().is_ok() {
+        fs::remove_file(dest)?;
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(current_exe, dest)?;
+    #[cfg(not(unix))]
+    {
+        let _ = current_exe;
+    }
+    Ok(dest.to_path_buf())
+}
+
 fn write_shell_bootstrap(home: &Path) -> std::io::Result<PathBuf> {
     let script_file = shell_bootstrap_path(home);
     if let Some(parent) = script_file.parent() {
@@ -288,20 +308,11 @@ fn write_shell_bootstrap(home: &Path) -> std::io::Result<PathBuf> {
 
 pub(crate) fn refresh_shell_helper(home: &Path, current_exe: &Path) -> std::io::Result<PathBuf> {
     write_shell_bootstrap(home)?;
-    let dest = shell_helper_path(home);
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    if dest.symlink_metadata().is_ok() {
-        fs::remove_file(&dest)?;
-    }
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(current_exe, &dest)?;
-    #[cfg(not(unix))]
-    {
-        let _ = current_exe;
-    }
-    Ok(dest)
+    replace_helper_symlink(&shell_helper_path(home), current_exe)
+}
+
+pub(crate) fn refresh_browser_host(home: &Path, current_exe: &Path) -> std::io::Result<PathBuf> {
+    replace_helper_symlink(&browser_host_path(home), current_exe)
 }
 
 pub(crate) fn shell_status(home: &Path) -> IntegrationStatus {
@@ -357,6 +368,10 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 fn locate_browser_host_binary(home: &Path) -> Option<PathBuf> {
+    let helper = browser_host_path(home);
+    if is_executable_file(&helper) {
+        return Some(helper);
+    }
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(parent) = current_exe.parent() {
             let candidate = parent.join("lyn-browser-host");
@@ -445,7 +460,11 @@ fn install_vscode(home: &Path) -> InstallIntegrationResult {
 }
 
 fn install_browser(home: &Path) -> InstallIntegrationResult {
-    let Some(host_bin) = locate_browser_host_binary(home) else {
+    let refreshed = std::env::current_exe()
+        .ok()
+        .and_then(|exe| refresh_browser_host(home, &exe).ok())
+        .filter(|path| is_executable_file(path));
+    let Some(host_bin) = refreshed.or_else(|| locate_browser_host_binary(home)) else {
         return InstallIntegrationResult {
             id: IntegrationId::Browser,
             success: false,
@@ -828,19 +847,16 @@ mod tests {
         let initial_browser = browser_status(home);
         assert!(!initial_browser.installed);
 
-        let bin_dir = home.join(".local/bin");
-        fs::create_dir_all(&bin_dir).unwrap();
-        let dummy_host = bin_dir.join("lyn-browser-host");
-        fs::write(&dummy_host, b"#!/bin/sh\nexit 0\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&dummy_host, fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
         let res = install_browser(home);
         assert!(res.success);
         assert!(res.installed);
+
+        let host = browser_host_path(home);
+        assert!(is_executable_file(&host));
+        assert_eq!(
+            fs::canonicalize(&host).unwrap(),
+            fs::canonicalize(std::env::current_exe().unwrap()).unwrap()
+        );
 
         let after_browser = browser_status(home);
         assert!(after_browser.installed);
@@ -853,7 +869,7 @@ mod tests {
         let chrome_json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&chrome_manifest_file).unwrap()).unwrap();
         assert_eq!(chrome_json["name"], "com.mibienpanjoe.lyn");
-        assert_eq!(chrome_json["path"], dummy_host.to_string_lossy().as_ref());
+        assert_eq!(chrome_json["path"], host.to_string_lossy().as_ref());
         let origins = chrome_json["allowed_origins"].as_array().unwrap();
         assert_eq!(origins.len(), 1);
         assert_eq!(
@@ -870,7 +886,7 @@ mod tests {
         let firefox_json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&firefox_manifest_file).unwrap()).unwrap();
         assert_eq!(firefox_json["name"], "com.mibienpanjoe.lyn");
-        assert_eq!(firefox_json["path"], dummy_host.to_string_lossy().as_ref());
+        assert_eq!(firefox_json["path"], host.to_string_lossy().as_ref());
         let extensions = firefox_json["allowed_extensions"].as_array().unwrap();
         assert_eq!(extensions.len(), 1);
         assert_eq!(extensions[0], FIREFOX_ADDON_ID);
@@ -891,32 +907,18 @@ mod tests {
     }
 
     #[test]
-    fn browser_install_fails_when_host_binary_missing_or_not_executable() {
+    #[cfg(unix)]
+    fn refresh_browser_host_points_at_the_running_binary() {
         let temp = tempdir().unwrap();
         let home = temp.path();
-
-        // Host binary completely missing
-        let res = install_browser(home);
-        assert!(!res.success);
-        assert!(!res.installed);
-
-        let after_browser = browser_status(home);
-        assert!(!after_browser.installed);
-
-        // Host binary present but not executable
-        let bin_dir = home.join(".local/bin");
-        fs::create_dir_all(&bin_dir).unwrap();
-        let dummy_host = bin_dir.join("lyn-browser-host");
-        fs::write(&dummy_host, b"#!/bin/sh\nexit 0\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&dummy_host, fs::Permissions::from_mode(0o644)).unwrap();
-        }
-
-        let res_non_exec = install_browser(home);
-        assert!(!res_non_exec.success);
-        assert!(!res_non_exec.installed);
+        let exe = std::env::current_exe().unwrap();
+        let dest = refresh_browser_host(home, &exe).unwrap();
+        assert_eq!(
+            fs::canonicalize(&dest).unwrap(),
+            fs::canonicalize(&exe).unwrap()
+        );
+        assert!(dest.is_file());
+        assert_eq!(dest, browser_host_path(home));
     }
 
     #[test]
@@ -984,12 +986,6 @@ mod tests {
 
         let temp = tempdir().unwrap();
         let home = temp.path();
-
-        let bin_dir = home.join(".local/bin");
-        fs::create_dir_all(&bin_dir).unwrap();
-        let dummy_host = bin_dir.join("lyn-browser-host");
-        fs::write(&dummy_host, b"#!/bin/sh\nexit 0\n").unwrap();
-        fs::set_permissions(&dummy_host, fs::Permissions::from_mode(0o755)).unwrap();
 
         // Make companion unpacked directory unwritable
         let unpacked_dir = home.join(".local/share/lyn/integrations/browser");

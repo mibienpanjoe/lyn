@@ -382,6 +382,10 @@
         'Supported web browser detected',
         'Navigateur web pris en charge détecté',
       )
+      .replace(
+        'Native Messaging host registered. Lyn refreshes the helper on launch.',
+        'Hôte Native Messaging enregistré. Lyn met à jour l’assistant à chaque lancement.',
+      )
       .replace('Available for Bash and Zsh', 'Disponible pour Bash et Zsh')
       .replace(
         'Shell startup script configured. Lyn refreshes the helper on launch.',

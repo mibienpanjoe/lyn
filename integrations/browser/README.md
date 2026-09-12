@@ -15,7 +15,12 @@ Local, privacy-bounded context provider for web browsers (Google Chrome, Chromiu
 
 ## Setup
 
-### 1. Build and install the Native Messaging host
+Packaged Lyn does not require a second binary. Settings → **Register Host** points Native Messaging at `~/.local/share/lyn/bin/lyn-browser-host`, a symlink to the running Lyn app.
+
+### 1. Register the Native Messaging host
+
+In Lyn Settings, click **Register Host**, or from a source checkout:
+
 ```bash
 pnpm provider:browser:install
 ```
