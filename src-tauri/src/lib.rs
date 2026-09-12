@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Mutex};
+use std::sync::Mutex;
 
 use tauri::{Emitter, Manager};
 
@@ -33,42 +33,31 @@ pub fn run() {
             };
             let app = context.app_handle();
             let media_state = app.state::<Mutex<media::staging::MediaStore>>();
-            let resolved = match request.uri().host() {
-                Some("staged") => {
-                    let Ok(staged_media_id) = contract::StagedMediaId::from_str(
-                        request.uri().path().trim_start_matches('/'),
-                    ) else {
-                        return not_found();
-                    };
-                    media_state
+            let resolved =
+                match media::resource_from_request(request.uri().host(), request.uri().path()) {
+                    Some(media::LynMediaResource::Staged(staged_media_id)) => media_state
                         .lock()
                         .ok()
-                        .and_then(|store| store.staged_preview(staged_media_id).ok())
-                }
-                Some("capture") => {
-                    let Ok(media_id) =
-                        contract::MediaId::from_str(request.uri().path().trim_start_matches('/'))
-                    else {
-                        return not_found();
-                    };
-                    let database_state = app.state::<Mutex<storage::Database>>();
-                    let asset = database_state.lock().ok().and_then(|database| {
-                        storage::media_assets::MediaAssetRepository::new(database.connection())
-                            .find(media_id)
-                            .ok()
-                            .flatten()
-                    });
-                    asset.and_then(|asset| {
-                        media_state.lock().ok().and_then(|store| {
-                            store
-                                .read_final(&asset.relative_path)
+                        .and_then(|store| store.staged_preview(staged_media_id).ok()),
+                    Some(media::LynMediaResource::Capture(media_id)) => {
+                        let database_state = app.state::<Mutex<storage::Database>>();
+                        let asset = database_state.lock().ok().and_then(|database| {
+                            storage::media_assets::MediaAssetRepository::new(database.connection())
+                                .find(media_id)
                                 .ok()
-                                .map(|bytes| (bytes, asset.mime_type))
+                                .flatten()
+                        });
+                        asset.and_then(|asset| {
+                            media_state.lock().ok().and_then(|store| {
+                                store
+                                    .read_final(&asset.relative_path)
+                                    .ok()
+                                    .map(|bytes| (bytes, asset.mime_type))
+                            })
                         })
-                    })
-                }
-                _ => None,
-            };
+                    }
+                    None => None,
+                };
             let Some((bytes, mime_type)) = resolved else {
                 return not_found();
             };
@@ -79,6 +68,7 @@ pub fn run() {
             tauri::http::Response::builder()
                 .header(tauri::http::header::CONTENT_TYPE, content_type)
                 .header(tauri::http::header::CACHE_CONTROL, "no-store")
+                .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
                 .body(bytes)
                 .expect("static media response is valid")
         })

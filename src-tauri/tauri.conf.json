@@ -35,7 +35,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; img-src 'self' lyn-media: http://lyn-media.localhost https://lyn-media.localhost; media-src 'self' lyn-media: http://lyn-media.localhost https://lyn-media.localhost; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

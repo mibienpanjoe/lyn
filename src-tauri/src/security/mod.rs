@@ -81,6 +81,24 @@ mod tests {
     }
 
     #[test]
+    fn csp_allows_local_media_previews_without_opening_the_filesystem() {
+        let raw = fs::read_to_string(repo_relative(&["tauri.conf.json"]))
+            .expect("tauri.conf.json is readable");
+        let value: Value = serde_json::from_str(&raw).expect("tauri.conf.json is JSON");
+        let csp = value["app"]["security"]["csp"]
+            .as_str()
+            .expect("string CSP");
+
+        assert!(csp.contains("img-src 'self' lyn-media:"));
+        assert!(csp.contains("media-src 'self' lyn-media:"));
+        assert!(csp.contains("http://lyn-media.localhost"));
+        assert!(csp.contains("https://lyn-media.localhost"));
+        assert!(!csp.contains("asset:"));
+        assert!(!csp.contains("img-src *"));
+        assert!(!csp.contains("default-src *"));
+    }
+
+    #[test]
     fn capture_window_cannot_install_speech_models_or_mutate_library() {
         let capture = permission_set_allows("capture.toml");
         let library = permission_set_allows("library.toml");
