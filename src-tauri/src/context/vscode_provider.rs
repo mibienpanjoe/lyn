@@ -79,8 +79,8 @@ fn run(listener: UnixListener, app: AppHandle) {
                     continue;
                 };
                 let active_window = (message.state == WindowState::Focused)
-                    .then(crate::platform::x11::active_editor_window)
-                    .and_then(Result::ok);
+                    .then(crate::platform::x11::focused_editor_window)
+                    .flatten();
                 let registry_state = app.state::<std::sync::Mutex<ContextSourceRegistry>>();
                 let Ok(mut registry) = registry_state.lock() else {
                     continue;
@@ -660,6 +660,24 @@ mod tests {
                 .live_sources(now + std::time::Duration::from_secs(11))
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn focused_heartbeat_without_a_window_mapping_is_ignored() {
+        let directory = tempdir().unwrap();
+        let mut registry = ContextSourceRegistry::default();
+        let mut windows = HashMap::new();
+        let now = Instant::now();
+
+        assert!(!apply_message(
+            &mut registry,
+            &mut windows,
+            message(directory.path(), WindowState::Focused),
+            None,
+            now,
+        ));
+        assert!(registry.live_sources(now).is_empty());
+        assert!(windows.is_empty());
     }
 
     #[test]

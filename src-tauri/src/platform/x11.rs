@@ -136,6 +136,78 @@ pub(crate) fn active_editor_window() -> Result<(u32, ContextWindowKind), Platfor
     }
 }
 
+/// When Lyn holds OS focus, Cursor/VS Code may still report `focused` and have
+/// no prior window mapping yet (Lyn started after the editor). Binding to a
+/// remembered last window remaps workspaces across instances; binding to the
+/// only open editor window does not.
+pub(crate) fn focused_editor_window() -> Option<(u32, ContextWindowKind)> {
+    active_editor_window()
+        .ok()
+        .or_else(|| sole_editor_window().ok())
+}
+
+fn sole_editor_window() -> Result<(u32, ContextWindowKind), PlatformError> {
+    pick_sole_editor_window(&listed_editor_windows()?).ok_or(PlatformError::Unsupported)
+}
+
+fn pick_sole_editor_window(
+    windows: &[(u32, ContextWindowKind)],
+) -> Option<(u32, ContextWindowKind)> {
+    let mut found = None;
+    for &(window, kind) in windows {
+        if !matches!(kind, ContextWindowKind::Vscode | ContextWindowKind::Cursor) {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some((window, kind));
+    }
+    found
+}
+
+fn listed_editor_windows() -> Result<Vec<(u32, ContextWindowKind)>, PlatformError> {
+    let (connection, screen_number) =
+        x11rb::connect(None).map_err(|_| PlatformError::Unsupported)?;
+    let root = connection
+        .setup()
+        .roots
+        .get(screen_number)
+        .ok_or(PlatformError::Unsupported)?
+        .root;
+    let client_list = connection
+        .intern_atom(false, b"_NET_CLIENT_LIST")
+        .map_err(|_| PlatformError::Unsupported)?
+        .reply()
+        .map_err(|_| PlatformError::Unsupported)?
+        .atom;
+    let reply = connection
+        .get_property(false, root, client_list, AtomEnum::WINDOW, 0, 256)
+        .map_err(|_| PlatformError::Unsupported)?
+        .reply()
+        .map_err(|_| PlatformError::Unsupported)?;
+    let mut editors = Vec::new();
+    for window in reply.value32().ok_or(PlatformError::Unsupported)? {
+        if window == 0 {
+            continue;
+        }
+        let class = connection
+            .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .map(|property| property.value);
+        let Some(class) = class else {
+            continue;
+        };
+        if let Some(kind) = context_window_kind(&class)
+            && matches!(kind, ContextWindowKind::Vscode | ContextWindowKind::Cursor)
+        {
+            editors.push((window, kind));
+        }
+    }
+    Ok(editors)
+}
+
 pub(crate) fn active_browser_window() -> Result<(u32, ContextWindowKind), PlatformError> {
     let (window, kind) = current_context_window()?;
     if kind == ContextWindowKind::Browser {
@@ -281,7 +353,7 @@ mod tests {
 
     use super::{
         ContextWindowKind, LAST_ACTIVE_CONTEXT_WINDOW, PlatformError, bind_current_context_window,
-        context_window_kind, remember_active_context_window,
+        context_window_kind, pick_sole_editor_window, remember_active_context_window,
     };
 
     static ACTIVE_WINDOW_MEMO_LOCK: Mutex<()> = Mutex::new(());
@@ -410,6 +482,35 @@ mod tests {
         assert_eq!(
             bind_current_context_window(11, b"cursor\0Cursor\0"),
             Ok((11, ContextWindowKind::Cursor))
+        );
+    }
+
+    #[test]
+    fn sole_open_editor_window_is_unambiguous() {
+        assert_eq!(
+            pick_sole_editor_window(&[(11, ContextWindowKind::Cursor)]),
+            Some((11, ContextWindowKind::Cursor))
+        );
+        assert_eq!(
+            pick_sole_editor_window(&[
+                (11, ContextWindowKind::Cursor),
+                (22, ContextWindowKind::Vscode),
+            ]),
+            None
+        );
+        assert_eq!(
+            pick_sole_editor_window(&[
+                (11, ContextWindowKind::Cursor),
+                (12, ContextWindowKind::Cursor),
+            ]),
+            None
+        );
+        assert_eq!(
+            pick_sole_editor_window(&[
+                (11, ContextWindowKind::Cursor),
+                (7, ContextWindowKind::Kitty),
+            ]),
+            Some((11, ContextWindowKind::Cursor))
         );
     }
 }
