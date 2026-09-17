@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use uuid::Uuid;
+
 use crate::contract::{
     CaptureId, CaptureSession, CaptureSessionId, ContextResolution, RecordingState, StagedMedia,
     StagedMediaId,
@@ -28,9 +30,28 @@ pub(crate) struct StagingCleanupRequest {
     pub(crate) staged_media_id: StagedMediaId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InvocationPrepare {
+    New(CaptureSession),
+    Existing(CaptureSession),
+}
+
+impl InvocationPrepare {
+    pub(crate) fn session(&self) -> CaptureSession {
+        match self {
+            Self::New(session) | Self::Existing(session) => session.clone(),
+        }
+    }
+
+    pub(crate) fn is_new(&self) -> bool {
+        matches!(self, Self::New(_))
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct CaptureSessionService {
     active: Option<CaptureSession>,
+    invoke_generation: Option<Uuid>,
     last_cancelled: Option<CaptureSessionId>,
     last_completed: Option<(CaptureSessionId, CaptureId)>,
     cleanup_requests: VecDeque<StagingCleanupRequest>,
@@ -38,8 +59,15 @@ pub(crate) struct CaptureSessionService {
 
 impl CaptureSessionService {
     pub(crate) fn get_or_prepare(&mut self) -> CaptureSession {
+        self.prepare_invocation(None).session()
+    }
+
+    pub(crate) fn prepare_invocation(&mut self, request_id: Option<Uuid>) -> InvocationPrepare {
         if let Some(active) = &self.active {
-            return active.clone();
+            if let Some(request_id) = request_id {
+                self.invoke_generation = Some(request_id);
+            }
+            return InvocationPrepare::Existing(active.clone());
         }
 
         let session = CaptureSession {
@@ -52,7 +80,12 @@ impl CaptureSessionService {
             recording_state: RecordingState::Idle,
         };
         self.active = Some(session.clone());
-        session
+        self.invoke_generation = request_id;
+        InvocationPrepare::New(session)
+    }
+
+    pub(crate) fn accepts_invoke_generation(&self, request_id: Uuid) -> bool {
+        self.active.is_some() && self.invoke_generation == Some(request_id)
     }
 
     pub(crate) fn active_session(&self) -> Option<CaptureSession> {
@@ -159,6 +192,7 @@ impl CaptureSessionService {
             });
         }
         self.last_cancelled = Some(session_id);
+        self.invoke_generation = None;
         Ok(())
     }
 
@@ -180,6 +214,7 @@ impl CaptureSessionService {
         let (capture_id, value) = persist(session).map_err(SaveOnceError::Persistence)?;
 
         self.active = None;
+        self.invoke_generation = None;
         self.last_completed = Some((session_id, capture_id));
         Ok(SaveOnceResult::Saved { capture_id, value })
     }
@@ -206,6 +241,8 @@ mod tests {
         CaptureId, ContextCandidate, ContextId, ContextKind, ContextProviderKind, ContextRef,
         ContextResolution, MediaKind, MediaMimeType, RecordingState, StagedMedia, StagedMediaId,
     };
+
+    use uuid::Uuid;
 
     use super::{CaptureSessionService, SaveOnceError, SaveOnceResult, SessionStateError};
 
@@ -444,5 +481,35 @@ mod tests {
             unknown_save,
             Err(SaveOnceError::Session(SessionStateError::StaleSession))
         );
+    }
+
+    #[test]
+    fn double_invocation_reuses_the_active_session_without_reset() {
+        let mut service = CaptureSessionService::default();
+        let first = service.prepare_invocation(Some(Uuid::new_v4()));
+        let second = service.prepare_invocation(Some(Uuid::new_v4()));
+        assert!(first.is_new());
+        assert!(!second.is_new());
+        assert_eq!(second.session(), first.session());
+    }
+
+    #[test]
+    fn late_replies_stop_after_cancel_or_save() {
+        let mut service = CaptureSessionService::default();
+        let request = Uuid::new_v4();
+        let session = service.prepare_invocation(Some(request)).session();
+        assert!(service.accepts_invoke_generation(request));
+
+        service.cancel(session.session_id).unwrap();
+        assert!(!service.accepts_invoke_generation(request));
+
+        let next_request = Uuid::new_v4();
+        let next = service.prepare_invocation(Some(next_request)).session();
+        assert!(service.accepts_invoke_generation(next_request));
+        service
+            .save_once(next.session_id, |_| Ok::<_, ()>((CaptureId::new(), ())))
+            .unwrap();
+        assert!(!service.accepts_invoke_generation(next_request));
+        assert!(!service.accepts_invoke_generation(request));
     }
 }

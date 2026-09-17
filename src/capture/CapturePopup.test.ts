@@ -625,6 +625,23 @@ describe('quick-capture popup', () => {
     expect(contextButton).toHaveFocus();
   });
 
+  it('keeps the draft when the same session is announced again', async () => {
+    let announceReady: ((session: CaptureSession) => void) | undefined;
+    const client = createClient({
+      getActiveSession: vi.fn().mockResolvedValue(requiredSession),
+      onSessionReady: vi.fn().mockImplementation((listener) => {
+        announceReady = listener;
+        return Promise.resolve(() => undefined);
+      }),
+    });
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    const input = await screen.findByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(input, { target: { value: 'Keep this' } });
+    await waitFor(() => expect(announceReady).toBeTypeOf('function'));
+    announceReady?.(resolvedSession());
+    await waitFor(() => expect(input).toHaveValue('Keep this'));
+  });
+
   it('creates and selects a standalone context inline', async () => {
     const created = { ...inbox, id: 'context-new', name: 'Research' };
     const client = createClient({

@@ -67,13 +67,16 @@
     draftInput?.focus();
     void initialise();
     const unlisten = client.onSessionReady((readySession) => {
+      const sameSession = session?.sessionId === readySession.sessionId;
       session = readySession;
-      draft = '';
-      error = null;
-      chooserOpen = false;
-      sourceStale = false;
-      isPlaying = false;
-      mediaNotice = null;
+      if (!sameSession) {
+        draft = '';
+        error = null;
+        chooserOpen = false;
+        sourceStale = false;
+        isPlaying = false;
+        mediaNotice = null;
+      }
       void refreshSources();
       void tick().then(() => draftInput?.focus());
     });

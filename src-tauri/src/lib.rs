@@ -320,6 +320,14 @@ fn dismiss_and_cancel_capture(app: &tauri::AppHandle) {
 
 #[cfg(target_os = "linux")]
 pub(crate) fn invoke_capture_popup(app: &tauri::AppHandle) {
+    invoke_capture_popup_with_request(app, None);
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn invoke_capture_popup_with_request(
+    app: &tauri::AppHandle,
+    request_id: Option<uuid::Uuid>,
+) {
     use crate::platform::CaptureWindowPlatform;
 
     let mut platform = platform::x11::X11CaptureWindowPlatform::new(app.clone());
@@ -329,17 +337,22 @@ pub(crate) fn invoke_capture_popup(app: &tauri::AppHandle) {
             invocation.record_foreground(foreground);
         }
     }
-    let session = app
+    let prepared = app
         .state::<Mutex<capture::session::CaptureSessionService>>()
         .lock()
         .ok()
-        .map(|mut service| service.get_or_prepare())
+        .map(|mut service| service.prepare_invocation(request_id));
+    let is_new = prepared.as_ref().is_some_and(|prepared| prepared.is_new());
+    let session = prepared
+        .map(|prepared| prepared.session())
         .map(|session| resolve_invocation_context(app, session, foreground));
     if platform.show_capture_popup().is_err() {
         return;
     }
     if let Some(session) = session {
-        let _ = app.emit("capture://session-ready", &session);
+        if is_new {
+            let _ = app.emit("capture://session-ready", &session);
+        }
         let _ = app.emit(
             "context://sources-changed",
             serde_json::json!({ "sessionId": session.session_id }),

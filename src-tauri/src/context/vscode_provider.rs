@@ -83,6 +83,10 @@ fn run(listener: UnixListener, app: AppHandle, expected_uid: u32) {
                 if broker.admit(&frame).is_err() {
                     continue;
                 }
+                let request_id = match &frame {
+                    ProviderFrame::Invoke { request_id, .. } => *request_id,
+                    ProviderFrame::Observe { .. } => None,
+                };
                 let invoke = frame
                     .capabilities()
                     .contains(&ProviderCapability::InvokeCapture);
@@ -130,7 +134,7 @@ fn run(listener: UnixListener, app: AppHandle, expected_uid: u32) {
                 if invoke {
                     let handle = app.clone();
                     let _ = app.run_on_main_thread(move || {
-                        crate::invoke_capture_popup(&handle);
+                        crate::invoke_capture_popup_with_request(&handle, request_id);
                     });
                 }
             }
