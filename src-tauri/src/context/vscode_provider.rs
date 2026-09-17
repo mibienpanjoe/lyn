@@ -2,10 +2,9 @@
 
 use std::{
     collections::HashMap,
-    fs,
-    io::{self, Read},
+    fs, io,
     os::unix::{
-        fs::{FileTypeExt, PermissionsExt},
+        fs::{FileTypeExt, MetadataExt, PermissionsExt},
         net::UnixListener,
     },
     path::{Path, PathBuf},
@@ -25,6 +24,7 @@ use crate::{
         },
         provider::{ObservationLiveness, ProviderObservation, ProviderSourceKind},
         session_registry::ContextSourceRegistry,
+        unix_broker::{InvocationBroker, ProviderByteChannel, UnixSocketChannel},
     },
     contract::ContextProviderKind,
     platform::{WindowCorrelationToken, x11::ContextWindowKind},
@@ -48,43 +48,41 @@ struct VscodeObservationMessage {
 }
 
 pub(crate) fn start(app: AppHandle) -> io::Result<()> {
-    let path = socket_path()?;
+    let (path, expected_uid) = socket_path()?;
     prepare_socket_path(&path)?;
     let listener = UnixListener::bind(&path)?;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
     thread::Builder::new()
         .name("lyn-vscode-provider".to_owned())
-        .spawn(move || run(listener, app))?;
+        .spawn(move || run(listener, app, expected_uid))?;
     Ok(())
 }
 
-fn run(listener: UnixListener, app: AppHandle) {
+fn run(listener: UnixListener, app: AppHandle, expected_uid: u32) {
     debug_assert!(ACCEPT_POLL_INTERVAL < INVOKE_REPLY_BUDGET);
     let mut windows = HashMap::new();
     let mut last_v2_request: Option<Uuid> = None;
+    let mut broker = InvocationBroker::default();
     loop {
         match listener.accept() {
-            Ok((mut stream, _)) => {
-                // Lock order: parse (no lock) → sample X11 (no registry/session
-                // lock) → registry mutex for apply only → drop registry →
-                // optional session mutex for the event payload → drop session →
+            Ok((stream, _)) => {
+                // Lock order: channel I/O and parse (no lock) → sample X11 →
+                // registry mutex for apply only → drop registry → optional
+                // session mutex for the event payload → drop session →
                 // schedule popup on the main thread. Never hold registry or
                 // session locks during socket I/O, X11 queries, or popup
                 // show/hide.
-                let mut bytes = Vec::new();
-                if stream
-                    .by_ref()
-                    .take(MAX_PROVIDER_MESSAGE_BYTES + 1)
-                    .read_to_end(&mut bytes)
-                    .is_err()
-                    || bytes.len() as u64 > MAX_PROVIDER_MESSAGE_BYTES
-                {
+                let mut channel = UnixSocketChannel::new(stream, expected_uid);
+                let Ok(bytes) = channel.recv(MAX_PROVIDER_MESSAGE_BYTES) else {
                     continue;
-                }
+                };
                 let Ok(frame) = parse_provider_frame(&bytes) else {
                     continue;
                 };
+                if broker.admit(&frame).is_err() {
+                    continue;
+                }
                 let invoke = frame
                     .capabilities()
                     .contains(&ProviderCapability::InvokeCapture);
@@ -339,7 +337,7 @@ fn claim_window(
     }
 }
 
-fn socket_path() -> io::Result<PathBuf> {
+fn socket_path() -> io::Result<(PathBuf, u32)> {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "XDG_RUNTIME_DIR is unavailable"))?;
@@ -350,7 +348,7 @@ fn socket_path() -> io::Result<PathBuf> {
             "XDG_RUNTIME_DIR is not user-private",
         ));
     }
-    Ok(runtime.join(SOCKET_NAME))
+    Ok((runtime.join(SOCKET_NAME), metadata.uid()))
 }
 
 fn prepare_socket_path(path: &Path) -> io::Result<()> {

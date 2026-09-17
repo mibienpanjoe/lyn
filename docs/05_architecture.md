@@ -571,6 +571,7 @@ src-tauri/src/
 ├── capture/              # Capture Service
 ├── context/              # Context Resolver and providers
 │   ├── invocation_protocol.rs
+│   ├── unix_broker.rs
 │   ├── provider.rs
 │   ├── resolver.rs
 │   ├── session_registry.rs
