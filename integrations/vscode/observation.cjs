@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const path = require('node:path');
 
 const SOCKET_NAME = 'lyn-context-v1.sock';
@@ -46,7 +47,26 @@ function createObservation(instanceId, state, workspaceFolders) {
   };
 }
 
+function createInvokeRequest(instanceId, workspaceFolders, requestId) {
+  const id =
+    typeof requestId === 'string' && requestId.length > 0
+      ? requestId
+      : crypto.randomUUID();
+  if (typeof instanceId !== 'string') {
+    throw new TypeError('invalid VS Code provider invoke request');
+  }
+
+  return {
+    version: 2,
+    kind: 'invoke',
+    instanceId,
+    requestId: id,
+    workspaceFolders: localWorkspacePaths(workspaceFolders),
+  };
+}
+
 module.exports = {
+  createInvokeRequest,
   createObservation,
   localWorkspacePaths,
   providerSocketPath,

@@ -1,6 +1,6 @@
 # Lyn — System Contract & Invariants
 
-Version: v1.1, 2026-08-28
+Version: v1.2, 2026-09-17
 
 Derived from: [`02_requirements_srs.md`](02_requirements_srs.md)
 
@@ -79,7 +79,7 @@ Protects: FR-028, FR-064, BR-04.
 
 **INV-14 — Invocation-bound automatic context**
 
-Automatic context MUST be derived from evidence correlated with the OS window that was focused immediately before Lyn appeared. An unrelated editor or terminal that reported more recently MUST NOT override an exact foreground-window, process, or terminal-session association.
+Automatic context MUST be derived from evidence correlated with the OS window that was focused immediately before Lyn appeared. An unrelated editor or terminal that reported more recently MUST NOT override an exact foreground-window, process, or terminal-session association. A source-application invoke still binds to that OS window at receive time; client-supplied window or process identifiers are rejected.
 
 Protects: FR-101, FR-102, FR-103, FR-104, BR-09.
 

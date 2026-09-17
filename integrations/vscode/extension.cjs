@@ -2,7 +2,11 @@ const crypto = require('node:crypto');
 const net = require('node:net');
 const vscode = require('vscode');
 
-const { createObservation, providerSocketPath } = require('./observation.cjs');
+const {
+  createInvokeRequest,
+  createObservation,
+  providerSocketPath,
+} = require('./observation.cjs');
 
 const HEARTBEAT_INTERVAL_MS = 2_000;
 const SOCKET_TIMEOUT_MS = 750;
@@ -63,6 +67,21 @@ function activate(context) {
 
   const heartbeat = setInterval(reportCurrentState, HEARTBEAT_INTERVAL_MS);
   context.subscriptions.push({ dispose: () => clearInterval(heartbeat) });
+
+  // Source-app invoke: this window still holds OS focus. Distinct from the
+  // Lyn global shortcut (Control+Shift+Space). v2 requestId is the generation.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('lyn.capture', () => {
+      const request = createInvokeRequest(
+        instanceId,
+        vscode.workspace.workspaceFolders,
+      );
+      queue = queue
+        .catch(() => undefined)
+        .then(() => sendObservation(request));
+      return queue;
+    }),
+  );
 
   activeProvider = {
     end: () => report('ended'),

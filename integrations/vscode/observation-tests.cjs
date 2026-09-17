@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  createInvokeRequest,
   createObservation,
   localWorkspacePaths,
   providerSocketPath,
@@ -54,6 +55,37 @@ test('ended observations carry no workspace path', () => {
   ]);
 
   assert.deepEqual(observation.workspaceFolders, []);
+  assert.equal(observation.intent, undefined);
+  assert.equal(observation.kind, undefined);
+});
+
+test('v2 invoke requests carry a generation and no native ids', () => {
+  const requestId = 'c3b1a2d0-1111-4aaa-8bbb-0123456789ab';
+  const request = createInvokeRequest(
+    instanceId,
+    [folder('file', '/tmp/lyn-cl01-alpha')],
+    requestId,
+  );
+  assert.deepEqual(request, {
+    version: 2,
+    kind: 'invoke',
+    instanceId,
+    requestId,
+    workspaceFolders: [path.normalize('/tmp/lyn-cl01-alpha')],
+  });
+  assert.equal(request.windowId, undefined);
+  assert.equal(request.pid, undefined);
+});
+
+test('v2 invoke mints a request id when the caller omits one', () => {
+  const request = createInvokeRequest(instanceId, [
+    folder('file', '/tmp/lyn-cl01-beta'),
+  ]);
+  assert.equal(request.version, 2);
+  assert.match(
+    request.requestId,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+  );
 });
 
 test('uses only an absolute Linux user runtime directory', () => {

@@ -319,7 +319,7 @@ fn dismiss_and_cancel_capture(app: &tauri::AppHandle) {
 }
 
 #[cfg(target_os = "linux")]
-fn invoke_capture_popup(app: &tauri::AppHandle) {
+pub(crate) fn invoke_capture_popup(app: &tauri::AppHandle) {
     use crate::platform::CaptureWindowPlatform;
 
     let mut platform = platform::x11::X11CaptureWindowPlatform::new(app.clone());

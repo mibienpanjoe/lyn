@@ -22,6 +22,22 @@
   "activationEvents": [
     "*"
   ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "lyn.capture",
+        "title": "Lyn: Capture from this window"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "lyn.capture",
+        "key": "ctrl+alt+shift+l",
+        "mac": "cmd+alt+shift+l",
+        "when": "editorTextFocus || terminalFocus || filesExplorerFocus || !inQuickOpen"
+      }
+    ]
+  },
   "files": [
     "extension.cjs",
     "observation.cjs",

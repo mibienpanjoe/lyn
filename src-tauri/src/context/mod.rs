@@ -2,6 +2,7 @@
 
 #[cfg(target_os = "linux")]
 pub(crate) mod browser_provider;
+pub(crate) mod invocation_protocol;
 pub(crate) mod localhost_resolver;
 pub(crate) mod provider;
 pub(crate) mod resolver;

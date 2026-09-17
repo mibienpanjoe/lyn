@@ -13,12 +13,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use crate::{
     context::{
+        invocation_protocol::{
+            INVOKE_REPLY_BUDGET, MAX_PROVIDER_MESSAGE_BYTES, MAX_WORKSPACE_PATH_BYTES,
+            ObserveState, ProviderCapability, ProviderFrame, late_frame_may_complete_invoke,
+            parse_provider_frame,
+        },
         provider::{ObservationLiveness, ProviderObservation, ProviderSourceKind},
         session_registry::ContextSourceRegistry,
     },
@@ -27,22 +31,17 @@ use crate::{
 };
 
 const SOCKET_NAME: &str = "lyn-context-v1.sock";
-const MAX_MESSAGE_BYTES: u64 = 16 * 1024;
-const MAX_WORKSPACE_PATH_BYTES: usize = 4 * 1024;
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WindowState {
     Focused,
     Unfocused,
     Ended,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug)]
 struct VscodeObservationMessage {
-    version: u8,
     instance_id: Uuid,
     state: WindowState,
     workspace_folders: Vec<String>,
@@ -61,24 +60,47 @@ pub(crate) fn start(app: AppHandle) -> io::Result<()> {
 }
 
 fn run(listener: UnixListener, app: AppHandle) {
+    debug_assert!(ACCEPT_POLL_INTERVAL < INVOKE_REPLY_BUDGET);
     let mut windows = HashMap::new();
+    let mut last_v2_request: Option<Uuid> = None;
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                // Lock order: parse (no lock) → sample X11 (no registry/session
+                // lock) → registry mutex for apply only → drop registry →
+                // optional session mutex for the event payload → drop session →
+                // schedule popup on the main thread. Never hold registry or
+                // session locks during socket I/O, X11 queries, or popup
+                // show/hide.
                 let mut bytes = Vec::new();
                 if stream
                     .by_ref()
-                    .take(MAX_MESSAGE_BYTES + 1)
+                    .take(MAX_PROVIDER_MESSAGE_BYTES + 1)
                     .read_to_end(&mut bytes)
                     .is_err()
-                    || bytes.len() as u64 > MAX_MESSAGE_BYTES
+                    || bytes.len() as u64 > MAX_PROVIDER_MESSAGE_BYTES
                 {
                     continue;
                 }
-                let Ok(message) = serde_json::from_slice::<VscodeObservationMessage>(&bytes) else {
+                let Ok(frame) = parse_provider_frame(&bytes) else {
                     continue;
                 };
-                let active_window = (message.state == WindowState::Focused)
+                let invoke = frame
+                    .capabilities()
+                    .contains(&ProviderCapability::InvokeCapture);
+                let _ = last_v2_request
+                    .is_some_and(|expected| !late_frame_may_complete_invoke(&frame, expected));
+                if let ProviderFrame::Invoke {
+                    request_id: Some(request_id),
+                    ..
+                } = &frame
+                {
+                    if frame.has_v2_invoke_guarantees() {
+                        last_v2_request = Some(*request_id);
+                    }
+                }
+                let (message, sample_focus) = observation_from_frame(frame);
+                let active_window = sample_focus
                     .then(crate::platform::x11::focused_editor_window)
                     .flatten();
                 let registry_state = app.state::<std::sync::Mutex<ContextSourceRegistry>>();
@@ -107,12 +129,52 @@ fn run(listener: UnixListener, app: AppHandle) {
                         );
                     }
                 }
+                if invoke {
+                    let handle = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        crate::invoke_capture_popup(&handle);
+                    });
+                }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(ACCEPT_POLL_INTERVAL);
             }
             Err(_) => thread::sleep(ACCEPT_POLL_INTERVAL),
         }
+    }
+}
+
+fn observation_from_frame(frame: ProviderFrame) -> (VscodeObservationMessage, bool) {
+    match frame {
+        ProviderFrame::Observe {
+            instance_id,
+            state,
+            workspace_folders,
+            ..
+        } => (
+            VscodeObservationMessage {
+                instance_id,
+                state: match state {
+                    ObserveState::Focused => WindowState::Focused,
+                    ObserveState::Unfocused => WindowState::Unfocused,
+                    ObserveState::Ended => WindowState::Ended,
+                },
+                workspace_folders,
+            },
+            state == ObserveState::Focused,
+        ),
+        ProviderFrame::Invoke {
+            instance_id,
+            workspace_folders,
+            ..
+        } => (
+            VscodeObservationMessage {
+                instance_id,
+                state: WindowState::Focused,
+                workspace_folders,
+            },
+            true,
+        ),
     }
 }
 
@@ -130,8 +192,7 @@ fn apply_message(
     active_window: Option<(u32, ContextWindowKind)>,
     now: Instant,
 ) -> bool {
-    if message.version != 1
-        || message.workspace_folders.len() > 1
+    if message.workspace_folders.len() > 1
         || message
             .workspace_folders
             .iter()
@@ -320,11 +381,13 @@ mod tests {
         platform::{WindowCorrelationToken, x11::ContextWindowKind},
     };
 
-    use super::{VscodeObservationMessage, WindowState, apply_message};
+    use super::{
+        VscodeObservationMessage, WindowState, apply_message, observation_from_frame,
+        parse_provider_frame,
+    };
 
     fn message(directory: &std::path::Path, state: WindowState) -> VscodeObservationMessage {
         VscodeObservationMessage {
-            version: 1,
             instance_id: Uuid::new_v4(),
             state,
             workspace_folders: vec![directory.display().to_string()],
@@ -472,7 +535,6 @@ mod tests {
         let mut windows = HashMap::new();
         let now = Instant::now();
         let focused = || VscodeObservationMessage {
-            version: 1,
             instance_id,
             state: WindowState::Focused,
             workspace_folders: vec![directory.path().display().to_string()],
@@ -513,7 +575,6 @@ mod tests {
         let mut windows = HashMap::new();
         let now = Instant::now();
         let focused = |instance_id, directory: &std::path::Path| VscodeObservationMessage {
-            version: 1,
             instance_id,
             state: WindowState::Focused,
             workspace_folders: vec![directory.display().to_string()],
@@ -570,7 +631,6 @@ mod tests {
         let mut windows = HashMap::new();
         let now = Instant::now();
         let focused = |instance_id, directory: &std::path::Path| VscodeObservationMessage {
-            version: 1,
             instance_id,
             state: WindowState::Focused,
             workspace_folders: vec![directory.display().to_string()],
@@ -612,7 +672,6 @@ mod tests {
         let mut windows = HashMap::new();
         let now = Instant::now();
         let live = VscodeObservationMessage {
-            version: 1,
             instance_id,
             state: WindowState::Focused,
             workspace_folders: vec![directory.path().display().to_string()],
@@ -630,7 +689,6 @@ mod tests {
             &mut registry,
             &mut windows,
             VscodeObservationMessage {
-                version: 1,
                 instance_id,
                 state: WindowState::Unfocused,
                 workspace_folders: vec![directory.path().display().to_string()],
@@ -647,7 +705,6 @@ mod tests {
             &mut registry,
             &mut windows,
             VscodeObservationMessage {
-                version: 1,
                 instance_id,
                 state: WindowState::Ended,
                 workspace_folders: vec![],
@@ -687,7 +744,6 @@ mod tests {
         let mut windows = HashMap::new();
         let now = Instant::now();
         let rejected = VscodeObservationMessage {
-            version: 1,
             instance_id: Uuid::new_v4(),
             state: WindowState::Focused,
             workspace_folders: vec![
@@ -704,5 +760,28 @@ mod tests {
             now,
         ));
         assert!(registry.live_sources(now).is_empty());
+    }
+
+    #[test]
+    fn v2_invoke_frame_maps_to_focused_observation_without_client_window() {
+        let instance_id = Uuid::new_v4();
+        let request_id = Uuid::new_v4();
+        let frame = parse_provider_frame(
+            serde_json::json!({
+                "version": 2,
+                "kind": "invoke",
+                "instanceId": instance_id,
+                "requestId": request_id,
+                "workspaceFolders": ["/tmp/lyn-cl01-alpha"],
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+        let (message, sample_focus) = observation_from_frame(frame);
+        assert!(sample_focus);
+        assert_eq!(message.instance_id, instance_id);
+        assert_eq!(message.state, WindowState::Focused);
+        assert_eq!(message.workspace_folders, ["/tmp/lyn-cl01-alpha"]);
     }
 }

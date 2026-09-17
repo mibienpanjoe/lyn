@@ -1,6 +1,6 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.11, 2026-09-01
+Version: v1.12, 2026-09-17
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
@@ -204,6 +204,8 @@ interface Page<T> {
 ### Local provider observation contract
 
 Context providers are Rust-side adapters, not frontend IPC. They submit only validated correlation metadata: provider/source kind, opaque OS window/process/session tokens, workspace or working directory, observation time, and liveness. The private terminal broker accepts only bounded version, process, session, window, and focus fields; Rust derives the process working directory after same-user and active-window validation. Context Resolver derives the public `ContextSourceOption`; raw paths and tokens never cross the Tauri boundary. Provider observations MUST NOT contain terminal commands/output, environment values, editor contents, clipboard content, or agent conversations, and MUST NOT be persisted.
+
+Linux editor integrations share `lyn-context-v1.sock`. Heartbeats remain protocol v1 `{version, instanceId, state, workspaceFolders}`. An editor-originated capture uses protocol v2 `{version: 2, kind: "invoke", instanceId, requestId, workspaceFolders}`. `requestId` is the invoke generation: a later frame may complete that invoke only when it carries the same v2 generation. Rust assigns window and process correlation at receive time; client payloads MUST NOT include native window or process identifiers. A v1 payload with `intent: "invoke"` is a compatibility shim that may open capture but MUST NOT receive v2 generation guarantees. Workspace folders are correlation hints for one local directory; they never become UI filesystem paths. Multi-root and remote folders remain ambiguous or manual. Manual selection (INV-15) still outranks a later provider frame for the same capture.
 
 ## Capture Session Commands
 

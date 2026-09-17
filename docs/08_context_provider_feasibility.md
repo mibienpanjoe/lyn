@@ -12,6 +12,8 @@ Lyn accepts local provider observations only through the Rust-side contract in `
 
 Automatic selection requires a relationship to the window captured before Lyn appears. A merely recent observation is never sufficient. If a provider cannot establish the active editor window or terminal tab/session, it contributes an ambiguous candidate or no candidate; manual context selection remains available.
 
+Linux editor invoke is an additional *entry* on the same VS Code socket, not a replacement for that correlation. Protocol v2 `{kind: invoke, requestId}` asks Lyn to open capture from the focused editor instance; window identity remains Rust-assigned from X11 at receive time. This is not Checkpoint C and does not change the G1 matrix until jalon B evidence exists.
+
 ## First-target support matrix
 
 | Source | Required local evidence | G1 decision |
