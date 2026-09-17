@@ -86,7 +86,10 @@
     });
     const unlistenRevised = client.onContextRevised((revised) => {
       if (session?.sessionId !== revised.sessionId) return;
-      session = revised;
+      session = {
+        ...session,
+        contextResolution: revised.contextResolution,
+      };
       if (chooserOpen) void refreshSources();
     });
     return () => {

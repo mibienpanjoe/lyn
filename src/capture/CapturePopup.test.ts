@@ -665,6 +665,67 @@ describe('quick-capture popup', () => {
     expect(input).toHaveValue('Stay');
   });
 
+  it('keeps a screenshot, voice note, and captions when context is revised', async () => {
+    let revise: ((session: CaptureSession) => void) | undefined;
+    const client = createClient({
+      getActiveSession: vi.fn().mockResolvedValue(requiredSession),
+      onContextRevised: vi.fn().mockImplementation((listener) => {
+        revise = listener;
+        return Promise.resolve(() => undefined);
+      }),
+    });
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    const input = screen.getByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(input, { target: { value: 'Shot note' } });
+    await fireEvent.paste(input, {
+      clipboardData: { items: [{ type: 'image/png' }] },
+    });
+    await screen.findByRole('img', { name: 'Screenshot ready to save' });
+    await waitFor(() => expect(revise).toBeTypeOf('function'));
+    revise?.(resolvedSession());
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Context Inbox. Change context' }),
+      ).toBeVisible(),
+    );
+    expect(
+      screen.getByRole('img', { name: 'Screenshot ready to save' }),
+    ).toBeVisible();
+    expect(input).toHaveValue('Shot note');
+  });
+
+  it('keeps a voice recording when context is revised', async () => {
+    let revise: ((session: CaptureSession) => void) | undefined;
+    const client = createClient({
+      getActiveSession: vi.fn().mockResolvedValue(requiredSession),
+      onContextRevised: vi.fn().mockImplementation((listener) => {
+        revise = listener;
+        return Promise.resolve(() => undefined);
+      }),
+    });
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Voice' })).toBeEnabled(),
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Voice' }));
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Stop recording' }),
+    );
+    await screen.findByRole('button', { name: 'Play' });
+    const input = screen.getByRole('textbox', {
+      name: 'Voice caption (optional)',
+    });
+    await fireEvent.input(input, { target: { value: 'Voice note' } });
+    revise?.(resolvedSession());
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Context Inbox. Change context' }),
+      ).toBeVisible(),
+    );
+    expect(screen.getByRole('button', { name: 'Play' })).toBeVisible();
+    expect(input).toHaveValue('Voice note');
+  });
+
   it('creates and selects a standalone context inline', async () => {
     const created = { ...inbox, id: 'context-new', name: 'Research' };
     const client = createClient({

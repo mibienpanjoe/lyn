@@ -101,6 +101,17 @@ impl CaptureSessionService {
         matches!(self.context_authority, ContextAuthority::User)
     }
 
+    /// Automatic context binds to the pre-popup editor window. A later invoke
+    /// that only samples Lyn (popup already focused) must not rewrite that
+    /// resolution to Required/Ambiguous.
+    pub(crate) fn should_apply_automatic_foreground(
+        &self,
+        is_new: bool,
+        has_editor_foreground: bool,
+    ) -> bool {
+        !self.has_user_context_authority() && (is_new || has_editor_foreground)
+    }
+
     pub(crate) fn active_session(&self) -> Option<CaptureSession> {
         self.active.clone()
     }
@@ -586,5 +597,23 @@ mod tests {
         assert!(prepared.is_new());
         assert!(!service.accepts_invoke_generation(Uuid::new_v4()));
         assert!(!service.has_user_context_authority());
+    }
+
+    #[test]
+    fn existing_session_keeps_automatic_context_without_an_editor_foreground() {
+        let mut service = CaptureSessionService::default();
+        let first = service.prepare_invocation(Some(Uuid::new_v4()));
+        assert!(service.should_apply_automatic_foreground(first.is_new(), false));
+        assert!(service.should_apply_automatic_foreground(first.is_new(), true));
+
+        let second = service.prepare_invocation(Some(Uuid::new_v4()));
+        assert!(!second.is_new());
+        assert!(!service.should_apply_automatic_foreground(second.is_new(), false));
+        assert!(service.should_apply_automatic_foreground(second.is_new(), true));
+
+        service
+            .apply_user_context_resolution(second.session().session_id, resolved_context())
+            .unwrap();
+        assert!(!service.should_apply_automatic_foreground(false, true));
     }
 }

@@ -344,22 +344,21 @@ pub(crate) fn invoke_capture_popup_with_request(
         .ok()
         .map(|mut service| {
             let prepared = service.prepare_invocation(request_id);
-            (
-                prepared.session(),
-                prepared.is_new(),
-                service.has_user_context_authority(),
-            )
+            let is_new = prepared.is_new();
+            let apply_automatic =
+                service.should_apply_automatic_foreground(is_new, foreground.is_some());
+            (prepared.session(), is_new, apply_automatic)
         });
     let is_new = prepared.as_ref().is_some_and(|(_, is_new, _)| *is_new);
-    let skip_automatic = prepared
+    let apply_automatic = prepared
         .as_ref()
-        .is_some_and(|(_, _, user_locked)| *user_locked);
+        .is_some_and(|(_, _, apply_automatic)| *apply_automatic);
     let prepared_session = prepared.map(|(session, _, _)| session);
     let session = prepared_session.map(|session| {
-        if skip_automatic {
-            session
-        } else {
+        if apply_automatic {
             resolve_invocation_context(app, session, foreground)
+        } else {
+            session
         }
     });
     if platform.show_capture_popup().is_err() {
