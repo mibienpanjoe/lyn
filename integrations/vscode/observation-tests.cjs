@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 const {
   createInvokeRequest,
   createObservation,
+  focusedTerminalCwd,
+  invokeWorkspaceFolders,
   localWorkspacePaths,
   providerSocketPath,
 } = require('./observation.cjs');
@@ -71,10 +73,12 @@ test('v2 invoke requests carry a generation and no native ids', () => {
     kind: 'invoke',
     instanceId,
     requestId,
+    surface: 'editor',
     workspaceFolders: [path.normalize('/tmp/lyn-cl01-alpha')],
   });
   assert.equal(request.windowId, undefined);
   assert.equal(request.pid, undefined);
+  assert.equal(request.cwd, undefined);
 });
 
 test('v2 invoke mints a request id when the caller omits one', () => {
@@ -86,6 +90,103 @@ test('v2 invoke mints a request id when the caller omits one', () => {
     request.requestId,
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
   );
+});
+
+test('editor invoke ignores the last-used terminal cwd', () => {
+  const folders = invokeWorkspaceFolders({
+    surface: 'editor',
+    workspaceFolders: [folder('file', '/home/person/projects/lyn')],
+    terminalFocused: false,
+    terminal: {
+      shellIntegration: { cwd: { scheme: 'file', fsPath: '/tmp/other-project' } },
+      creationOptions: { cwd: '/tmp/stale-after-cd' },
+    },
+  });
+  assert.deepEqual(folders, [path.normalize('/home/person/projects/lyn')]);
+  assert.equal(
+    focusedTerminalCwd(
+      {
+        shellIntegration: { cwd: { scheme: 'file', fsPath: '/tmp/other-project' } },
+      },
+      false,
+    ),
+    undefined,
+  );
+});
+
+test('terminal invoke uses live shell-integration cwd only when focused', () => {
+  const terminal = {
+    name: 'must-not-be-sent',
+    creationOptions: { cwd: '/tmp/stale-after-cd' },
+    shellIntegration: {
+      cwd: { scheme: 'file', fsPath: '/home/person/worktree' },
+    },
+  };
+  assert.deepEqual(
+    invokeWorkspaceFolders({
+      surface: 'terminal',
+      workspaceFolders: [folder('file', '/home/person/projects/lyn')],
+      terminal,
+      terminalFocused: true,
+    }),
+    [path.normalize('/home/person/worktree')],
+  );
+  assert.deepEqual(
+    invokeWorkspaceFolders({
+      surface: 'terminal',
+      workspaceFolders: [folder('file', '/home/person/projects/lyn')],
+      terminal,
+      terminalFocused: false,
+    }),
+    [],
+  );
+});
+
+test('closed or remote terminals yield no cwd guess', () => {
+  assert.deepEqual(
+    invokeWorkspaceFolders({
+      surface: 'terminal',
+      terminalFocused: true,
+      terminal: undefined,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    invokeWorkspaceFolders({
+      surface: 'terminal',
+      terminalFocused: true,
+      terminal: {
+        creationOptions: { cwd: '/tmp/stale-after-cd' },
+        shellIntegration: {
+          cwd: { scheme: 'vscode-remote', fsPath: '/remote/project' },
+        },
+      },
+    }),
+    [],
+  );
+});
+
+test('v2 terminal invoke carries surface and no native ids', () => {
+  const request = createInvokeRequest(
+    instanceId,
+    [folder('file', '/home/person/projects/lyn')],
+    'c3b1a2d0-1111-4aaa-8bbb-0123456789ab',
+    {
+      surface: 'terminal',
+      terminalFocused: true,
+      terminal: {
+        shellIntegration: {
+          cwd: { scheme: 'file', fsPath: '/tmp/lyn-cl01-beta' },
+        },
+      },
+    },
+  );
+  assert.equal(request.surface, 'terminal');
+  assert.deepEqual(request.workspaceFolders, [
+    path.normalize('/tmp/lyn-cl01-beta'),
+  ]);
+  assert.equal(request.cwd, undefined);
+  assert.equal(request.pid, undefined);
 });
 
 test('uses only an absolute Linux user runtime directory', () => {

@@ -18,11 +18,13 @@ use uuid::Uuid;
 use crate::{
     context::{
         invocation_protocol::{
-            INVOKE_REPLY_BUDGET, MAX_PROVIDER_MESSAGE_BYTES, MAX_WORKSPACE_PATH_BYTES,
-            ObserveState, ProviderCapability, ProviderFrame, late_frame_may_complete_invoke,
-            parse_provider_frame,
+            INVOKE_REPLY_BUDGET, InvokeSurface, MAX_PROVIDER_MESSAGE_BYTES,
+            MAX_WORKSPACE_PATH_BYTES, ObserveState, ProviderCapability, ProviderFrame,
+            late_frame_may_complete_invoke, parse_provider_frame,
         },
-        provider::{ObservationLiveness, ProviderObservation, ProviderSourceKind},
+        provider::{
+            CorrelationToken, ObservationLiveness, ProviderObservation, ProviderSourceKind,
+        },
         session_registry::ContextSourceRegistry,
         unix_broker::{InvocationBroker, ProviderByteChannel, UnixSocketChannel},
     },
@@ -45,6 +47,7 @@ struct VscodeObservationMessage {
     instance_id: Uuid,
     state: WindowState,
     workspace_folders: Vec<String>,
+    surface: InvokeSurface,
 }
 
 pub(crate) fn start(app: AppHandle) -> io::Result<()> {
@@ -162,18 +165,21 @@ fn observation_from_frame(frame: ProviderFrame) -> (VscodeObservationMessage, bo
                     ObserveState::Ended => WindowState::Ended,
                 },
                 workspace_folders,
+                surface: InvokeSurface::Editor,
             },
             state == ObserveState::Focused,
         ),
         ProviderFrame::Invoke {
             instance_id,
             workspace_folders,
+            surface,
             ..
         } => (
             VscodeObservationMessage {
                 instance_id,
                 state: WindowState::Focused,
                 workspace_folders,
+                surface,
             },
             true,
         ),
@@ -194,21 +200,20 @@ fn apply_message(
     active_window: Option<(u32, ContextWindowKind)>,
     now: Instant,
 ) -> bool {
-    if message.workspace_folders.len() > 1
-        || message
-            .workspace_folders
-            .iter()
-            .any(|path| path.is_empty() || path.len() > MAX_WORKSPACE_PATH_BYTES)
+    if message
+        .workspace_folders
+        .iter()
+        .any(|path| path.is_empty() || path.len() > MAX_WORKSPACE_PATH_BYTES)
     {
         return false;
     }
 
     let mut removed_previous_window = false;
-    let (window, provider, source_kind) = match message.state {
+    let (window, provider, mut source_kind) = match message.state {
         WindowState::Focused => {
             match active_window {
                 Some((active_window, window_kind)) => {
-                    let (provider, source_kind) = match window_kind {
+                    let (provider, window_kind) = match window_kind {
                         ContextWindowKind::Cursor => (
                             ContextProviderKind::Cursor,
                             ProviderSourceKind::CursorWindow,
@@ -218,6 +223,7 @@ fn apply_message(
                             ProviderSourceKind::VscodeWindow,
                         ),
                     };
+                    let source_kind = source_kind_for(window_kind, message.surface);
                     let window = WindowCorrelationToken::from_native(u64::from(active_window));
                     claim_window(
                         windows,
@@ -248,36 +254,115 @@ fn apply_message(
             (window, provider, source_kind)
         }
     };
+    source_kind = source_kind_for(source_kind, message.surface);
 
-    let liveness = if message.state == WindowState::Ended || message.workspace_folders.is_empty() {
+    let folders = &message.workspace_folders;
+    let terminal_exact = message.surface == InvokeSurface::Terminal && folders.len() == 1;
+    let editor_roots = message.surface != InvokeSurface::Terminal && !folders.is_empty();
+    let liveness = if message.state == WindowState::Ended || (!terminal_exact && !editor_roots) {
         ObservationLiveness::Ended
     } else {
         ObservationLiveness::Live
     };
-    let directory = message
-        .workspace_folders
-        .first()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"));
-    let registered = registry.register(
-        ProviderObservation::new(
-            provider,
-            source_kind,
-            Some(window),
-            None,
-            None,
-            directory,
-            now,
-            liveness,
-        ),
-        now,
-    );
-    let changed =
-        removed_previous_window || registered.is_some() || liveness == ObservationLiveness::Ended;
-    if message.state == WindowState::Ended {
-        windows.remove(&message.instance_id);
+
+    if liveness == ObservationLiveness::Live {
+        let opposite = opposite_kind(source_kind);
+        if registry.end_window_kind(window, opposite) {
+            removed_previous_window = true;
+        }
+    }
+
+    let mut changed = removed_previous_window;
+    if liveness == ObservationLiveness::Ended {
+        changed |= registry.end_window_kind(window, source_kind);
+        if message.state == WindowState::Ended {
+            windows.remove(&message.instance_id);
+        }
+        return changed;
+    }
+
+    let directories: Vec<&String> = if message.surface == InvokeSurface::Terminal {
+        folders.iter().take(1).collect()
+    } else {
+        folders.iter().collect()
+    };
+    for directory in directories {
+        let session =
+            observation_session(message.instance_id, source_kind, directory, folders.len());
+        if registry
+            .register(
+                ProviderObservation::new(
+                    provider,
+                    source_kind,
+                    Some(window),
+                    None,
+                    session,
+                    PathBuf::from(directory),
+                    now,
+                    ObservationLiveness::Live,
+                ),
+                now,
+            )
+            .is_some()
+        {
+            changed = true;
+        }
     }
     changed
+}
+
+fn source_kind_for(
+    window_or_kind: ProviderSourceKind,
+    surface: InvokeSurface,
+) -> ProviderSourceKind {
+    match (window_or_kind, surface) {
+        (
+            ProviderSourceKind::CursorWindow | ProviderSourceKind::CursorIntegratedTerminal,
+            InvokeSurface::Terminal,
+        ) => ProviderSourceKind::CursorIntegratedTerminal,
+        (
+            ProviderSourceKind::VscodeWindow | ProviderSourceKind::VscodeIntegratedTerminal,
+            InvokeSurface::Terminal,
+        ) => ProviderSourceKind::VscodeIntegratedTerminal,
+        (ProviderSourceKind::CursorWindow | ProviderSourceKind::CursorIntegratedTerminal, _) => {
+            ProviderSourceKind::CursorWindow
+        }
+        _ => ProviderSourceKind::VscodeWindow,
+    }
+}
+
+fn opposite_kind(source_kind: ProviderSourceKind) -> ProviderSourceKind {
+    match source_kind {
+        ProviderSourceKind::CursorWindow => ProviderSourceKind::CursorIntegratedTerminal,
+        ProviderSourceKind::CursorIntegratedTerminal => ProviderSourceKind::CursorWindow,
+        ProviderSourceKind::VscodeIntegratedTerminal => ProviderSourceKind::VscodeWindow,
+        _ => ProviderSourceKind::VscodeIntegratedTerminal,
+    }
+}
+
+fn observation_session(
+    instance_id: Uuid,
+    source_kind: ProviderSourceKind,
+    directory: &str,
+    folder_count: usize,
+) -> Option<CorrelationToken> {
+    match source_kind {
+        ProviderSourceKind::VscodeIntegratedTerminal
+        | ProviderSourceKind::CursorIntegratedTerminal => {
+            Some(CorrelationToken::from_session_id(instance_id))
+        }
+        ProviderSourceKind::VscodeWindow | ProviderSourceKind::CursorWindow if folder_count > 1 => {
+            Some(directory_session(directory))
+        }
+        _ => None,
+    }
+}
+
+fn directory_session(directory: &str) -> CorrelationToken {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    directory.hash(&mut hasher);
+    CorrelationToken::from_terminal_id(hasher.finish())
 }
 
 fn claim_window(
@@ -310,7 +395,7 @@ fn claim_window(
                 other_kind,
                 Some(claimed),
                 None,
-                None,
+                ended_session(other_id, other_kind),
                 PathBuf::from("/"),
                 now,
                 ObservationLiveness::Ended,
@@ -322,7 +407,7 @@ fn claim_window(
 
     if let Some((previous, prev_provider, prev_source)) =
         windows.insert(instance_id, (window, provider, source_kind))
-        && previous != window
+        && (previous != window || prev_source != source_kind)
     {
         registry.register(
             ProviderObservation::new(
@@ -330,7 +415,7 @@ fn claim_window(
                 prev_source,
                 Some(previous),
                 None,
-                None,
+                ended_session(instance_id, prev_source),
                 PathBuf::from("/"),
                 now,
                 ObservationLiveness::Ended,
@@ -339,6 +424,14 @@ fn claim_window(
         );
         *removed_previous_window = true;
     }
+}
+
+fn ended_session(instance_id: Uuid, source_kind: ProviderSourceKind) -> Option<CorrelationToken> {
+    matches!(
+        source_kind,
+        ProviderSourceKind::VscodeIntegratedTerminal | ProviderSourceKind::CursorIntegratedTerminal
+    )
+    .then(|| CorrelationToken::from_session_id(instance_id))
 }
 
 fn socket_path() -> io::Result<(PathBuf, u32)> {
@@ -384,8 +477,8 @@ mod tests {
     };
 
     use super::{
-        VscodeObservationMessage, WindowState, apply_message, observation_from_frame,
-        parse_provider_frame,
+        InvokeSurface, MAX_WORKSPACE_PATH_BYTES, VscodeObservationMessage, WindowState,
+        apply_message, observation_from_frame, parse_provider_frame,
     };
 
     fn message(directory: &std::path::Path, state: WindowState) -> VscodeObservationMessage {
@@ -393,6 +486,7 @@ mod tests {
             instance_id: Uuid::new_v4(),
             state,
             workspace_folders: vec![directory.display().to_string()],
+            surface: InvokeSurface::Editor,
         }
     }
 
@@ -540,6 +634,7 @@ mod tests {
             instance_id,
             state: WindowState::Focused,
             workspace_folders: vec![directory.path().display().to_string()],
+            surface: InvokeSurface::Editor,
         };
 
         apply_message(
@@ -580,6 +675,7 @@ mod tests {
             instance_id,
             state: WindowState::Focused,
             workspace_folders: vec![directory.display().to_string()],
+            surface: InvokeSurface::Editor,
         };
 
         apply_message(
@@ -636,6 +732,7 @@ mod tests {
             instance_id,
             state: WindowState::Focused,
             workspace_folders: vec![directory.display().to_string()],
+            surface: InvokeSurface::Editor,
         };
 
         apply_message(
@@ -677,6 +774,7 @@ mod tests {
             instance_id,
             state: WindowState::Focused,
             workspace_folders: vec![directory.path().display().to_string()],
+            surface: InvokeSurface::Editor,
         };
         apply_message(
             &mut registry,
@@ -694,6 +792,7 @@ mod tests {
                 instance_id,
                 state: WindowState::Unfocused,
                 workspace_folders: vec![directory.path().display().to_string()],
+                surface: InvokeSurface::Editor,
             },
             None,
             now + std::time::Duration::from_secs(10),
@@ -710,6 +809,7 @@ mod tests {
                 instance_id,
                 state: WindowState::Ended,
                 workspace_folders: vec![],
+                surface: InvokeSurface::Editor,
             },
             None,
             now + std::time::Duration::from_secs(11),
@@ -740,18 +840,17 @@ mod tests {
     }
 
     #[test]
-    fn multi_root_and_oversized_messages_are_rejected_without_sources() {
+    fn oversized_paths_are_rejected_without_sources() {
         let directory = tempdir().unwrap();
         let mut registry = ContextSourceRegistry::default();
         let mut windows = HashMap::new();
         let now = Instant::now();
+        let too_long = "a".repeat(MAX_WORKSPACE_PATH_BYTES + 1);
         let rejected = VscodeObservationMessage {
             instance_id: Uuid::new_v4(),
             state: WindowState::Focused,
-            workspace_folders: vec![
-                directory.path().display().to_string(),
-                directory.path().display().to_string(),
-            ],
+            workspace_folders: vec![directory.path().display().to_string(), too_long],
+            surface: InvokeSurface::Editor,
         };
 
         assert!(!apply_message(
@@ -762,6 +861,170 @@ mod tests {
             now,
         ));
         assert!(registry.live_sources(now).is_empty());
+    }
+
+    #[test]
+    fn multi_root_registers_distinct_sources_and_resolves_ambiguous() {
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let mut registry = ContextSourceRegistry::default();
+        let mut windows = HashMap::new();
+        let now = Instant::now();
+        let window = WindowCorrelationToken::from_native(42);
+
+        assert!(apply_message(
+            &mut registry,
+            &mut windows,
+            VscodeObservationMessage {
+                instance_id: Uuid::new_v4(),
+                state: WindowState::Focused,
+                workspace_folders: vec![
+                    first.path().display().to_string(),
+                    second.path().display().to_string(),
+                ],
+                surface: InvokeSurface::Editor,
+            },
+            Some((42, ContextWindowKind::Vscode)),
+            now,
+        ));
+
+        let sources = registry.live_sources(now);
+        assert_eq!(sources.len(), 2);
+        let candidates: Vec<_> = sources
+            .iter()
+            .filter_map(|source| {
+                classify(
+                    source.source_id(),
+                    source.provider(),
+                    source.window(),
+                    source.process(),
+                    source.session(),
+                    &InvocationAssociations {
+                        foreground_window: Some(window),
+                        related_processes: &[],
+                        related_sessions: &[],
+                        inferred_windows: &[],
+                    },
+                )
+            })
+            .collect();
+        assert_eq!(
+            resolve(&candidates, &[ContextProviderKind::Vscode]),
+            ResolutionOutcome::Ambiguous
+        );
+    }
+
+    #[test]
+    fn terminal_invoke_uses_exact_cwd_and_does_not_keep_the_editor_root() {
+        let workspace = tempdir().unwrap();
+        let terminal_cwd = tempdir().unwrap();
+        let instance_id = Uuid::new_v4();
+        let mut registry = ContextSourceRegistry::default();
+        let mut windows = HashMap::new();
+        let now = Instant::now();
+
+        assert!(apply_message(
+            &mut registry,
+            &mut windows,
+            VscodeObservationMessage {
+                instance_id,
+                state: WindowState::Focused,
+                workspace_folders: vec![workspace.path().display().to_string()],
+                surface: InvokeSurface::Editor,
+            },
+            Some((7, ContextWindowKind::Cursor)),
+            now,
+        ));
+        assert!(apply_message(
+            &mut registry,
+            &mut windows,
+            VscodeObservationMessage {
+                instance_id,
+                state: WindowState::Focused,
+                workspace_folders: vec![terminal_cwd.path().display().to_string()],
+                surface: InvokeSurface::Terminal,
+            },
+            Some((7, ContextWindowKind::Cursor)),
+            now,
+        ));
+
+        let sources = registry.live_sources(now);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(
+            sources[0].source_kind(),
+            crate::context::provider::ProviderSourceKind::CursorIntegratedTerminal
+        );
+        assert_eq!(
+            sources[0].identity().project_path,
+            terminal_cwd
+                .path()
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+        );
+
+        assert!(apply_message(
+            &mut registry,
+            &mut windows,
+            VscodeObservationMessage {
+                instance_id,
+                state: WindowState::Focused,
+                workspace_folders: vec![workspace.path().display().to_string()],
+                surface: InvokeSurface::Editor,
+            },
+            Some((7, ContextWindowKind::Cursor)),
+            now,
+        ));
+        let sources = registry.live_sources(now);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(
+            sources[0].source_kind(),
+            crate::context::provider::ProviderSourceKind::CursorWindow
+        );
+        assert_eq!(
+            sources[0].identity().project_path,
+            workspace.path().canonicalize().unwrap().to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn terminal_invoke_without_cwd_does_not_guess_the_workspace() {
+        let workspace = tempdir().unwrap();
+        let instance_id = Uuid::new_v4();
+        let mut registry = ContextSourceRegistry::default();
+        let mut windows = HashMap::new();
+        let now = Instant::now();
+
+        assert!(apply_message(
+            &mut registry,
+            &mut windows,
+            VscodeObservationMessage {
+                instance_id,
+                state: WindowState::Focused,
+                workspace_folders: vec![workspace.path().display().to_string()],
+                surface: InvokeSurface::Editor,
+            },
+            Some((9, ContextWindowKind::Vscode)),
+            now,
+        ));
+        apply_message(
+            &mut registry,
+            &mut windows,
+            VscodeObservationMessage {
+                instance_id,
+                state: WindowState::Focused,
+                workspace_folders: vec![],
+                surface: InvokeSurface::Terminal,
+            },
+            Some((9, ContextWindowKind::Vscode)),
+            now,
+        );
+
+        let sources = registry.live_sources(now);
+        assert!(sources.iter().all(|source| {
+            source.source_kind()
+                != crate::context::provider::ProviderSourceKind::VscodeIntegratedTerminal
+        }));
     }
 
     #[test]

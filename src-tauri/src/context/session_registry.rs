@@ -191,6 +191,18 @@ impl ContextSourceRegistry {
         sources
     }
 
+    pub(crate) fn end_window_kind(
+        &mut self,
+        window: WindowCorrelationToken,
+        source_kind: ProviderSourceKind,
+    ) -> bool {
+        let before = self.sources.len();
+        self.sources.retain(|_, source| {
+            !(source.window == Some(window) && source.source_kind == source_kind)
+        });
+        self.sources.len() != before
+    }
+
     fn expire(&mut self, now: Instant) {
         self.sources.retain(|_, source| source.expires_at > now);
     }

@@ -71,10 +71,18 @@ function activate(context) {
   // Source-app invoke: this window still holds OS focus. Distinct from the
   // Lyn global shortcut (Control+Shift+Space). v2 requestId is the generation.
   context.subscriptions.push(
-    vscode.commands.registerCommand('lyn.capture', () => {
+    vscode.commands.registerCommand('lyn.capture', (args) => {
+      const surface = args?.surface === 'terminal' ? 'terminal' : 'editor';
+      const terminalFocused = surface === 'terminal';
       const request = createInvokeRequest(
         instanceId,
         vscode.workspace.workspaceFolders,
+        undefined,
+        {
+          surface,
+          terminalFocused,
+          terminal: vscode.window.activeTerminal,
+        },
       );
       queue = queue
         .catch(() => undefined)

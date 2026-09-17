@@ -3,7 +3,7 @@
   "displayName": "Lyn Context Provider",
   "description": "Supplies invocation-bound VS Code workspace identity to the local Lyn desktop app.",
   "publisher": "mibienpanjoe",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -34,7 +34,15 @@
         "command": "lyn.capture",
         "key": "ctrl+alt+shift+l",
         "mac": "cmd+alt+shift+l",
-        "when": "editorTextFocus || terminalFocus || filesExplorerFocus || !inQuickOpen"
+        "when": "terminalFocus",
+        "args": { "surface": "terminal" }
+      },
+      {
+        "command": "lyn.capture",
+        "key": "ctrl+alt+shift+l",
+        "mac": "cmd+alt+shift+l",
+        "when": "!terminalFocus && (editorTextFocus || filesExplorerFocus || !inQuickOpen)",
+        "args": { "surface": "editor" }
       }
     ]
   },

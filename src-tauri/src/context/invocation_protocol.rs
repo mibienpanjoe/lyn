@@ -6,10 +6,12 @@
 //! `intent: "invoke"` is a compatibility shim; it MUST NOT receive v2
 //! generation guarantees.
 //!
-//! Workspace folders are correlation hints for at most one local directory.
-//! They never become UI filesystem paths. Terminal cwd is derived by Rust from
-//! a validated process (not from this frame). Client-supplied native window or
-//! process identifiers are rejected.
+//! Workspace folders are correlation hints for local directories. They never
+//! become UI filesystem paths. An integrated-terminal invoke may send that
+//! terminal's live working directory as the hint when `surface` is `terminal`;
+//! the `cwd` field remains forbidden. External/shell cwd is still derived by
+//! Rust from a validated process. Client-supplied native window or process
+//! identifiers are rejected.
 
 use std::time::Duration;
 
@@ -42,6 +44,7 @@ const V2_ALLOWED_KEYS: &[&str] = &[
     "instanceId",
     "requestId",
     "workspaceFolders",
+    "surface",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +66,12 @@ pub(crate) enum ProviderCapability {
     InvokeCapture,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InvokeSurface {
+    Editor,
+    Terminal,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProviderFrame {
     Observe {
@@ -76,6 +85,7 @@ pub(crate) enum ProviderFrame {
         instance_id: Uuid,
         request_id: Option<Uuid>,
         workspace_folders: Vec<String>,
+        surface: InvokeSurface,
     },
 }
 
@@ -164,6 +174,7 @@ fn parse_v1(object: &Map<String, Value>) -> Result<ProviderFrame, FrameReject> {
             instance_id,
             request_id: None,
             workspace_folders,
+            surface: InvokeSurface::Editor,
         }),
     }
 }
@@ -176,6 +187,7 @@ fn parse_v2(object: &Map<String, Value>) -> Result<ProviderFrame, FrameReject> {
             instance_id: uuid_field(object, "instanceId")?,
             request_id: Some(uuid_field(object, "requestId")?),
             workspace_folders: workspace_folders(object)?,
+            surface: invoke_surface(object)?,
         }),
         Some(_) => Err(FrameReject::UnknownKind),
         None => Err(FrameReject::InvalidJson),
@@ -243,6 +255,15 @@ fn observe_state(object: &Map<String, Value>) -> Result<ObserveState, FrameRejec
     }
 }
 
+fn invoke_surface(object: &Map<String, Value>) -> Result<InvokeSurface, FrameReject> {
+    match object.get("surface") {
+        None => Ok(InvokeSurface::Editor),
+        Some(Value::String(value)) if value == "editor" => Ok(InvokeSurface::Editor),
+        Some(Value::String(value)) if value == "terminal" => Ok(InvokeSurface::Terminal),
+        Some(_) => Err(FrameReject::InvalidJson),
+    }
+}
+
 #[derive(Clone, Copy)]
 enum V1Intent {
     Observe,
@@ -301,6 +322,7 @@ mod tests {
                 instance_id: Uuid::parse_str(INSTANCE).unwrap(),
                 request_id: None,
                 workspace_folders: vec!["/tmp/lyn-cl01-alpha".into()],
+                surface: InvokeSurface::Editor,
             }
         );
         assert!(!frame.has_v2_invoke_guarantees());
@@ -323,6 +345,7 @@ mod tests {
                 instance_id: Uuid::parse_str(INSTANCE).unwrap(),
                 request_id: Some(Uuid::parse_str(REQUEST).unwrap()),
                 workspace_folders: vec!["/tmp/lyn-cl01-beta".into()],
+                surface: InvokeSurface::Editor,
             }
         );
         assert!(frame.has_v2_invoke_guarantees());
@@ -375,6 +398,12 @@ mod tests {
             )),
             Err(FrameReject::ClientSuppliedNativeId)
         );
+        assert_eq!(
+            parse(&format!(
+                r#"{{"version":1,"instanceId":"{INSTANCE}","state":"focused","workspaceFolders":["/tmp/a"],"cwd":"/tmp/a"}}"#
+            )),
+            Err(FrameReject::ClientSuppliedNativeId)
+        );
     }
 
     #[test]
@@ -414,6 +443,31 @@ mod tests {
             } => assert_eq!(workspace_folders.len(), 2),
             other => panic!("expected invoke, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn v2_terminal_surface_is_distinct_from_editor() {
+        let frame = parse(&format!(
+            r#"{{"version":2,"kind":"invoke","instanceId":"{INSTANCE}","requestId":"{REQUEST}","surface":"terminal","workspaceFolders":["/tmp/worktree"]}}"#
+        ))
+        .unwrap();
+        match frame {
+            ProviderFrame::Invoke {
+                surface,
+                workspace_folders,
+                ..
+            } => {
+                assert_eq!(surface, InvokeSurface::Terminal);
+                assert_eq!(workspace_folders, ["/tmp/worktree"]);
+            }
+            other => panic!("expected invoke, got {other:?}"),
+        }
+        assert_eq!(
+            parse(&format!(
+                r#"{{"version":2,"kind":"invoke","instanceId":"{INSTANCE}","requestId":"{REQUEST}","surface":"pane","workspaceFolders":[]}}"#
+            )),
+            Err(FrameReject::InvalidJson)
+        );
     }
 
     #[test]
