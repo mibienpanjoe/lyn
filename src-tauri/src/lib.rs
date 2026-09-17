@@ -320,6 +320,7 @@ fn dismiss_and_cancel_capture(app: &tauri::AppHandle) {
 
 #[cfg(target_os = "linux")]
 pub(crate) fn invoke_capture_popup(app: &tauri::AppHandle) {
+    // Global shortcut: no v2 request generation and no v2 exclusive-claim.
     invoke_capture_popup_with_request(app, None);
 }
 
@@ -341,17 +342,34 @@ pub(crate) fn invoke_capture_popup_with_request(
         .state::<Mutex<capture::session::CaptureSessionService>>()
         .lock()
         .ok()
-        .map(|mut service| service.prepare_invocation(request_id));
-    let is_new = prepared.as_ref().is_some_and(|prepared| prepared.is_new());
-    let session = prepared
-        .map(|prepared| prepared.session())
-        .map(|session| resolve_invocation_context(app, session, foreground));
+        .map(|mut service| {
+            let prepared = service.prepare_invocation(request_id);
+            (
+                prepared.session(),
+                prepared.is_new(),
+                service.has_user_context_authority(),
+            )
+        });
+    let is_new = prepared.as_ref().is_some_and(|(_, is_new, _)| *is_new);
+    let skip_automatic = prepared
+        .as_ref()
+        .is_some_and(|(_, _, user_locked)| *user_locked);
+    let prepared_session = prepared.map(|(session, _, _)| session);
+    let session = prepared_session.map(|session| {
+        if skip_automatic {
+            session
+        } else {
+            resolve_invocation_context(app, session, foreground)
+        }
+    });
     if platform.show_capture_popup().is_err() {
         return;
     }
     if let Some(session) = session {
         if is_new {
             let _ = app.emit("capture://session-ready", &session);
+        } else {
+            let _ = app.emit("capture://context-revised", &session);
         }
         let _ = app.emit(
             "context://sources-changed",
@@ -366,6 +384,8 @@ fn resolve_invocation_context(
     session: contract::CaptureSession,
     foreground: Option<platform::ForegroundWindowIdentity>,
 ) -> contract::CaptureSession {
+    // Lock order: registry (memory) → drop → database I/O → drop → session.
+    // Never hold the session mutex during Git or SQLite work.
     use context::resolver::{InvocationAssociations, ResolutionOutcome, classify, resolve};
     use contract::{ContextCandidate, ContextProviderKind, ContextResolution, ContextSelection};
 
@@ -472,7 +492,7 @@ fn resolve_invocation_context(
         .ok()
         .and_then(|mut service| {
             service
-                .set_context_resolution(session.session_id, resolution)
+                .apply_automatic_context_resolution(session.session_id, resolution)
                 .ok()
         })
         .unwrap_or(session)

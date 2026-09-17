@@ -1,6 +1,6 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.12, 2026-09-17
+Version: v1.13, 2026-09-17
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
@@ -715,9 +715,13 @@ Events are namespaced, contain no absolute paths or capture bodies, and cannot b
 
 ### `capture://session-ready`
 
-Emitted after shortcut invocation and session preparation.
+Emitted after shortcut or editor invocation prepares a **new** capture session.
 
 Payload: `CaptureSession`.
+
+### `capture://context-revised`
+
+Emitted when the active session's context resolution changes while that session is already open (including a second invoke of the same session). Payload: `CaptureSession`. The event MUST NOT be treated as a new capture: the UI updates context only and MUST leave draft text, staged media, and recording state untouched. A later automatic revision MUST NOT replace a user selection for this capture (INV-15).
 
 ### `context://sources-changed`
 

@@ -48,10 +48,18 @@ impl InvocationPrepare {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ContextAuthority {
+    #[default]
+    Automatic,
+    User,
+}
+
 #[derive(Default)]
 pub(crate) struct CaptureSessionService {
     active: Option<CaptureSession>,
     invoke_generation: Option<Uuid>,
+    context_authority: ContextAuthority,
     last_cancelled: Option<CaptureSessionId>,
     last_completed: Option<(CaptureSessionId, CaptureId)>,
     cleanup_requests: VecDeque<StagingCleanupRequest>,
@@ -81,11 +89,16 @@ impl CaptureSessionService {
         };
         self.active = Some(session.clone());
         self.invoke_generation = request_id;
+        self.context_authority = ContextAuthority::Automatic;
         InvocationPrepare::New(session)
     }
 
     pub(crate) fn accepts_invoke_generation(&self, request_id: Uuid) -> bool {
         self.active.is_some() && self.invoke_generation == Some(request_id)
+    }
+
+    pub(crate) fn has_user_context_authority(&self) -> bool {
+        matches!(self.context_authority, ContextAuthority::User)
     }
 
     pub(crate) fn active_session(&self) -> Option<CaptureSession> {
@@ -100,6 +113,31 @@ impl CaptureSessionService {
         let session = self.active_mut(session_id)?;
         session.context_resolution = resolution;
         Ok(session.clone())
+    }
+
+    pub(crate) fn apply_automatic_context_resolution(
+        &mut self,
+        session_id: CaptureSessionId,
+        resolution: ContextResolution,
+    ) -> Result<CaptureSession, SessionStateError> {
+        if self.has_user_context_authority() {
+            return self
+                .active
+                .clone()
+                .filter(|session| session.session_id == session_id)
+                .ok_or(SessionStateError::StaleSession);
+        }
+        self.set_context_resolution(session_id, resolution)
+    }
+
+    pub(crate) fn apply_user_context_resolution(
+        &mut self,
+        session_id: CaptureSessionId,
+        resolution: ContextResolution,
+    ) -> Result<CaptureSession, SessionStateError> {
+        let session = self.set_context_resolution(session_id, resolution)?;
+        self.context_authority = ContextAuthority::User;
+        Ok(session)
     }
 
     #[allow(dead_code, reason = "media staging is connected after T08")]
@@ -193,6 +231,7 @@ impl CaptureSessionService {
         }
         self.last_cancelled = Some(session_id);
         self.invoke_generation = None;
+        self.context_authority = ContextAuthority::Automatic;
         Ok(())
     }
 
@@ -215,6 +254,7 @@ impl CaptureSessionService {
 
         self.active = None;
         self.invoke_generation = None;
+        self.context_authority = ContextAuthority::Automatic;
         self.last_completed = Some((session_id, capture_id));
         Ok(SaveOnceResult::Saved { capture_id, value })
     }
@@ -511,5 +551,40 @@ mod tests {
             .unwrap();
         assert!(!service.accepts_invoke_generation(next_request));
         assert!(!service.accepts_invoke_generation(request));
+    }
+
+    #[test]
+    fn automatic_resolution_cannot_override_a_user_selection() {
+        let mut service = CaptureSessionService::default();
+        let session = service.get_or_prepare();
+        let staged = staged_image();
+        service
+            .set_staged_media(session.session_id, staged.clone())
+            .unwrap();
+        let user = service
+            .apply_user_context_resolution(session.session_id, resolved_context())
+            .unwrap();
+        let ignored = service
+            .apply_automatic_context_resolution(
+                session.session_id,
+                ContextResolution::Ambiguous {
+                    candidate: (),
+                    selection: (),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(ignored.context_resolution, user.context_resolution);
+        assert_eq!(ignored.staged_media, Some(staged));
+        assert!(service.has_user_context_authority());
+    }
+
+    #[test]
+    fn global_shortcut_has_no_v2_invoke_generation() {
+        let mut service = CaptureSessionService::default();
+        let prepared = service.prepare_invocation(None);
+        assert!(prepared.is_new());
+        assert!(!service.accepts_invoke_generation(Uuid::new_v4()));
+        assert!(!service.has_user_context_authority());
     }
 }

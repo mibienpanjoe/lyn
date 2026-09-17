@@ -121,6 +121,7 @@ function createClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
       focusRestored: true,
     }),
     onSessionReady: vi.fn().mockResolvedValue(vi.fn()),
+    onContextRevised: vi.fn().mockResolvedValue(vi.fn()),
     onContextSourcesChanged: vi.fn().mockResolvedValue(vi.fn()),
     ...overrides,
   };
@@ -640,6 +641,28 @@ describe('quick-capture popup', () => {
     await waitFor(() => expect(announceReady).toBeTypeOf('function'));
     announceReady?.(resolvedSession());
     await waitFor(() => expect(input).toHaveValue('Keep this'));
+  });
+
+  it('applies a context revision without clearing the draft', async () => {
+    let revise: ((session: CaptureSession) => void) | undefined;
+    const client = createClient({
+      getActiveSession: vi.fn().mockResolvedValue(requiredSession),
+      onContextRevised: vi.fn().mockImplementation((listener) => {
+        revise = listener;
+        return Promise.resolve(() => undefined);
+      }),
+    });
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    const input = await screen.findByRole('textbox', { name: 'Capture text' });
+    await fireEvent.input(input, { target: { value: 'Stay' } });
+    await waitFor(() => expect(revise).toBeTypeOf('function'));
+    revise?.(resolvedSession());
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Context Inbox. Change context' }),
+      ).toBeVisible(),
+    );
+    expect(input).toHaveValue('Stay');
   });
 
   it('creates and selects a standalone context inline', async () => {

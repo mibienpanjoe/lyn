@@ -862,7 +862,7 @@ fn select_capture_context_source_with_registry_value(
         }
     };
 
-    match service.set_context_resolution(input.session_id, resolution) {
+    match service.apply_user_context_resolution(input.session_id, resolution) {
         Ok(session) => CommandResult::success(session),
         Err(SessionStateError::StaleSession) => CommandResult::failure(stale_session_error()),
     }

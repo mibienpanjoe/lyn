@@ -84,9 +84,15 @@
       if (chooserOpen && session?.sessionId === sessionId)
         void refreshSources();
     });
+    const unlistenRevised = client.onContextRevised((revised) => {
+      if (session?.sessionId !== revised.sessionId) return;
+      session = revised;
+      if (chooserOpen) void refreshSources();
+    });
     return () => {
       void unlisten.then((removeListener) => removeListener());
       void unlistenSources.then((removeListener) => removeListener());
+      void unlistenRevised.then((removeListener) => removeListener());
     };
   });
 

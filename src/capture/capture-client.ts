@@ -80,6 +80,9 @@ export interface CaptureClient {
   onSessionReady(
     listener: (session: CaptureSession) => void,
   ): Promise<UnlistenFn>;
+  onContextRevised(
+    listener: (session: CaptureSession) => void,
+  ): Promise<UnlistenFn>;
   onContextSourcesChanged(
     listener: (sessionId: string) => void,
   ): Promise<UnlistenFn>;
@@ -198,6 +201,14 @@ export function createCaptureClient(call: Invoke = invoke): CaptureClient {
         return Promise.resolve(() => undefined);
       }
       return listen<CaptureSession>('capture://session-ready', (event) =>
+        listener(event.payload),
+      );
+    },
+    onContextRevised: (listener) => {
+      if (!('__TAURI_INTERNALS__' in window)) {
+        return Promise.resolve(() => undefined);
+      }
+      return listen<CaptureSession>('capture://context-revised', (event) =>
         listener(event.payload),
       );
     },

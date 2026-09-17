@@ -459,6 +459,9 @@ export const devCaptureClient: CaptureClient = {
   async onSessionReady() {
     return () => {};
   },
+  async onContextRevised() {
+    return () => {};
+  },
   async onContextSourcesChanged() {
     return () => {};
   },
