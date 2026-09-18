@@ -15,6 +15,7 @@ const OBSERVATION_CJS: &str = include_str!("../../../integrations/vscode/observa
 const EXTENSION_README: &str = include_str!("../../../integrations/vscode/README.md");
 
 const KITTY_WATCHER_PY: &str = include_str!("../../../integrations/kitty/lyn_context_watcher.py");
+const KITTY_CAPTURE_PY: &str = include_str!("../../../integrations/kitty/lyn_capture.py");
 const SHELL_BOOTSTRAP_SH: &str = include_str!("../../../integrations/shell/lyn-context.sh");
 
 const BROWSER_MANIFEST_JSON: &str = include_str!("../../../integrations/browser/manifest.json");
@@ -244,14 +245,16 @@ pub(crate) fn kitty_status(home: &Path) -> IntegrationStatus {
     let conf_path = kitty_dir.join("kitty.conf");
     let installed = if conf_path.is_file() {
         fs::read_to_string(&conf_path)
-            .map(|content| content.contains("lyn_context_watcher.py"))
+            .map(|content| {
+                content.contains("lyn_context_watcher.py") && content.contains("lyn_capture.py")
+            })
             .unwrap_or(false)
     } else {
         false
     };
 
     let details = if installed {
-        Some("Watcher configured in ~/.config/kitty/kitty.conf".to_owned())
+        Some("Watcher and capture kitten configured in ~/.config/kitty/kitty.conf".to_owned())
     } else if detected {
         Some("Kitty detected on this system".to_owned())
     } else {
@@ -616,31 +619,48 @@ fn install_kitty(home: &Path) -> InstallIntegrationResult {
             installed: false,
         };
     }
+    let capture_file = kitty_dir.join("lyn_capture.py");
+    if let Err(e) = fs::write(&capture_file, KITTY_CAPTURE_PY) {
+        return InstallIntegrationResult {
+            id: IntegrationId::Kitty,
+            success: false,
+            message: format!("Failed to write capture kitten: {e}"),
+            installed: false,
+        };
+    }
 
     let conf_file = kitty_dir.join("kitty.conf");
     let existing_content = fs::read_to_string(&conf_file).unwrap_or_default();
-    if !existing_content.contains("lyn_context_watcher.py") {
-        let addition = format!(
+    let mut new_content = existing_content;
+    let mut changed = false;
+    if !new_content.contains("lyn_context_watcher.py") {
+        new_content.push_str(&format!(
             "\n# Lyn Context Provider watcher\nwatcher {}\n",
             watcher_file.display()
-        );
-        let mut new_content = existing_content;
-        new_content.push_str(&addition);
-        if let Err(e) = fs::write(&conf_file, new_content) {
-            return InstallIntegrationResult {
-                id: IntegrationId::Kitty,
-                success: false,
-                message: format!("Failed to update kitty.conf: {e}"),
-                installed: false,
-            };
-        }
+        ));
+        changed = true;
+    }
+    if !new_content.contains("lyn_capture.py") {
+        new_content.push_str(&format!(
+            "\nmap ctrl+alt+shift+l kitten {}\n",
+            capture_file.display()
+        ));
+        changed = true;
+    }
+    if changed && let Err(e) = fs::write(&conf_file, new_content) {
+        return InstallIntegrationResult {
+            id: IntegrationId::Kitty,
+            success: false,
+            message: format!("Failed to update kitty.conf: {e}"),
+            installed: false,
+        };
     }
 
     InstallIntegrationResult {
         id: IntegrationId::Kitty,
         success: true,
         message:
-            "Kitty watcher installed and added to ~/.config/kitty/kitty.conf. Restart Kitty to activate."
+            "Kitty watcher and capture kitten added to ~/.config/kitty/kitty.conf. Restart Kitty to activate."
                 .to_owned(),
         installed: true,
     }
@@ -821,6 +841,10 @@ mod tests {
 
         let after_kitty = kitty_status(home);
         assert!(after_kitty.installed);
+        let kitty_conf = fs::read_to_string(home.join(".config/kitty/kitty.conf")).unwrap();
+        assert!(kitty_conf.contains("lyn_context_watcher.py"));
+        assert!(kitty_conf.contains("lyn_capture.py"));
+        assert!(home.join(".config/kitty/lyn_capture.py").is_file());
 
         // Create dummy .bashrc
         let bashrc = home.join(".bashrc");

@@ -68,8 +68,19 @@ struct KittyObservationMessage {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct KittyInvokeMessage {
+    version: u8,
+    kind: String,
+    request_id: Uuid,
+    terminal_session_id: u64,
+    process_id: u32,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum TerminalObservationMessage {
+    KittyInvoke(KittyInvokeMessage),
     Shell(ShellObservationMessage),
     Kitty(KittyObservationMessage),
 }
@@ -124,21 +135,76 @@ fn run(listener: UnixListener, app: AppHandle, runtime_uid: u32) {
                     continue;
                 };
                 let changed = match message {
+                    TerminalObservationMessage::KittyInvoke(message) => {
+                        if message.version != 2 || message.kind != "invoke" {
+                            false
+                        } else {
+                            let active_window = crate::platform::x11::active_context_window().ok();
+                            let directory = process_directory(message.process_id, runtime_uid).ok();
+                            let focused = KittyObservationMessage {
+                                version: 1,
+                                terminal_session_id: message.terminal_session_id,
+                                process_id: message.process_id,
+                                state: KittyState::Focused,
+                            };
+                            let changed = apply_kitty_message(
+                                &mut registry,
+                                &mut kitty_panes,
+                                &mut active_kitty_panes,
+                                focused,
+                                active_window,
+                                directory,
+                                Instant::now(),
+                            );
+                            drop(registry);
+                            if changed {
+                                emit_sources_changed(&app);
+                            }
+                            let request_id = message.request_id;
+                            let handle = app.clone();
+                            let _ = app.run_on_main_thread(move || {
+                                crate::invoke_capture_popup_with_request(&handle, Some(request_id));
+                            });
+                            continue;
+                        }
+                    }
                     TerminalObservationMessage::Shell(message) => {
-                        let active_window = (message.state == ShellState::Live)
+                        let live = message.state == ShellState::Live;
+                        let window_id = message.window_id;
+                        let current = live
                             .then(crate::platform::x11::active_context_window)
                             .and_then(Result::ok);
-                        let directory = (message.state == ShellState::Live)
-                            .then(|| process_directory(message.process_id, runtime_uid))
-                            .and_then(Result::ok);
-                        apply_message(
-                            &mut registry,
-                            &mut sessions,
-                            message,
-                            active_window,
-                            directory,
-                            Instant::now(),
-                        )
+                        let attested = live
+                            .then(|| crate::platform::x11::classify_native_window(window_id))
+                            .flatten();
+                        let active_window = observation_window(live, window_id, current, attested);
+                        if active_window.is_some_and(|(_, kind)| {
+                            shell_observation_superseded_by_kitty(
+                                kind,
+                                message.window_id,
+                                &active_kitty_panes,
+                            )
+                        }) {
+                            false
+                        } else {
+                            let directory = live
+                                .then(|| process_directory(message.process_id, runtime_uid))
+                                .and_then(Result::ok);
+                            let changed = apply_message(
+                                &mut registry,
+                                &mut sessions,
+                                message,
+                                active_window,
+                                directory,
+                                Instant::now(),
+                            );
+                            if changed && live {
+                                if let Some((id, kind)) = active_window {
+                                    crate::platform::x11::remember_context_window(id, kind);
+                                }
+                            }
+                            changed
+                        }
                     }
                     TerminalObservationMessage::Kitty(message) => {
                         let active_window = (message.state == KittyState::Focused)
@@ -169,6 +235,28 @@ fn run(listener: UnixListener, app: AppHandle, runtime_uid: u32) {
             Err(_) => thread::sleep(ACCEPT_POLL_INTERVAL),
         }
     }
+}
+
+fn observation_window(
+    live: bool,
+    message_window_id: u32,
+    current: Option<(u32, ContextWindowKind)>,
+    attested: Option<(u32, ContextWindowKind)>,
+) -> Option<(u32, ContextWindowKind)> {
+    if !live {
+        return None;
+    }
+    current
+        .filter(|(id, _)| *id == message_window_id)
+        .or_else(|| attested.filter(|(id, _)| *id == message_window_id))
+}
+
+fn shell_observation_superseded_by_kitty(
+    window_kind: ContextWindowKind,
+    window_id: u32,
+    active_kitty_panes: &HashMap<u32, u64>,
+) -> bool {
+    window_kind == ContextWindowKind::Kitty && active_kitty_panes.contains_key(&window_id)
 }
 
 fn apply_kitty_message(
@@ -536,7 +624,8 @@ mod tests {
 
     use super::{
         KittyObservationMessage, KittyState, ShellObservationMessage, ShellState,
-        apply_kitty_message, apply_message, process_directory_at,
+        TerminalObservationMessage, apply_kitty_message, apply_message, observation_window,
+        process_directory_at, shell_observation_superseded_by_kitty,
     };
 
     fn live_message(process_id: u32, window_id: u32) -> ShellObservationMessage {
@@ -647,6 +736,41 @@ mod tests {
             now,
         ));
         assert!(registry.live_sources(now).is_empty());
+    }
+
+    #[test]
+    fn attested_terminal_window_is_used_when_lyn_has_already_taken_focus() {
+        assert_eq!(
+            observation_window(
+                true,
+                91,
+                Some((7, ContextWindowKind::Cursor)),
+                Some((91, ContextWindowKind::GnomeTerminal)),
+            ),
+            Some((91, ContextWindowKind::GnomeTerminal))
+        );
+        assert_eq!(
+            observation_window(
+                true,
+                91,
+                Some((91, ContextWindowKind::GnomeTerminal)),
+                Some((91, ContextWindowKind::GnomeTerminal)),
+            ),
+            Some((91, ContextWindowKind::GnomeTerminal))
+        );
+        assert_eq!(
+            observation_window(
+                false,
+                91,
+                Some((91, ContextWindowKind::GnomeTerminal)),
+                Some((91, ContextWindowKind::GnomeTerminal)),
+            ),
+            None
+        );
+        assert_eq!(
+            observation_window(true, 91, Some((7, ContextWindowKind::Cursor)), None),
+            None
+        );
     }
 
     #[test]
@@ -772,6 +896,71 @@ mod tests {
                 .map(str::to_owned)
                 .collect()
         );
+    }
+
+    #[test]
+    fn kitty_invoke_is_not_parsed_as_a_generic_shell_session() {
+        let encoded = serde_json::json!({
+            "version": 2,
+            "kind": "invoke",
+            "requestId": "c3b1a2d0-1111-4aaa-8bbb-0123456789ab",
+            "terminalSessionId": 77,
+            "processId": 4242
+        });
+        let parsed: TerminalObservationMessage = serde_json::from_value(encoded).unwrap();
+        match parsed {
+            TerminalObservationMessage::KittyInvoke(message) => {
+                assert_eq!(message.kind, "invoke");
+                assert_eq!(message.terminal_session_id, 77);
+                assert_eq!(message.process_id, 4242);
+            }
+            TerminalObservationMessage::Shell(_) | TerminalObservationMessage::Kitty(_) => {
+                panic!("expected kitty invoke")
+            }
+        }
+    }
+
+    #[test]
+    fn gnome_terminal_live_observation_parses_as_a_shell_session() {
+        let encoded = serde_json::json!({
+            "version": 1,
+            "sessionId": "c3b1a2d0-2222-4aaa-8bbb-0123456789ab",
+            "processId": 1742125,
+            "windowId": 76630076,
+            "state": "live"
+        });
+        let parsed: TerminalObservationMessage = serde_json::from_value(encoded).unwrap();
+        match parsed {
+            TerminalObservationMessage::Shell(message) => {
+                assert_eq!(message.process_id, 1742125);
+                assert_eq!(message.window_id, 76630076);
+                assert_eq!(message.state, ShellState::Live);
+            }
+            TerminalObservationMessage::KittyInvoke(_) | TerminalObservationMessage::Kitty(_) => {
+                panic!("expected generic shell observation")
+            }
+        }
+    }
+
+    #[test]
+    fn generic_shell_observation_is_ignored_when_a_kitty_pane_owns_the_window() {
+        let mut panes = HashMap::new();
+        panes.insert(81, 501);
+        assert!(shell_observation_superseded_by_kitty(
+            ContextWindowKind::Kitty,
+            81,
+            &panes,
+        ));
+        assert!(!shell_observation_superseded_by_kitty(
+            ContextWindowKind::GnomeTerminal,
+            81,
+            &panes,
+        ));
+        assert!(!shell_observation_superseded_by_kitty(
+            ContextWindowKind::Kitty,
+            82,
+            &panes,
+        ));
     }
 
     #[test]

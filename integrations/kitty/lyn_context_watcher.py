@@ -13,6 +13,7 @@ import socket
 import stat
 import threading
 import time
+import uuid
 from typing import Any
 
 
@@ -34,6 +35,18 @@ def create_message(
         "terminalSessionId": int(terminal_session_id),
         "processId": int(process_id),
         "state": state,
+    }
+
+
+def create_invoke_request(
+    terminal_session_id: int, process_id: int, request_id: str | None = None
+) -> dict[str, int | str]:
+    return {
+        "version": 2,
+        "kind": "invoke",
+        "requestId": request_id or str(uuid.uuid4()),
+        "terminalSessionId": int(terminal_session_id),
+        "processId": int(process_id),
     }
 
 

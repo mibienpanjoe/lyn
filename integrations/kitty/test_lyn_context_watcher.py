@@ -43,6 +43,25 @@ class KittyWatcherTests(unittest.TestCase):
         self.assertNotIn("command", message)
         self.assertNotIn("environment", message)
 
+    def test_invoke_request_carries_generation_and_no_paths(self):
+        request = watcher.create_invoke_request(
+            77, 4242, "c3b1a2d0-1111-4aaa-8bbb-0123456789ab"
+        )
+
+        self.assertEqual(
+            request,
+            {
+                "version": 2,
+                "kind": "invoke",
+                "requestId": "c3b1a2d0-1111-4aaa-8bbb-0123456789ab",
+                "terminalSessionId": 77,
+                "processId": 4242,
+            },
+        )
+        self.assertNotIn("cwd", request)
+        self.assertNotIn("windowId", request)
+        self.assertNotIn("title", request)
+
     def test_on_load_matches_kitty_global_watcher_contract(self):
         self.assertEqual(
             list(inspect.signature(watcher.on_load).parameters),

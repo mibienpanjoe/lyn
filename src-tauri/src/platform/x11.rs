@@ -33,7 +33,7 @@ impl CaptureWindowPlatform for X11CaptureWindowPlatform {
     fn capture_foreground(&mut self) -> Result<ForegroundWindowIdentity, PlatformError> {
         let window = active_window()?;
         if is_lyn_window(window) {
-            return Err(PlatformError::Unsupported);
+            return last_context_foreground();
         }
         Ok(ForegroundWindowIdentity {
             window: WindowCorrelationToken::from_native(u64::from(window)),
@@ -99,6 +99,31 @@ fn is_lyn_class(window_class: &[u8]) -> bool {
     window_class
         .split(|byte| *byte == 0)
         .any(|part| part.eq_ignore_ascii_case(b"lyn"))
+}
+
+pub(crate) fn classify_native_window(window: u32) -> Option<(u32, ContextWindowKind)> {
+    let class = window_class(window)?;
+    if is_lyn_class(&class) {
+        return None;
+    }
+    context_window_kind(&class).map(|kind| (window, kind))
+}
+
+pub(crate) fn remember_context_window(window: u32, kind: ContextWindowKind) {
+    if let Ok(mut last) = LAST_ACTIVE_CONTEXT_WINDOW.lock() {
+        *last = Some((window, kind));
+    }
+}
+
+pub(crate) fn last_context_foreground() -> Result<ForegroundWindowIdentity, PlatformError> {
+    LAST_ACTIVE_CONTEXT_WINDOW
+        .lock()
+        .ok()
+        .and_then(|last| *last)
+        .map(|(window, _)| ForegroundWindowIdentity {
+            window: WindowCorrelationToken::from_native(u64::from(window)),
+        })
+        .ok_or(PlatformError::Unsupported)
 }
 
 pub(crate) fn active_window() -> Result<u32, PlatformError> {
@@ -353,7 +378,8 @@ mod tests {
 
     use super::{
         ContextWindowKind, LAST_ACTIVE_CONTEXT_WINDOW, PlatformError, bind_current_context_window,
-        context_window_kind, pick_sole_editor_window, remember_active_context_window,
+        context_window_kind, last_context_foreground, pick_sole_editor_window,
+        remember_active_context_window, remember_context_window,
     };
 
     static ACTIVE_WINDOW_MEMO_LOCK: Mutex<()> = Mutex::new(());
@@ -512,5 +538,20 @@ mod tests {
             ]),
             Some((11, ContextWindowKind::Cursor))
         );
+    }
+
+    #[test]
+    fn lyn_capture_foreground_reuses_the_remembered_context_window() {
+        let _guard = ACTIVE_WINDOW_MEMO_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *LAST_ACTIVE_CONTEXT_WINDOW.lock().unwrap() = None;
+
+        assert_eq!(
+            last_context_foreground().unwrap_err(),
+            PlatformError::Unsupported
+        );
+        remember_context_window(81, ContextWindowKind::GnomeTerminal);
+        assert_eq!(last_context_foreground().unwrap().window.native(), 81);
     }
 }
