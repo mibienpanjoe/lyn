@@ -238,8 +238,8 @@ Microservices, cloud services, frontend-owned SQL, and a generic plugin runtime 
 
 **Key behaviors:**
 
-1. Register/unregister the configured global shortcut.
-2. Record the foreground window identity before showing Lyn, then preserve it for return-to-work behavior.
+1. Register/unregister the configured global shortcut. The integration invoke `Control+Alt+Shift+L` is reserved and cannot be the global grab; a conflicting OS grab keeps the last working shortcut (ERR-001).
+2. Record the foreground window identity before showing Lyn, then preserve it for return-to-work behavior. When Lyn already has focus, reuse the last classified context window instead of treating the popup as the source.
 3. Resize the popup through bounded compact, audio, error, chooser, and screenshot-media layout states while preserving its current logical width.
 4. Read supported clipboard content on explicit paste intent.
 5. Provide minimal, opaque foreground-window correlation evidence.

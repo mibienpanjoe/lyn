@@ -91,6 +91,12 @@ fn update_settings_value(
             retryable: true,
             details: ErrorDetails::default(),
         }),
+        Err(SettingsError::ReservedShortcut) => CommandResult::failure(AppError {
+            code: ErrorCode::ShortcutConflict,
+            message: "That shortcut is reserved for editor and terminal capture".to_owned(),
+            retryable: true,
+            details: ErrorDetails::default(),
+        }),
         Err(SettingsError::Storage) => CommandResult::failure(storage_write_error()),
     }
 }
@@ -205,6 +211,31 @@ mod tests {
         let value = serde_json::to_value(result).unwrap();
         assert_eq!(value["error"]["code"], "SHORTCUT_CONFLICT");
         assert_eq!(value["error"]["retryable"], true);
+        assert_eq!(
+            SettingsRepository::new(database.lock().unwrap().connection())
+                .get()
+                .unwrap()
+                .global_shortcut,
+            "Control+Shift+Space"
+        );
+    }
+
+    #[test]
+    fn reserved_integration_shortcut_is_rejected_before_the_global_grab() {
+        let database = Mutex::new(Database::open_in_memory().unwrap());
+
+        let result = update_settings_value(
+            json!({ "patch": { "globalShortcut": "Control+Alt+Shift+L" } }),
+            &database,
+            &mut ConflictingPlatform,
+        );
+
+        let value = serde_json::to_value(result).unwrap();
+        assert_eq!(value["error"]["code"], "SHORTCUT_CONFLICT");
+        assert_eq!(
+            value["error"]["message"],
+            "That shortcut is reserved for editor and terminal capture"
+        );
         assert_eq!(
             SettingsRepository::new(database.lock().unwrap().connection())
                 .get()

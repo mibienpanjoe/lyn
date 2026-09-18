@@ -117,7 +117,7 @@ const en: Translations = {
 
   quickCaptureTitle: 'Quick capture',
   quickCaptureSubtitle:
-    'The global shortcut used to open Lyn from another application.',
+    'Opens Lyn from any app. Editor, Cursor, and Kitty use a separate shortcut: Ctrl+Alt+Shift+L.',
   globalShortcutLabel: 'Global shortcut',
   changeShortcut: 'Change shortcut',
   done: 'Done',
@@ -236,7 +236,7 @@ const fr: Translations = {
 
   quickCaptureTitle: 'Capture rapide',
   quickCaptureSubtitle:
-    'Le raccourci global utilisé pour ouvrir Lyn depuis une autre application.',
+    'Ouvre Lyn depuis n’importe quelle application. L’éditeur, Cursor et Kitty ont un raccourci distinct : Ctrl+Alt+Shift+L.',
   globalShortcutLabel: 'Raccourci global',
   changeShortcut: 'Modifier le raccourci',
   done: 'Terminé',

@@ -8,6 +8,7 @@ pub(crate) enum SettingsError {
     InvalidShortcut,
     InvalidProviderOrder,
     ShortcutConflict,
+    ReservedShortcut,
     Storage,
 }
 
@@ -37,6 +38,9 @@ pub(crate) fn update(
     };
     if !settings::valid_shortcut(&next.global_shortcut) {
         return Err(SettingsError::InvalidShortcut);
+    }
+    if settings::is_reserved_integration_shortcut(&next.global_shortcut) {
+        return Err(SettingsError::ReservedShortcut);
     }
     if !settings::valid_provider_order(&next.provider_tie_break_order) {
         return Err(SettingsError::InvalidProviderOrder);
@@ -118,6 +122,31 @@ mod tests {
         );
 
         assert_eq!(result, Err(SettingsError::ShortcutConflict));
+        assert_eq!(platform.shortcut, "Control+Shift+Space");
+        assert_eq!(
+            SettingsRepository::new(database.connection())
+                .get()
+                .unwrap()
+                .global_shortcut,
+            "Control+Shift+Space"
+        );
+    }
+
+    #[test]
+    fn reserved_integration_shortcut_is_rejected_without_replacing_the_global_grab() {
+        let mut database = Database::open_in_memory().unwrap();
+        let mut platform = platform(false);
+
+        let result = update(
+            &mut database,
+            SettingsPatch {
+                global_shortcut: Some("Ctrl+Alt+Shift+L".to_owned()),
+                ..SettingsPatch::default()
+            },
+            &mut platform,
+        );
+
+        assert_eq!(result, Err(SettingsError::ReservedShortcut));
         assert_eq!(platform.shortcut, "Control+Shift+Space");
         assert_eq!(
             SettingsRepository::new(database.connection())

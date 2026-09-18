@@ -209,6 +209,8 @@ Linux editor integrations share `lyn-context-v1.sock`. Heartbeats remain protoco
 
 Linux terminal integrations share `lyn-shell-v1.sock`. Kitty heartbeats remain `{version: 1, terminalSessionId, processId, state}`. A Kitty-originated capture uses `{version: 2, kind: "invoke", requestId, terminalSessionId, processId}`. Rust assigns the OS window at receive time, validates the same-user process, and derives cwd from `/proc`. A generic shell observation for a Kitty window that already has an exact pane mapping is ignored. A generic shell Live names the helper-bound OS window; Rust classifies that window even if Lyn has already taken focus, and a global shortcut while Lyn is focused reuses that last terminal window instead of dropping automatic context.
 
+Linux capture entry points are distinct. Integrations (VS Code, Cursor, Kitty) invoke with `Control+Alt+Shift+L` on a private socket and receive v2 generation guarantees. The Settings global shortcut (default `Control+Shift+Space`) samples the pre-popup X11 window and must not use the integration combination. A global invoke without a verified live source for that window resolves as required (ERR-003); it MUST NOT promote a later heartbeat to exact proof.
+
 ## Capture Session Commands
 
 ### `get_active_capture_session`

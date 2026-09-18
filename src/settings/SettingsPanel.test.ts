@@ -84,6 +84,7 @@ describe('Settings', () => {
     });
 
     await screen.findByRole('heading', { name: 'Quick capture' });
+    expect(screen.getByText(/Ctrl\+Alt\+Shift\+L/)).toBeVisible();
     expect(screen.getByText('Ctrl', { selector: 'kbd' })).toBeVisible();
     expect(screen.getByText('Shift', { selector: 'kbd' })).toBeVisible();
     expect(screen.getByText('Space', { selector: 'kbd' })).toBeVisible();

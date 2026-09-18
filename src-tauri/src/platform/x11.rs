@@ -35,6 +35,9 @@ impl CaptureWindowPlatform for X11CaptureWindowPlatform {
         if is_lyn_window(window) {
             return last_context_foreground();
         }
+        if let Some(class) = window_class(window) {
+            let _ = remember_active_context_window(window, &class);
+        }
         Ok(ForegroundWindowIdentity {
             window: WindowCorrelationToken::from_native(u64::from(window)),
         })

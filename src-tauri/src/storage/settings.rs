@@ -162,6 +162,23 @@ pub(crate) fn valid_shortcut(shortcut: &str) -> bool {
         && shortcut.split('+').all(|part| !part.is_empty())
 }
 
+pub(crate) const INTEGRATION_INVOKE_SHORTCUT: &str = "Control+Alt+Shift+L";
+
+pub(crate) fn is_reserved_integration_shortcut(shortcut: &str) -> bool {
+    canonicalize_shortcut_parts(shortcut)
+        == canonicalize_shortcut_parts(INTEGRATION_INVOKE_SHORTCUT)
+}
+
+fn canonicalize_shortcut_parts(shortcut: &str) -> std::collections::BTreeSet<String> {
+    shortcut
+        .split('+')
+        .map(|part| match part {
+            "Ctrl" | "Control" => "control".to_owned(),
+            other => other.to_ascii_lowercase(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -169,7 +186,10 @@ mod tests {
         storage::Database,
     };
 
-    use super::{SettingsRepository, save, valid_provider_order, valid_shortcut};
+    use super::{
+        SettingsRepository, is_reserved_integration_shortcut, save, valid_provider_order,
+        valid_shortcut,
+    };
 
     #[test]
     fn defaults_are_local_safe_and_round_trip_transactionally() {
@@ -211,6 +231,10 @@ mod tests {
         assert!(valid_shortcut("Control+Shift+Space"));
         assert!(!valid_shortcut(" Control+Space"));
         assert!(!valid_shortcut("Control++Space"));
+        assert!(is_reserved_integration_shortcut("Control+Alt+Shift+L"));
+        assert!(is_reserved_integration_shortcut("Ctrl+Alt+Shift+L"));
+        assert!(!is_reserved_integration_shortcut("Control+Shift+Space"));
+        assert!(!is_reserved_integration_shortcut("Control+Alt+L"));
         assert!(valid_provider_order(&[
             ContextProviderKind::Shell,
             ContextProviderKind::ForegroundWindow,
