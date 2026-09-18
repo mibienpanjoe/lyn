@@ -1,6 +1,6 @@
 # Lyn — System Architecture
 
-Version: v1.3, 2026-09-17
+Version: v1.4, 2026-09-18
 
 Derived from: [`04_transition_req_arch.md`](04_transition_req_arch.md)
 
@@ -695,6 +695,8 @@ Lyn records the OS window active before capture, correlates it with validated ed
 On the first X11 target, foreground-window identity is available as an opaque correlation but does not identify a project by itself. VS Code windows and integrated terminals are supported only when a local integration supplies their exact owning-window and, for terminals, active-session relationship. External terminal tabs are unsupported without a terminal-specific active-tab integration. Missing relationships produce ambiguity rather than title parsing or global-recency inference. The accepted feasibility matrix and remaining live checks are recorded in [`08_context_provider_feasibility.md`](08_context_provider_feasibility.md).
 
 The delivered VS Code workspace integration uses an always-active local UI extension because focus changes must be observed before capture invocation. It sends bounded v1 workspace/focus observations, and a versioned v2 invoke frame from `lyn.capture`, to a `0600` Unix socket inside the user-private XDG runtime directory. Rust assigns the opaque window correlation from the X11 window at receive time; client-supplied window or process identifiers are rejected. A focused report is accepted only while the active X11 window has a supported VS Code class. Stale correlations for the same extension window are replaced. Broker startup failure is provider unavailability rather than a core-capture failure. v1 heartbeats remain observe-only window identity; a v1 `intent: invoke` shim does not receive v2 request-generation guarantees. v2 `surface: terminal` binds the invoke to the focused integrated terminal's live working directory when the extension can supply that hint without reading terminal content; `surface: editor` (the default) uses workspace folders and must not inherit `activeTerminal`. This does not replace pre-popup foreground correlation (INV-14).
+
+The Linux browser companion uses Native Messaging to the same running Lyn binary. v1 heartbeats are observe-only. v2 `lyn.capture` invokes from the focused tab. Chromium MV3 uses a service worker; Firefox MV3 uses `background.scripts` because service workers are disabled there. The companion suggests `Alt+Shift+L` (`Ctrl+Alt+Shift+L` is rejected as a Chromium suggested key). Only sanitized `file:` and localhost-family URLs are correlation hints. Localhost mapping requires one same-user process cwd after skipping `docker-proxy`; IPv4/IPv6 sockets of the same directory are one source. Remote sites, incognito tabs, titles, and first-PID guesses are rejected. Desktop Chromium and Firefox two-tab localhost mapping was confirmed on Linux X11.
 
 ### ADR-010 — Pinned optional local speech package
 

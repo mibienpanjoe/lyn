@@ -5,13 +5,14 @@ Local, privacy-bounded context provider for web browsers (Google Chrome, Chromiu
 ## How it works
 
 1. **Companion Extension (`integrations/browser/`):**
-   A lightweight Manifest V3 WebExtension that monitors active tabs and reports focus changes.
-   - Strips search queries, authentication tokens (`?auth=...`), and hash fragments.
+   A lightweight Manifest V3 WebExtension that reports the focused tab and invokes capture from it (`lyn.capture`). Chrome, Chromium, Brave, and Edge cannot bind `Ctrl+Alt+Shift+L` as a suggested key, so the companion suggests `Alt+Shift+L` (rebindable in the browser). Editor, Cursor, and Kitty keep `Ctrl+Alt+Shift+L`.
+   - Sends only sanitized `file:` and localhost-family URLs (no query, fragment, or title).
    - Ignores incognito / private browsing tabs completely.
+   - Remote sites open capture without automatic project resolution.
 2. **Native Messaging Host (`lyn-browser-host`):**
-   A small, secure Rust binary communicating via standard input/output with Chrome / Firefox, forwarding messages to Lyn's private Unix socket (`$XDG_RUNTIME_DIR/lyn-browser-v1.sock`).
+   A small, secure Rust binary communicating via standard input/output with Chrome / Firefox, forwarding messages to Lyn's private Unix socket (`$XDG_RUNTIME_DIR/lyn-browser-v1.sock`). The helper shuts down the Unix write side after the payload so Lyn can bound the read and check the peer uid.
 3. **Localhost Port Resolution:**
-   When you test local web services (`http://localhost:5173`, `http://127.0.0.1:3000`), Lyn inspects the kernel socket table (`/proc/net/tcp`), maps the listening port to the development server process (`/proc/<pid>/cwd`), and binds the capture directly to your local Git repository and branch.
+   When you test local web services (`http://localhost:5173`, `http://127.0.0.1:3000`, `http://[::1]:…`), Lyn inspects `/proc/net/tcp` and `/proc/net/tcp6`, maps listen inodes to same-user processes, skips `docker-proxy`, and binds the capture only when every remaining listener shares one working directory. Two processes with different cwds, or a Docker published port with no other proven project directory, stay unresolved.
 
 ## Setup
 
@@ -33,6 +34,7 @@ pnpm provider:browser:install
 3. Click **Load unpacked** and select the `integrations/browser/` directory (or `~/.local/share/lyn/integrations/browser/` if generated via Settings).
 
 #### Firefox
+Firefox MV3 currently loads an event page (`background.scripts`), not a service worker. Use the Firefox manifest:
 1. Open `about:debugging#/runtime/this-firefox`.
 2. Click **Load Temporary Add-on…**.
-3. Select `integrations/browser/manifest.json` (or `~/.local/share/lyn/integrations/browser/manifest.json`).
+3. Select `integrations/browser/manifest.firefox.json` (or `~/.local/share/lyn/integrations/browser/manifest.firefox.json`).

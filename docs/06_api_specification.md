@@ -1,6 +1,6 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.13, 2026-09-17
+Version: v1.14, 2026-09-18
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
@@ -209,7 +209,9 @@ Linux editor integrations share `lyn-context-v1.sock`. Heartbeats remain protoco
 
 Linux terminal integrations share `lyn-shell-v1.sock`. Kitty heartbeats remain `{version: 1, terminalSessionId, processId, state}`. A Kitty-originated capture uses `{version: 2, kind: "invoke", requestId, terminalSessionId, processId}`. Rust assigns the OS window at receive time, validates the same-user process, and derives cwd from `/proc`. A generic shell observation for a Kitty window that already has an exact pane mapping is ignored. A generic shell Live names the helper-bound OS window; Rust classifies that window even if Lyn has already taken focus, and a global shortcut while Lyn is focused reuses that last terminal window instead of dropping automatic context.
 
-Linux capture entry points are distinct. Integrations (VS Code, Cursor, Kitty) invoke with `Control+Alt+Shift+L` on a private socket and receive v2 generation guarantees. The Settings global shortcut (default `Control+Shift+Space`) samples the pre-popup X11 window and must not use the integration combination. A global invoke without a verified live source for that window resolves as required (ERR-003); it MUST NOT promote a later heartbeat to exact proof.
+Linux browser integrations share `lyn-browser-v1.sock`. Heartbeats remain protocol v1 `{version, instanceId, state, url, incognito}`. A browser-originated capture uses protocol v2 `{version: 2, kind: "invoke", instanceId, requestId, url, incognito}`. Only sanitized `file:` and localhost-family URLs (`localhost`, `127.0.0.1`, `::1`) are correlation hints; query strings, fragments, titles, incognito tabs, and remote sites are omitted. Rust assigns the OS window at receive time; client payloads MUST NOT include native window or process identifiers (including a `cwd` field). The Linux Unix channel checks the peer user id, a read deadline, and a max message size before parsing; a replayed v2 `requestId` is ignored. Localhost port mapping requires exactly one same-user process working directory after skipping `docker-proxy`. IPv4 and IPv6 listen sockets that resolve to the same directory are one source. Multiple distinct cwds, a proxy/Docker listener without a unique remaining project directory, or a remote URL stay unresolved (Required), not a first-PID guess.
+
+Linux capture entry points are distinct. Editor and terminal integrations (VS Code, Cursor, Kitty) invoke with `Control+Alt+Shift+L` on a private socket and receive v2 generation guarantees. The browser companion suggests `Alt+Shift+L` because Chromium forbids `Ctrl+Alt+*` as a suggested command key; Firefox MV3 uses `background.scripts` rather than a service worker. The Settings global shortcut (default `Control+Shift+Space`) samples the pre-popup X11 window and must not use the integration combination. A global invoke without a verified live source for that window resolves as required (ERR-003); it MUST NOT promote a later heartbeat to exact proof.
 
 ## Capture Session Commands
 

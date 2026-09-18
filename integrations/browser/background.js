@@ -1,4 +1,8 @@
 // Lyn Browser Context Companion (Manifest V3)
+if (typeof importScripts === 'function') {
+  importScripts('sanitize.js');
+}
+
 const HOST_NAME = 'com.mibienpanjoe.lyn';
 
 let instanceId = null;
@@ -10,52 +14,15 @@ function getInstanceId() {
   return instanceId;
 }
 
-function sanitizeUrl(rawUrl) {
-  if (typeof rawUrl !== 'string' || !rawUrl) {
-    return null;
-  }
-
-  try {
-    const parsed = new URL(rawUrl);
-    if (
-      parsed.protocol !== 'http:' &&
-      parsed.protocol !== 'https:' &&
-      parsed.protocol !== 'file:'
-    ) {
-      return null;
-    }
-
-    if (parsed.protocol === 'file:') {
-      return `file://${parsed.pathname}`;
-    }
-
-    const portPart = parsed.port ? `:${parsed.port}` : '';
-    return `${parsed.protocol}//${parsed.hostname}${portPart}${parsed.pathname}`;
-  } catch {
-    return null;
-  }
-}
-
-function sendObservation(state, tab = {}) {
-  if (tab.incognito) {
-    return;
-  }
-
-  const cleanUrl = state === 'ended' ? null : sanitizeUrl(tab.url);
-
-  const payload = {
-    version: 1,
-    instanceId: getInstanceId(),
-    state,
-    url: cleanUrl,
-    title: state === 'ended' ? null : tab.title || null,
-    incognito: false,
-  };
-
+function sendNative(payload) {
   chrome.runtime.sendNativeMessage(HOST_NAME, payload, () => {
     // Ignore runtime errors if desktop host is offline
     void chrome.runtime.lastError;
   });
+}
+
+function sendObservation(state, tab = {}) {
+  sendNative(createBrowserObservation(getInstanceId(), state, tab));
 }
 
 function reportActiveTab(state = 'focused') {
@@ -63,6 +30,12 @@ function reportActiveTab(state = 'focused') {
     if (tabs && tabs[0]) {
       sendObservation(state, tabs[0]);
     }
+  });
+}
+
+function invokeFromFocusedTab() {
+  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+    sendNative(createBrowserInvoke(getInstanceId(), (tabs && tabs[0]) || {}));
   });
 }
 
@@ -81,6 +54,12 @@ chrome.tabs.onActivated.addListener(() => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (tab.active && (changeInfo.status === 'complete' || changeInfo.url)) {
     sendObservation('focused', tab);
+  }
+});
+
+chrome.commands.onCommand.addListener((command) => {
+  if (command === 'lyn.capture') {
+    invokeFromFocusedTab();
   }
 });
 

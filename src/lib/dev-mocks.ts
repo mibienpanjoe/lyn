@@ -490,7 +490,7 @@ let devIntegrations: IntegrationStatus[] = [
     id: 'browser',
     name: 'Web Browser (Chrome, Brave, Edge, Firefox)',
     description:
-      'Correlates active localhost development tabs with your repository context.',
+      'Captures from the focused tab; localhost maps to a project only when one local process directory is proven.',
     detected: true,
     installed: false,
     details: 'Supported web browser detected',

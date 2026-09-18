@@ -19,8 +19,10 @@ const KITTY_CAPTURE_PY: &str = include_str!("../../../integrations/kitty/lyn_cap
 const SHELL_BOOTSTRAP_SH: &str = include_str!("../../../integrations/shell/lyn-context.sh");
 
 const BROWSER_MANIFEST_JSON: &str = include_str!("../../../integrations/browser/manifest.json");
+const BROWSER_FIREFOX_MANIFEST_JSON: &str =
+    include_str!("../../../integrations/browser/manifest.firefox.json");
 const BROWSER_BACKGROUND_JS: &str = include_str!("../../../integrations/browser/background.js");
-const BROWSER_SANITIZE_CJS: &str = include_str!("../../../integrations/browser/sanitize.cjs");
+const BROWSER_SANITIZE: &str = include_str!("../../../integrations/browser/sanitize.cjs");
 
 pub(crate) const CHROMIUM_EXTENSION_ID: &str = "aecihlceemkggejjmpphmnhpdcgnhife";
 pub(crate) const FIREFOX_ADDON_ID: &str = "lyn-context-provider@mibienpanjoe.com";
@@ -230,8 +232,9 @@ pub(crate) fn browser_status(home: &Path) -> IntegrationStatus {
     IntegrationStatus {
         id: IntegrationId::Browser,
         name: "Web Browser (Chrome, Brave, Edge, Firefox)".to_owned(),
-        description: "Correlates active localhost development tabs with your repository context."
-            .to_owned(),
+        description:
+            "Captures from the focused tab; localhost maps to a project only when one local process directory is proven."
+                .to_owned(),
         detected,
         installed,
         details,
@@ -578,11 +581,22 @@ fn install_browser(home: &Path) -> InstallIntegrationResult {
             installed: false,
         };
     }
-    if let Err(e) = fs::write(unpacked_dir.join("sanitize.cjs"), BROWSER_SANITIZE_CJS) {
+    if let Err(e) = fs::write(unpacked_dir.join("sanitize.js"), BROWSER_SANITIZE) {
         return InstallIntegrationResult {
             id: IntegrationId::Browser,
             success: false,
             message: format!("Failed to write extension sanitize script: {e}"),
+            installed: false,
+        };
+    }
+    if let Err(e) = fs::write(
+        unpacked_dir.join("manifest.firefox.json"),
+        BROWSER_FIREFOX_MANIFEST_JSON,
+    ) {
+        return InstallIntegrationResult {
+            id: IntegrationId::Browser,
+            success: false,
+            message: format!("Failed to write Firefox extension manifest: {e}"),
             installed: false,
         };
     }
@@ -928,6 +942,38 @@ mod tests {
             FIREFOX_ADDON_ID
         );
         assert!(manifest_json["key"].is_string());
+        assert_eq!(
+            manifest_json["commands"]["lyn.capture"]["suggested_key"]["default"],
+            "Alt+Shift+L"
+        );
+        assert_eq!(
+            manifest_json["background"]["service_worker"],
+            "background.js"
+        );
+
+        let firefox_unpacked = home
+            .join(".local/share/lyn/integrations/browser")
+            .join("manifest.firefox.json");
+        assert!(firefox_unpacked.is_file());
+        let firefox_extension: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&firefox_unpacked).unwrap()).unwrap();
+        assert_eq!(
+            firefox_extension["browser_specific_settings"]["gecko"]["id"],
+            FIREFOX_ADDON_ID
+        );
+        assert_eq!(
+            firefox_extension["background"]["scripts"],
+            serde_json::json!(["sanitize.js", "background.js"])
+        );
+        assert!(
+            firefox_extension["background"]
+                .get("service_worker")
+                .is_none()
+        );
+        assert_eq!(
+            firefox_extension["commands"]["lyn.capture"]["suggested_key"]["default"],
+            "Alt+Shift+L"
+        );
     }
 
     #[test]

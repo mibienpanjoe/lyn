@@ -117,7 +117,7 @@ const en: Translations = {
 
   quickCaptureTitle: 'Quick capture',
   quickCaptureSubtitle:
-    'Opens Lyn from any app. Editor, Cursor, and Kitty use a separate shortcut: Ctrl+Alt+Shift+L.',
+    'Opens Lyn from any app. Editor, Cursor, and Kitty use Ctrl+Alt+Shift+L. The browser companion uses Alt+Shift+L.',
   globalShortcutLabel: 'Global shortcut',
   changeShortcut: 'Change shortcut',
   done: 'Done',
@@ -155,7 +155,7 @@ const en: Translations = {
     cursor: 'Reports the focused Cursor workspace folder to Lyn on capture.',
     vscode: 'Reports the focused VS Code workspace folder to Lyn on capture.',
     browser:
-      'Correlates active localhost development tabs with your repository context.',
+      'Captures from the focused tab; localhost maps to a project only when one local process directory is proven.',
     kitty:
       'Monitors exact focused terminal pane without inspecting commands or output.',
     shell:
@@ -236,7 +236,7 @@ const fr: Translations = {
 
   quickCaptureTitle: 'Capture rapide',
   quickCaptureSubtitle:
-    'Ouvre Lyn depuis n’importe quelle application. L’éditeur, Cursor et Kitty ont un raccourci distinct : Ctrl+Alt+Shift+L.',
+    'Ouvre Lyn depuis n’importe quelle application. L’éditeur, Cursor et Kitty utilisent Ctrl+Alt+Shift+L. Le compagnon navigateur utilise Alt+Shift+L.',
   globalShortcutLabel: 'Raccourci global',
   changeShortcut: 'Modifier le raccourci',
   done: 'Terminé',
@@ -276,7 +276,7 @@ const fr: Translations = {
     vscode:
       'Transmet le dossier de travail VS Code actif à Lyn lors de la capture.',
     browser:
-      'Associe les onglets de développement localhost actifs au contexte de votre dépôt.',
+      'Capture depuis l’onglet focalisé ; localhost n’est lié à un projet que si un seul répertoire de processus est prouvé.',
     kitty:
       'Surveille le volet de terminal actif sans inspecter les commandes ni les sorties.',
     shell: 'Associe GNOME Terminal et les shells externes au dépôt Git actuel.',
