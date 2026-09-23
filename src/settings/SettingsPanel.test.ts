@@ -352,7 +352,8 @@ describe('Settings', () => {
             'Reports the focused VS Code workspace folder to Lyn on capture.',
           detected: true,
           installed: true,
-          details: 'Extension active in ~/.vscode/extensions/',
+          details:
+            'Extension files installed. Live connection and capture are not verified; reload VS Code, then invoke Lyn from an editor.',
         },
       ]),
       install: installMock,

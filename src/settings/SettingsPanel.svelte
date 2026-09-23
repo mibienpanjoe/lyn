@@ -395,7 +395,22 @@
         'Shell startup script configured',
         'Script de démarrage du terminal configuré',
       )
-      .replace('Extension active in', 'Extension active dans')
+      .replace(
+        'Extension files installed. Live connection and capture are not verified; reload Cursor, then invoke Lyn from an editor.',
+        'Fichiers de l’extension installés. Connexion et capture non vérifiées ; rechargez Cursor, puis invoquez Lyn depuis un éditeur.',
+      )
+      .replace(
+        'Extension files installed. Live connection and capture are not verified; reload VS Code, then invoke Lyn from an editor.',
+        'Fichiers de l’extension installés. Connexion et capture non vérifiées ; rechargez VS Code, puis invoquez Lyn depuis un éditeur.',
+      )
+      .replace(
+        'Older extension files found. Reinstall from Lyn, then reload Cursor.',
+        'Ancienne extension détectée. Réinstallez depuis Lyn, puis rechargez Cursor.',
+      )
+      .replace(
+        'Older extension files found. Reinstall from Lyn, then reload VS Code.',
+        'Ancienne extension détectée. Réinstallez depuis Lyn, puis rechargez VS Code.',
+      )
       .replace('Watcher configured in', 'Watcher configuré dans');
   }
 </script>

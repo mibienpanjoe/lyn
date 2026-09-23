@@ -27,7 +27,6 @@ const BROWSER_SANITIZE: &str = include_str!("../../../integrations/browser/sanit
 pub(crate) const CHROMIUM_EXTENSION_ID: &str = "aecihlceemkggejjmpphmnhpdcgnhife";
 pub(crate) const FIREFOX_ADDON_ID: &str = "lyn-context-provider@mibienpanjoe.com";
 
-const EXTENSION_FOLDER_NAME: &str = "mibienpanjoe.lyn-context-provider-0.1.1";
 const NATIVE_HOST_NAME: &str = "com.mibienpanjoe.lyn.json";
 
 pub(crate) fn chromium_manifest_content(host_bin_str: &str) -> String {
@@ -103,8 +102,44 @@ fn has_extension_installed(extensions_dir: &Path) -> bool {
     false
 }
 
+fn extension_folder_name() -> Result<String, String> {
+    let package: serde_json::Value = serde_json::from_str(EXTENSION_PACKAGE_JSON)
+        .map_err(|error| format!("Invalid embedded extension package: {error}"))?;
+    let publisher = package["publisher"]
+        .as_str()
+        .ok_or("Embedded extension package has no publisher")?;
+    let name = package["name"]
+        .as_str()
+        .ok_or("Embedded extension package has no name")?;
+    let version = package["version"]
+        .as_str()
+        .ok_or("Embedded extension package has no version")?;
+    Ok(format!("{publisher}.{name}-{version}"))
+}
+
+fn has_current_extension_installed(extensions_dir: &Path) -> bool {
+    let Ok(folder_name) = extension_folder_name() else {
+        return false;
+    };
+    let Ok(expected) = serde_json::from_str::<serde_json::Value>(EXTENSION_PACKAGE_JSON) else {
+        return false;
+    };
+    let path = extensions_dir.join(folder_name);
+    let package_matches = fs::read_to_string(path.join("package.json"))
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .is_some_and(|installed| {
+            ["publisher", "name", "version"]
+                .into_iter()
+                .all(|field| installed[field] == expected[field])
+        });
+    package_matches
+        && path.join("extension.cjs").is_file()
+        && path.join("observation.cjs").is_file()
+}
+
 fn install_vscode_style_extension(extensions_dir: &Path) -> Result<PathBuf, String> {
-    let target_dir = extensions_dir.join(EXTENSION_FOLDER_NAME);
+    let target_dir = extensions_dir.join(extension_folder_name()?);
     fs::create_dir_all(&target_dir)
         .map_err(|e| format!("Could not create directory {}: {e}", target_dir.display()))?;
 
@@ -142,10 +177,13 @@ pub(crate) fn cursor_status(home: &Path) -> IntegrationStatus {
     let detected = cursor_dir.is_dir() || cursor_config.is_dir() || command_exists("cursor");
 
     let extensions_dir = cursor_dir.join("extensions");
-    let installed = has_extension_installed(&extensions_dir);
+    let installed = has_current_extension_installed(&extensions_dir);
+    let older_installed = !installed && has_extension_installed(&extensions_dir);
 
     let details = if installed {
-        Some("Extension active in ~/.cursor/extensions/".to_owned())
+        Some("Extension files installed. Live connection and capture are not verified; reload Cursor, then invoke Lyn from an editor.".to_owned())
+    } else if older_installed {
+        Some("Older extension files found. Reinstall from Lyn, then reload Cursor.".to_owned())
     } else if detected {
         Some("Cursor detected on this system".to_owned())
     } else {
@@ -168,10 +206,13 @@ pub(crate) fn vscode_status(home: &Path) -> IntegrationStatus {
     let detected = vscode_dir.is_dir() || vscode_config.is_dir() || command_exists("code");
 
     let extensions_dir = vscode_dir.join("extensions");
-    let installed = has_extension_installed(&extensions_dir);
+    let installed = has_current_extension_installed(&extensions_dir);
+    let older_installed = !installed && has_extension_installed(&extensions_dir);
 
     let details = if installed {
-        Some("Extension active in ~/.vscode/extensions/".to_owned())
+        Some("Extension files installed. Live connection and capture are not verified; reload VS Code, then invoke Lyn from an editor.".to_owned())
+    } else if older_installed {
+        Some("Older extension files found. Reinstall from Lyn, then reload VS Code.".to_owned())
     } else if detected {
         Some("VS Code detected on this system".to_owned())
     } else {
@@ -439,7 +480,7 @@ fn install_cursor(home: &Path) -> InstallIntegrationResult {
             id: IntegrationId::Cursor,
             success: false,
             message: err,
-            installed: has_extension_installed(&cursor_ext_dir),
+            installed: has_current_extension_installed(&cursor_ext_dir),
         },
     }
 }
@@ -460,7 +501,7 @@ fn install_vscode(home: &Path) -> InstallIntegrationResult {
             id: IntegrationId::Vscode,
             success: false,
             message: err,
-            installed: has_extension_installed(&vscode_ext_dir),
+            installed: has_current_extension_installed(&vscode_ext_dir),
         },
     }
 }
@@ -839,6 +880,72 @@ mod tests {
         // Remove package.json: missing package.json
         fs::remove_file(target_dir.join("package.json")).unwrap();
         assert!(!has_extension_installed(&ext_dir));
+    }
+
+    #[test]
+    fn extension_install_directory_matches_embedded_package_version() {
+        let temp = tempdir().unwrap();
+        let extensions = temp.path().join("extensions");
+        let installed = install_vscode_style_extension(&extensions).unwrap();
+        let package: serde_json::Value = serde_json::from_str(EXTENSION_PACKAGE_JSON).unwrap();
+        let version = package["version"].as_str().unwrap();
+
+        assert_eq!(
+            installed.file_name().unwrap().to_string_lossy(),
+            format!("mibienpanjoe.lyn-context-provider-{version}")
+        );
+    }
+
+    #[test]
+    fn installed_editor_status_does_not_claim_a_live_connection() {
+        let temp = tempdir().unwrap();
+        assert!(install_vscode(temp.path()).success);
+        let status = vscode_status(temp.path());
+
+        assert!(status.installed);
+        assert!(status.details.unwrap().contains("not verified"));
+    }
+
+    #[test]
+    fn older_extension_files_need_an_update_before_reporting_current() {
+        let temp = tempdir().unwrap();
+        let extensions = temp.path().join(".vscode/extensions");
+        let legacy = extensions.join("mibienpanjoe.lyn-context-provider-0.1.1");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("package.json"), r#"{"version":"0.1.1"}"#).unwrap();
+        fs::write(legacy.join("extension.cjs"), "// old extension").unwrap();
+        fs::write(legacy.join("observation.cjs"), "// old observation").unwrap();
+
+        let before = vscode_status(temp.path());
+        assert!(!before.installed);
+        assert!(before.details.unwrap().contains("Older"));
+
+        assert!(install_vscode(temp.path()).success);
+        assert!(vscode_status(temp.path()).installed);
+    }
+
+    #[test]
+    fn reinstalling_integrations_preserves_custom_terminal_configuration() {
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let kitty_conf = home.join(".config/kitty/kitty.conf");
+        fs::create_dir_all(kitty_conf.parent().unwrap()).unwrap();
+        fs::write(&kitty_conf, "map ctrl+shift+y new_tab\n").unwrap();
+        let bashrc = home.join(".bashrc");
+        fs::write(&bashrc, "alias keepme='echo local'\n").unwrap();
+
+        for _ in 0..2 {
+            assert!(install_kitty(home).success);
+            assert!(install_shell(home).success);
+        }
+
+        let kitty = fs::read_to_string(kitty_conf).unwrap();
+        assert!(kitty.contains("map ctrl+shift+y new_tab"));
+        assert_eq!(kitty.matches("watcher ").count(), 1);
+        assert_eq!(kitty.matches("map ctrl+alt+shift+l kitten ").count(), 1);
+        let bash = fs::read_to_string(bashrc).unwrap();
+        assert!(bash.contains("alias keepme='echo local'"));
+        assert_eq!(bash.matches("# Lyn Context Provider").count(), 1);
     }
 
     #[test]
