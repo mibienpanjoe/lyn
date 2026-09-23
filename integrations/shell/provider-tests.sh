@@ -41,6 +41,23 @@ watcher_pid=
 unset LYN_CONTEXT_WATCHER_PID
 rm -f -- "$log"
 
+# GNOME Terminal can inherit Kitty's environment from the process that
+# launched its server. Its own shell must still get a watcher.
+export KITTY_WINDOW_ID=42
+export GNOME_TERMINAL_SCREEN=/org/gnome/Terminal/screen/test
+source "$integration_dir/lyn-context.sh"
+watcher_pid=$LYN_CONTEXT_WATCHER_PID
+for _ in {1..20}; do
+  [[ -f "$log" ]] && break
+  sleep 0.01
+done
+[[ $(<"$log") == "watch --process $$" ]]
+kill "$watcher_pid"
+wait "$watcher_pid" 2>/dev/null || true
+watcher_pid=
+unset GNOME_TERMINAL_SCREEN LYN_CONTEXT_WATCHER_PID
+rm -f -- "$log"
+
 export KITTY_WINDOW_ID=42
 source "$integration_dir/lyn-context.sh"
 [[ ! -e "$log" ]]

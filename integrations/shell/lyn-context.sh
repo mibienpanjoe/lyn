@@ -27,9 +27,10 @@ _lyn_resolve_context_helper() {
 }
 
 _lyn_start_context_provider() {
-  # Kitty uses its exact-pane watcher; running the generic observer as well
-  # would create duplicate candidates for the same terminal pane.
-  if [ -n "${KITTY_WINDOW_ID:-}" ]; then
+  # Kitty uses its exact-pane watcher. GNOME Terminal may inherit Kitty's
+  # environment from the process that launched its server, so its own screen
+  # marker takes precedence over the inherited Kitty marker.
+  if [ -n "${KITTY_WINDOW_ID:-}" ] && [ -z "${GNOME_TERMINAL_SCREEN:-}" ]; then
     return
   fi
 

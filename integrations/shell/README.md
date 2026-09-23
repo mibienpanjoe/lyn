@@ -10,6 +10,6 @@ Contributor checks from the repository root:
 pnpm provider:terminal:test
 ```
 
-The bootstrap skips Kitty because [`../kitty/lyn_context_watcher.py`](../kitty/lyn_context_watcher.py) provides stronger exact-pane evidence there.
+The bootstrap skips Kitty because [`../kitty/lyn_context_watcher.py`](../kitty/lyn_context_watcher.py) provides stronger exact-pane evidence there. GNOME Terminal can inherit Kitty's environment variables from the process that started its server; the bootstrap recognizes GNOME Terminal's own screen marker so this does not suppress its helper. If a Kitty shell inherits a GNOME marker, Rust still rejects generic shell observations from the Kitty window.
 
 One GNOME Terminal window or one VS Code integrated-terminal session can resolve automatically. When multiple generic terminal tabs or integrated terminals share one OS window, Lyn returns ambiguity instead of guessing which session is active.

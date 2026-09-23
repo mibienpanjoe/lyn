@@ -519,7 +519,9 @@ fn apply_message(
             let Some((active_window_id, window_kind)) = active_window else {
                 return false;
             };
-            if active_window_id != message.window_id {
+            // Kitty's pane watcher owns this window even if an inherited
+            // GNOME marker caused the generic shell bootstrap to start.
+            if active_window_id != message.window_id || window_kind == ContextWindowKind::Kitty {
                 return false;
             }
             let proposed = ShellSessionBinding {
@@ -558,11 +560,11 @@ fn apply_message(
             ContextProviderKind::Cursor,
             ProviderSourceKind::CursorIntegratedTerminal,
         ),
-        ContextWindowKind::GnomeTerminal | ContextWindowKind::Kitty => (
+        ContextWindowKind::GnomeTerminal => (
             ContextProviderKind::Shell,
             ProviderSourceKind::ExternalTerminal,
         ),
-        ContextWindowKind::Browser => return false,
+        ContextWindowKind::Kitty | ContextWindowKind::Browser => return false,
     };
     let directory = match message.state {
         ShellState::Live => {
@@ -739,6 +741,24 @@ mod tests {
     }
 
     #[test]
+    fn generic_shell_cannot_claim_a_kitty_window_even_with_inherited_gnome_marker() {
+        let directory = tempdir().unwrap();
+        let now = Instant::now();
+        let mut registry = ContextSourceRegistry::default();
+        let mut sessions = HashMap::new();
+
+        assert!(!apply_message(
+            &mut registry,
+            &mut sessions,
+            live_message(std::process::id(), 74),
+            Some((74, ContextWindowKind::Kitty)),
+            Some(directory.path().to_path_buf()),
+            now,
+        ));
+        assert!(registry.live_sources(now).is_empty());
+    }
+
+    #[test]
     fn attested_terminal_window_is_used_when_lyn_has_already_taken_focus() {
         assert_eq!(
             observation_window(
@@ -786,7 +806,7 @@ mod tests {
                 &mut registry,
                 &mut sessions,
                 live_message(std::process::id(), 75),
-                Some((75, ContextWindowKind::Kitty)),
+                Some((75, ContextWindowKind::GnomeTerminal)),
                 Some(directory.to_path_buf()),
                 now,
             ));
