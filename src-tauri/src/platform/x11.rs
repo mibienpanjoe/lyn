@@ -252,11 +252,11 @@ pub(crate) fn active_context_window() -> Result<(u32, ContextWindowKind), Platfo
     remember_active_context_window(window, &window_class)
 }
 
-// Editors and browsers bind one OS window per extension instance. Substituting
-// the last context window while Lyn is focused would remap Cursor/VS Code
-// workspaces onto whichever window happened to be remembered (often another
-// project). Only the shell helper may use that substitution.
-fn current_context_window() -> Result<(u32, ContextWindowKind), PlatformError> {
+// New editor/browser/shell bindings require the actual foreground window.
+// Substituting Lyn's remembered window could bind a new source to a different
+// project. Existing shell observations can still use active_context_window
+// while the popup owns focus because their window binding is already fixed.
+pub(crate) fn current_context_window() -> Result<(u32, ContextWindowKind), PlatformError> {
     let (window, window_class) = active_window_class()?;
     bind_current_context_window(window, &window_class)
 }

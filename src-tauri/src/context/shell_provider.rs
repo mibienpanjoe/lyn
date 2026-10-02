@@ -199,7 +199,9 @@ fn run(listener: UnixListener, app: AppHandle, runtime_uid: u32) {
                                 Instant::now(),
                             );
                             if changed && live {
-                                if let Some((id, kind)) = active_window {
+                                if let Some((id, kind)) =
+                                    foreground_shell_window(current, active_window)
+                                {
                                     crate::platform::x11::remember_context_window(id, kind);
                                 }
                             }
@@ -257,6 +259,13 @@ fn shell_observation_superseded_by_kitty(
     active_kitty_panes: &HashMap<u32, u64>,
 ) -> bool {
     window_kind == ContextWindowKind::Kitty && active_kitty_panes.contains_key(&window_id)
+}
+
+fn foreground_shell_window(
+    current: Option<(u32, ContextWindowKind)>,
+    observed: Option<(u32, ContextWindowKind)>,
+) -> Option<(u32, ContextWindowKind)> {
+    current.filter(|window| Some(*window) == observed)
 }
 
 fn apply_kitty_message(
@@ -460,35 +469,58 @@ fn watch_shell(arguments: Vec<std::ffi::OsString>) -> Result<(), ()> {
     let process = fs::metadata(&process_path).map_err(|_| ())?;
     let process_uid = process.uid();
     let process_inode = process.ino();
-    let (window_id, _) = crate::platform::x11::active_context_window().map_err(|_| ())?;
+    // A new helper has no binding yet. Lyn's remembered foreground window
+    // must not attach a newly started shell to a different terminal.
+    let (window_id, _) = crate::platform::x11::current_context_window().map_err(|_| ())?;
     let session_id = Uuid::new_v4();
 
+    watch_shell_session(
+        session_id,
+        process_id,
+        window_id,
+        || {
+            fs::metadata(&process_path).is_ok_and(|metadata| {
+                metadata.uid() == process_uid && metadata.ino() == process_inode
+            })
+        },
+        |message| {
+            let _ = send_message(message);
+        },
+        || thread::sleep(HEARTBEAT_INTERVAL),
+    );
+    Ok(())
+}
+
+fn watch_shell_session(
+    session_id: Uuid,
+    process_id: u32,
+    window_id: u32,
+    mut process_is_same: impl FnMut() -> bool,
+    mut publish: impl FnMut(&ShellObservationMessage),
+    mut wait: impl FnMut(),
+) {
     loop {
-        let process_is_same = fs::metadata(&process_path)
-            .is_ok_and(|metadata| metadata.uid() == process_uid && metadata.ino() == process_inode);
-        if !process_is_same {
-            let _ = send_message(&ShellObservationMessage {
+        if !process_is_same() {
+            publish(&ShellObservationMessage {
                 version: 1,
                 session_id,
                 process_id,
                 window_id,
                 state: ShellState::Ended,
             });
-            return Ok(());
+            return;
         }
 
-        if crate::platform::x11::active_context_window()
-            .is_ok_and(|(active_window, _)| active_window == window_id)
-        {
-            let _ = send_message(&ShellObservationMessage {
-                version: 1,
-                session_id,
-                process_id,
-                window_id,
-                state: ShellState::Live,
-            });
-        }
-        thread::sleep(HEARTBEAT_INTERVAL);
+        // Liveness belongs to the bound shell, not to OS focus. Otherwise an
+        // idle terminal expires and a fast invocation races the next heartbeat.
+        publish(&ShellObservationMessage {
+            version: 1,
+            session_id,
+            process_id,
+            window_id,
+            state: ShellState::Live,
+        });
+        wait();
     }
 }
 
@@ -606,10 +638,11 @@ fn apply_message(
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::{Cell, RefCell},
         collections::HashMap,
         fs,
         os::unix::fs::{MetadataExt, symlink},
-        time::Instant,
+        time::{Duration, Instant},
     };
 
     use tempfile::tempdir;
@@ -618,7 +651,7 @@ mod tests {
     use crate::{
         context::{
             resolver::{InvocationAssociations, ResolutionOutcome, classify, resolve},
-            session_registry::ContextSourceRegistry,
+            session_registry::{ContextSourceRegistry, LIVE_SOURCE_TTL},
         },
         contract::ContextProviderKind,
         platform::{WindowCorrelationToken, x11::ContextWindowKind},
@@ -626,8 +659,9 @@ mod tests {
 
     use super::{
         KittyObservationMessage, KittyState, ShellObservationMessage, ShellState,
-        TerminalObservationMessage, apply_kitty_message, apply_message, observation_window,
-        process_directory_at, shell_observation_superseded_by_kitty,
+        TerminalObservationMessage, apply_kitty_message, apply_message, foreground_shell_window,
+        observation_window, process_directory_at, shell_observation_superseded_by_kitty,
+        watch_shell_session,
     };
 
     fn live_message(process_id: u32, window_id: u32) -> ShellObservationMessage {
@@ -638,6 +672,76 @@ mod tests {
             window_id,
             state: ShellState::Live,
         }
+    }
+
+    #[test]
+    fn background_shell_heartbeats_keep_the_bound_source_live_past_the_ttl() {
+        let directory = tempdir().unwrap();
+        let initial = Instant::now();
+        let clock = Cell::new(initial);
+        let registry = RefCell::new(ContextSourceRegistry::default());
+        let mut sessions = HashMap::new();
+        let message = live_message(std::process::id(), u32::MAX);
+        let session_id = message.session_id;
+        let process_id = message.process_id;
+        let window_id = message.window_id;
+        let bound_window = Some((window_id, ContextWindowKind::GnomeTerminal));
+        assert!(apply_message(
+            &mut registry.borrow_mut(),
+            &mut sessions,
+            message,
+            bound_window,
+            Some(directory.path().to_path_buf()),
+            initial,
+        ));
+
+        // The synthetic bound window can never be the actual X11 foreground.
+        // Run the production producer with fake time, keeping the process alive
+        // longer than one TTL before ending it.
+        watch_shell_session(
+            session_id,
+            process_id,
+            window_id,
+            || clock.get() < initial + LIVE_SOURCE_TTL + Duration::from_secs(12),
+            |message| {
+                let message =
+                    serde_json::from_slice(&serde_json::to_vec(message).unwrap()).unwrap();
+                apply_message(
+                    &mut registry.borrow_mut(),
+                    &mut sessions,
+                    message,
+                    bound_window,
+                    Some(directory.path().to_path_buf()),
+                    clock.get(),
+                );
+            },
+            || {
+                clock.set(clock.get() + super::HEARTBEAT_INTERVAL);
+                if clock.get() == initial + LIVE_SOURCE_TTL + Duration::from_secs(10) {
+                    let mut registry = registry.borrow_mut();
+                    let sources = registry.live_sources(clock.get());
+                    assert_eq!(
+                        sources.len(),
+                        1,
+                        "live background shell expired before invocation"
+                    );
+                    assert_eq!(
+                        sources[0].window(),
+                        Some(WindowCorrelationToken::from_native(u64::from(window_id)))
+                    );
+                }
+            },
+        );
+        assert!(registry.borrow_mut().live_sources(clock.get()).is_empty());
+    }
+
+    #[test]
+    fn background_shell_cannot_replace_the_remembered_foreground_window() {
+        let foreground = Some((71, ContextWindowKind::GnomeTerminal));
+        let background = Some((72, ContextWindowKind::GnomeTerminal));
+        assert_eq!(foreground_shell_window(foreground, background), None);
+        assert_eq!(foreground_shell_window(None, background), None);
+        assert_eq!(foreground_shell_window(foreground, foreground), foreground);
     }
 
     #[test]
