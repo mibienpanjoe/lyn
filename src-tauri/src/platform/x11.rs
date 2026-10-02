@@ -312,6 +312,7 @@ fn context_window_kind(window_class: &[u8]) -> Option<ContextWindowKind> {
         .filter(|part| !part.is_empty())
         .find_map(|part| {
             if part.eq_ignore_ascii_case(b"code")
+                || part.eq_ignore_ascii_case(b"com.microsoft.vscode")
                 || part.eq_ignore_ascii_case(b"code-insiders")
                 || part.eq_ignore_ascii_case(b"codium")
                 || part.eq_ignore_ascii_case(b"vscodium")
@@ -386,6 +387,18 @@ mod tests {
     };
 
     static ACTIVE_WINDOW_MEMO_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn accepts_installed_vscode_namespaced_class_without_substring_matching() {
+        assert_eq!(
+            context_window_kind(b"com.microsoft.vscode\0com.microsoft.VSCode\0"),
+            Some(ContextWindowKind::Vscode)
+        );
+        assert_eq!(
+            context_window_kind(b"other-com.microsoft.vscode\0Other\0"),
+            None
+        );
+    }
 
     #[test]
     fn accepts_supported_vscode_and_cursor_window_classes() {

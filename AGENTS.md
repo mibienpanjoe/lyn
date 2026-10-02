@@ -52,6 +52,8 @@ Use `rustfmt` and Prettier. Use `snake_case` for Rust modules/functions, `Pascal
 
 ## Testing Guidelines
 
+The X11 editor classifier accepts both legacy `Code` and the installed VS Code namespaced `com.microsoft.VSCode` WM_CLASS, by exact case-insensitive match. Do not broaden this to substring matching; confirm the actual class when validating a new editor package.
+
 Linux text, image, and audio saves share native shell source revalidation against the registered process uid/inode and current project directory, not only the heartbeat TTL. A closed or changed source must return `CONTEXT_SOURCE_STALE` without modifying the active draft or finalizing staged media. Tests cover each capture kind; packaged runtime acceptance is a separate check.
 
 Every behavior change must include tests at its owning boundary. Prioritize Rust domain tests, IPC serialization/negative tests, media recovery tests, and keyboard/accessibility UI tests. Follow the verification matrices in documents 05–07. Record commands once a runner exists.
