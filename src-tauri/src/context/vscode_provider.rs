@@ -33,7 +33,7 @@ use crate::{
 };
 
 const SOCKET_NAME: &str = "lyn-context-v1.sock";
-const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WindowState {
@@ -53,17 +53,23 @@ struct VscodeObservationMessage {
 pub(crate) fn start(app: AppHandle) -> io::Result<()> {
     let (path, expected_uid) = socket_path()?;
     prepare_socket_path(&path)?;
-    let listener = UnixListener::bind(&path)?;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-    listener.set_nonblocking(true)?;
+    let listener = bind_observation_listener(&path)?;
     thread::Builder::new()
         .name("lyn-vscode-provider".to_owned())
         .spawn(move || run(listener, app, expected_uid))?;
     Ok(())
 }
 
+fn bind_observation_listener(path: &Path) -> io::Result<UnixListener> {
+    let listener = UnixListener::bind(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    // Blocking accept wakes on a connection without an idle polling delay.
+    // Each accepted channel still has the bounded read deadline below.
+    Ok(listener)
+}
+
 fn run(listener: UnixListener, app: AppHandle, expected_uid: u32) {
-    debug_assert!(ACCEPT_POLL_INTERVAL < INVOKE_REPLY_BUDGET);
+    debug_assert!(ACCEPT_ERROR_BACKOFF < INVOKE_REPLY_BUDGET);
     let mut windows = HashMap::new();
     let mut last_v2_request: Option<Uuid> = None;
     let mut broker = InvocationBroker::default();
@@ -141,10 +147,8 @@ fn run(listener: UnixListener, app: AppHandle, expected_uid: u32) {
                     });
                 }
             }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                thread::sleep(ACCEPT_POLL_INTERVAL);
-            }
-            Err(_) => thread::sleep(ACCEPT_POLL_INTERVAL),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => thread::sleep(ACCEPT_ERROR_BACKOFF),
         }
     }
 }
@@ -466,6 +470,29 @@ mod tests {
 
     use tempfile::tempdir;
     use uuid::Uuid;
+
+    #[test]
+    fn editor_listener_waits_for_connections_without_a_polling_wakeup() {
+        use std::{os::unix::net::UnixStream, sync::mpsc, thread, time::Duration};
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("editor.sock");
+        let listener = super::bind_observation_listener(&path).unwrap();
+        let (send, receive) = mpsc::channel();
+        let accept = thread::spawn(move || send.send(listener.accept().map(|_| ())).unwrap());
+        // Nonblocking accept returns WouldBlock before any client exists.
+        assert!(matches!(
+            receive.recv_timeout(Duration::from_millis(30)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        let _stream = UnixStream::connect(path).unwrap();
+        assert!(
+            receive
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .is_ok()
+        );
+        accept.join().unwrap();
+    }
 
     use crate::{
         context::{

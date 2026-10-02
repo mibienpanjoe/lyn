@@ -54,6 +54,8 @@ Use `rustfmt` and Prettier. Use `snake_case` for Rust modules/functions, `Pascal
 
 The editor extension 0.1.3 contributes a `terminal.integrated.commandsToSkipShell` default containing `lyn.capture`; it never writes user settings. Explicit user/workspace routing overrides remain authoritative. Validate terminal invocation without a manually added skip-shell entry, including a terminal cwd different from the editor workspace.
 
+The editor broker uses blocking Unix `accept` rather than polling idle connections. Accepted messages retain their uid/size/read-deadline checks; only accept errors back off. Measure shortcut-to-input and shortcut-to-context separately on the current packaged binary before claiming latency budgets.
+
 The X11 editor classifier accepts both legacy `Code` and the installed VS Code namespaced `com.microsoft.VSCode` WM_CLASS, by exact case-insensitive match. Do not broaden this to substring matching; confirm the actual class when validating a new editor package.
 
 Linux text, image, and audio saves share native shell source revalidation against the registered process uid/inode and current project directory, not only the heartbeat TTL. A closed or changed source must return `CONTEXT_SOURCE_STALE` without modifying the active draft or finalizing staged media. Tests cover each capture kind; packaged runtime acceptance is a separate check.
