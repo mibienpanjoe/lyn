@@ -24,7 +24,9 @@
   ],
   "contributes": {
     "configurationDefaults": {
-      "terminal.integrated.commandsToSkipShell": ["lyn.capture"]
+      "terminal.integrated.commandsToSkipShell": [
+        "lyn.capture"
+      ]
     },
     "commands": [
       {
