@@ -120,6 +120,7 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 - [Requirements](docs/01_requirements_prd.md) · [SRS](docs/02_requirements_srs.md)
 - [Architecture](docs/05_architecture.md) · [IPC](docs/06_api_specification.md)
 - [Visual identity](docs/07_visual_identity.md)
+- [HEX (Anomaly) research note](docs/research_hex_anomaly.md)
 - [Contributor guidelines](AGENTS.md)
 
 ## License
