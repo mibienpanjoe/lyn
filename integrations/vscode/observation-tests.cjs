@@ -13,6 +13,13 @@ const {
 
 const instanceId = '7af0a690-8948-4f0a-b9f0-51e43c583efa';
 
+test('terminal shortcut skips the shell by default without writing user settings', () => {
+  const manifest = require('./package.json');
+  assert.deepEqual(manifest.contributes.configurationDefaults, {
+    'terminal.integrated.commandsToSkipShell': ['lyn.capture'],
+  });
+});
+
 function folder(scheme, fsPath) {
   return { uri: { scheme, fsPath } };
 }

@@ -16,6 +16,13 @@ commands, or output. Remote and multi-root workspaces are not selected
 automatically. The local shortcut is distinct from Lyn's global
 `Control+Shift+Space`.
 
+Version 0.1.3 makes `lyn.capture` skip the integrated shell by default, so its
+shortcut works while the terminal is focused without editing your settings.
+Existing user/workspace settings remain authoritative. If you customized
+`terminal.integrated.commandsToSkipShell`, include `lyn.capture` in that list;
+`terminal.integrated.sendKeybindingsToShell: true` intentionally sends shortcuts
+to the shell and must be disabled to use this terminal shortcut.
+
 Package and install the extension from the repository root:
 
 For VS Code:
