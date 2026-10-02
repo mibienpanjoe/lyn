@@ -84,9 +84,7 @@ function activate(context) {
           terminal: vscode.window.activeTerminal,
         },
       );
-      queue = queue
-        .catch(() => undefined)
-        .then(() => sendObservation(request));
+      queue = queue.catch(() => undefined).then(() => sendObservation(request));
       return queue;
     }),
   );

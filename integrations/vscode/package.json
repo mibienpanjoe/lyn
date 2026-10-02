@@ -35,14 +35,18 @@
         "key": "ctrl+alt+shift+l",
         "mac": "cmd+alt+shift+l",
         "when": "terminalFocus",
-        "args": { "surface": "terminal" }
+        "args": {
+          "surface": "terminal"
+        }
       },
       {
         "command": "lyn.capture",
         "key": "ctrl+alt+shift+l",
         "mac": "cmd+alt+shift+l",
         "when": "!terminalFocus && (editorTextFocus || filesExplorerFocus || !inQuickOpen)",
-        "args": { "surface": "editor" }
+        "args": {
+          "surface": "editor"
+        }
       }
     ]
   },

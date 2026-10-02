@@ -98,7 +98,9 @@ test('editor invoke ignores the last-used terminal cwd', () => {
     workspaceFolders: [folder('file', '/home/person/projects/lyn')],
     terminalFocused: false,
     terminal: {
-      shellIntegration: { cwd: { scheme: 'file', fsPath: '/tmp/other-project' } },
+      shellIntegration: {
+        cwd: { scheme: 'file', fsPath: '/tmp/other-project' },
+      },
       creationOptions: { cwd: '/tmp/stale-after-cd' },
     },
   });
@@ -106,7 +108,9 @@ test('editor invoke ignores the last-used terminal cwd', () => {
   assert.equal(
     focusedTerminalCwd(
       {
-        shellIntegration: { cwd: { scheme: 'file', fsPath: '/tmp/other-project' } },
+        shellIntegration: {
+          cwd: { scheme: 'file', fsPath: '/tmp/other-project' },
+        },
       },
       false,
     ),
