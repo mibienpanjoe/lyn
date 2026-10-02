@@ -325,12 +325,14 @@ pub(crate) fn save_image_capture(
     database: State<'_, Mutex<Database>>,
     service: State<'_, Mutex<CaptureSessionService>>,
     media_store: State<'_, Mutex<MediaStore>>,
+    registry: State<'_, Mutex<ContextSourceRegistry>>,
 ) -> CommandResult<SaveCaptureResult> {
-    save_image_capture_value(
+    save_image_capture_with_registry_value(
         input,
         database.inner(),
         service.inner(),
         media_store.inner(),
+        registry.inner(),
     )
 }
 
@@ -342,13 +344,15 @@ pub(crate) fn save_audio_capture(
     service: State<'_, Mutex<CaptureSessionService>>,
     media_store: State<'_, Mutex<MediaStore>>,
     speech: State<'_, crate::intelligence::model::SpeechModelManager>,
+    registry: State<'_, Mutex<ContextSourceRegistry>>,
 ) -> CommandResult<SaveCaptureResult> {
-    let result = save_audio_capture_value(
+    let result = save_audio_capture_with_registry_value(
         input,
         database.inner(),
         service.inner(),
         media_store.inner(),
         speech.installed(),
+        registry.inner(),
     );
     if matches!(&result, CommandResult::Success { data, .. } if data.enrichment_scheduled) {
         crate::spawn_enrichment_worker(app);
@@ -356,12 +360,31 @@ pub(crate) fn save_audio_capture(
     result
 }
 
+#[cfg(test)]
 fn save_audio_capture_value(
     input: serde_json::Value,
     database: &Mutex<Database>,
     service: &Mutex<CaptureSessionService>,
     media_store: &Mutex<MediaStore>,
     processor_available: bool,
+) -> CommandResult<SaveCaptureResult> {
+    save_audio_capture_with_registry_value(
+        input,
+        database,
+        service,
+        media_store,
+        processor_available,
+        &Mutex::new(ContextSourceRegistry::default()),
+    )
+}
+
+fn save_audio_capture_with_registry_value(
+    input: serde_json::Value,
+    database: &Mutex<Database>,
+    service: &Mutex<CaptureSessionService>,
+    media_store: &Mutex<MediaStore>,
+    processor_available: bool,
+    registry: &Mutex<ContextSourceRegistry>,
 ) -> CommandResult<SaveCaptureResult> {
     let Ok(input) = serde_json::from_value::<SaveAudioCaptureInput>(input) else {
         return CommandResult::failure(validation_error());
@@ -370,6 +393,11 @@ fn save_audio_capture_value(
     let Ok(mut service) = service.lock() else {
         return CommandResult::failure(internal_error());
     };
+    if let Err(error) =
+        refresh_selected_live_context(input.session_id, &mut service, database, registry)
+    {
+        return CommandResult::failure(error);
+    }
     match service.save_once(input.session_id, |session| {
         let crate::contract::ContextResolution::Resolved { candidate, .. } =
             &session.context_resolution
@@ -439,11 +467,28 @@ fn save_audio_capture_value(
     }
 }
 
+#[cfg(test)]
 fn save_image_capture_value(
     input: serde_json::Value,
     database: &Mutex<Database>,
     service: &Mutex<CaptureSessionService>,
     media_store: &Mutex<MediaStore>,
+) -> CommandResult<SaveCaptureResult> {
+    save_image_capture_with_registry_value(
+        input,
+        database,
+        service,
+        media_store,
+        &Mutex::new(ContextSourceRegistry::default()),
+    )
+}
+
+fn save_image_capture_with_registry_value(
+    input: serde_json::Value,
+    database: &Mutex<Database>,
+    service: &Mutex<CaptureSessionService>,
+    media_store: &Mutex<MediaStore>,
+    registry: &Mutex<ContextSourceRegistry>,
 ) -> CommandResult<SaveCaptureResult> {
     let Ok(input) = serde_json::from_value::<SaveImageCaptureInput>(input) else {
         return CommandResult::failure(validation_error());
@@ -452,6 +497,11 @@ fn save_image_capture_value(
     let Ok(mut service) = service.lock() else {
         return CommandResult::failure(internal_error());
     };
+    if let Err(error) =
+        refresh_selected_live_context(input.session_id, &mut service, database, registry)
+    {
+        return CommandResult::failure(error);
+    }
     match service.save_once(input.session_id, |session| {
         let crate::contract::ContextResolution::Resolved { candidate, .. } =
             &session.context_resolution
@@ -897,6 +947,78 @@ pub(crate) fn save_text_capture(
     )
 }
 
+fn refresh_selected_live_context(
+    session_id: crate::contract::CaptureSessionId,
+    service: &mut CaptureSessionService,
+    database: &Mutex<Database>,
+    registry: &Mutex<ContextSourceRegistry>,
+) -> Result<(), crate::error::AppError> {
+    if service
+        .active_session()
+        .is_none_or(|session| session.session_id != session_id)
+    {
+        return Err(stale_session_error());
+    }
+    if let Some(session) = service.active_session()
+        && let ContextResolution::Resolved {
+            selection: Some(ContextSelection::LiveSource { source_id }),
+            ..
+        } = session.context_resolution
+    {
+        let refreshed = {
+            let Ok(mut registry) = registry.lock() else {
+                return Err(internal_error());
+            };
+            registry
+                .revalidate(source_id, Instant::now())
+                .map(|source| {
+                    (
+                        source.context().clone(),
+                        source.identity().project_key.clone(),
+                        source.identity().project_path.clone(),
+                        source.identity().branch_name.clone(),
+                        source.provider(),
+                    )
+                })
+        };
+        let Some(refreshed) = refreshed else {
+            return Err(context_source_stale_error());
+        };
+        let context = {
+            let Ok(database) = database.lock() else {
+                return Err(internal_error());
+            };
+            match ContextRepository::new(database.connection()).ensure_project(
+                refreshed.0.id,
+                &refreshed.0.name,
+                refreshed.1.as_deref(),
+                &refreshed.2,
+            ) {
+                Ok(context) => context,
+                Err(_) => return Err(storage_unavailable_error()),
+            }
+        };
+        if service
+            .set_context_resolution(
+                session_id,
+                ContextResolution::Resolved {
+                    candidate: ContextCandidate {
+                        context,
+                        branch_name: refreshed.3,
+                        provider: refreshed.4,
+                        requires_confirmation: false,
+                    },
+                    selection: Some(ContextSelection::LiveSource { source_id }),
+                },
+            )
+            .is_err()
+        {
+            return Err(stale_session_error());
+        }
+    }
+    Ok(())
+}
+
 fn save_text_capture_with_registry_value(
     input: serde_json::Value,
     database: &Mutex<Database>,
@@ -916,68 +1038,10 @@ fn save_text_capture_with_registry_value(
     let Ok(mut service) = service.lock() else {
         return CommandResult::failure(internal_error());
     };
-    if service
-        .active_session()
-        .is_none_or(|session| session.session_id != input.session_id)
+    if let Err(error) =
+        refresh_selected_live_context(input.session_id, &mut service, database, registry)
     {
-        return CommandResult::failure(stale_session_error());
-    }
-    if let Some(session) = service.active_session()
-        && let ContextResolution::Resolved {
-            selection: Some(ContextSelection::LiveSource { source_id }),
-            ..
-        } = session.context_resolution
-    {
-        let refreshed = {
-            let Ok(mut registry) = registry.lock() else {
-                return CommandResult::failure(internal_error());
-            };
-            registry
-                .revalidate(source_id, Instant::now())
-                .map(|source| {
-                    (
-                        source.context().clone(),
-                        source.identity().project_key.clone(),
-                        source.identity().project_path.clone(),
-                        source.identity().branch_name.clone(),
-                        source.provider(),
-                    )
-                })
-        };
-        let Some(refreshed) = refreshed else {
-            return CommandResult::failure(context_source_stale_error());
-        };
-        let context = {
-            let Ok(database) = database.lock() else {
-                return CommandResult::failure(internal_error());
-            };
-            match ContextRepository::new(database.connection()).ensure_project(
-                refreshed.0.id,
-                &refreshed.0.name,
-                refreshed.1.as_deref(),
-                &refreshed.2,
-            ) {
-                Ok(context) => context,
-                Err(_) => return CommandResult::failure(storage_unavailable_error()),
-            }
-        };
-        if service
-            .set_context_resolution(
-                input.session_id,
-                ContextResolution::Resolved {
-                    candidate: ContextCandidate {
-                        context,
-                        branch_name: refreshed.3,
-                        provider: refreshed.4,
-                        requires_confirmation: false,
-                    },
-                    selection: Some(ContextSelection::LiveSource { source_id }),
-                },
-            )
-            .is_err()
-        {
-            return CommandResult::failure(stale_session_error());
-        }
+        return CommandResult::failure(error);
     }
     match service.save_once(input.session_id, |session| {
         let (context_id, branch_name) = match &session.context_resolution {
@@ -2334,6 +2398,117 @@ mod tests {
             .query_row("SELECT count(*) FROM captures", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn exited_shell_preserves_staged_image_before_the_ttl() {
+        exited_shell_preserves_staged_media(MediaKind::Image);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn exited_shell_preserves_staged_audio_before_the_ttl() {
+        exited_shell_preserves_staged_media(MediaKind::Audio);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn exited_shell_preserves_staged_media(kind: MediaKind) {
+        let directory = tempdir().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .current_dir(directory.path())
+            .spawn()
+            .unwrap();
+        let now = Instant::now();
+        let database = Mutex::new(Database::open_in_memory().unwrap());
+        let service = Mutex::new(CaptureSessionService::default());
+        let registry = Mutex::new(ContextSourceRegistry::default());
+        let source_id = registry
+            .lock()
+            .unwrap()
+            .register(
+                ProviderObservation::new(
+                    ContextProviderKind::Shell,
+                    ProviderSourceKind::ExternalTerminal,
+                    Some(WindowCorrelationToken::from_native(77)),
+                    Some(CorrelationToken::from_process_id(child.id())),
+                    Some(CorrelationToken::new()),
+                    directory.path().to_path_buf(),
+                    now,
+                    ObservationLiveness::Live,
+                ),
+                now,
+            )
+            .unwrap();
+        let active = service.lock().unwrap().get_or_prepare();
+        let selected = select_capture_context_source_with_registry_value(
+            json!({ "sessionId": active.session_id, "selection": {"kind": "live_source", "sourceId": source_id} }),
+            &database,
+            &service,
+            &registry,
+        );
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(matches!(selected, CommandResult::Success { .. }));
+        let mut media = MediaStore::open(directory.path()).unwrap();
+        let staged = match kind {
+            MediaKind::Image => media
+                .stage_image_png(active.session_id, b"staged image", 2, 1)
+                .unwrap(),
+            MediaKind::Audio => media
+                .stage_audio_wav(active.session_id, b"staged audio", 750)
+                .unwrap(),
+        };
+        service
+            .lock()
+            .unwrap()
+            .set_staged_media(active.session_id, staged.clone())
+            .unwrap();
+        let media = Mutex::new(media);
+        let before = service.lock().unwrap().active_session().unwrap();
+        let input = json!({ "sessionId": active.session_id, "stagedMediaId": staged.staged_media_id, "caption": "caption remains after terminal exit" });
+        let result = match kind {
+            MediaKind::Image => super::save_image_capture_with_registry_value(
+                input, &database, &service, &media, &registry,
+            ),
+            MediaKind::Audio => super::save_audio_capture_with_registry_value(
+                input, &database, &service, &media, false, &registry,
+            ),
+        };
+        let CommandResult::Failure { error, .. } = result else {
+            panic!("exited shell saved before the heartbeat TTL");
+        };
+        assert_eq!(error.code, ErrorCode::ContextSourceStale);
+        assert_eq!(
+            service.lock().unwrap().active_session(),
+            Some(before.clone())
+        );
+        let count: i64 = database
+            .lock()
+            .unwrap()
+            .connection()
+            .query_row("SELECT count(*) FROM captures", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        // The opaque preview remains readable: no media finalization happened.
+        assert!(
+            media
+                .lock()
+                .unwrap()
+                .staged_preview(staged.staged_media_id)
+                .is_ok()
+        );
+        let text_result = save_text_capture_with_registry_value(
+            json!({ "sessionId": active.session_id, "textBody": "draft remains after terminal exit" }),
+            &database,
+            &service,
+            &registry,
+        );
+        assert!(
+            matches!(text_result, CommandResult::Failure { error, .. } if error.code == ErrorCode::ContextSourceStale)
+        );
+        assert_eq!(service.lock().unwrap().active_session(), Some(before));
     }
 
     #[test]

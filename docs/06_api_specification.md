@@ -276,6 +276,8 @@ Live sources are revalidated before selection. A saved context has `branchName: 
 
 Live sources are revalidated at selection and save time. A stale source returns `CONTEXT_SOURCE_STALE` without changing the session or its draft state.
 
+Text, image, and audio saves use the same serialized live-selection validation before persistence or media finalization. On Linux, a native shell source must still match its registered process uid/inode and project directory; a recent heartbeat alone is insufficient. Rejection leaves staged media available for preview and context reselection.
+
 **Success:** `CommandResult<CaptureSession>`
 
 **Errors:** `STALE_SESSION`, `CONTEXT_SOURCE_NOT_FOUND`, `CONTEXT_SOURCE_STALE`, `CONTEXT_NOT_FOUND`, `VALIDATION_ERROR`.
