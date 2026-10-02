@@ -38,6 +38,8 @@ pub(crate) struct LiveContextSource {
     label: String,
     observed_at: Instant,
     expires_at: Instant,
+    #[cfg(target_os = "linux")]
+    process_identity: Option<(u32, u64)>,
 }
 
 impl LiveContextSource {
@@ -170,6 +172,13 @@ impl ContextSourceRegistry {
                 label,
                 observed_at: observation.observed_at(),
                 expires_at: observation.observed_at() + LIVE_SOURCE_TTL,
+                #[cfg(target_os = "linux")]
+                process_identity: observation.process().and_then(|token| {
+                    use std::os::unix::fs::MetadataExt;
+                    let metadata =
+                        fs::metadata(format!("/proc/{}", token.native_process_id()?)).ok()?;
+                    Some((metadata.uid(), metadata.ino()))
+                }),
             },
         );
         Some(source_id)
@@ -189,6 +198,48 @@ impl ContextSourceRegistry {
         let mut sources: Vec<_> = self.sources.values().collect();
         sources.sort_by_key(|source| source.source_id.to_string());
         sources
+    }
+
+    /// Revalidate native shell identity before consuming a cached selection.
+    pub(crate) fn revalidate(
+        &mut self,
+        source_id: ContextSourceId,
+        now: Instant,
+    ) -> Option<&LiveContextSource> {
+        self.expire(now);
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let source = self.sources.get(&source_id)?;
+            if let Some(process_id) = source.process.and_then(CorrelationToken::native_process_id) {
+                let valid = (|| {
+                    let process_path = format!("/proc/{process_id}");
+                    let metadata = fs::metadata(&process_path).ok()?;
+                    let identity = (metadata.uid(), metadata.ino());
+                    if Some(identity) != source.process_identity
+                        || metadata.uid() != fs::metadata("/proc/self").ok()?.uid()
+                    {
+                        return None;
+                    }
+                    let directory = fs::canonicalize(format!("{process_path}/cwd")).ok()?;
+                    let refreshed = inspect_project_directory(&directory).ok()?;
+                    let after = fs::metadata(&process_path).ok()?;
+                    if identity != (after.uid(), after.ino())
+                        || refreshed.project_key != source.identity.project_key
+                        || refreshed.project_path != source.identity.project_path
+                    {
+                        return None;
+                    }
+                    Some(refreshed)
+                })();
+                let Some(identity) = valid else {
+                    self.sources.remove(&source_id);
+                    return None;
+                };
+                self.sources.get_mut(&source_id)?.identity = identity;
+            }
+        }
+        self.sources.get(&source_id)
     }
 
     pub(crate) fn end_window_kind(

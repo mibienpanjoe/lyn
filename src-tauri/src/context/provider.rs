@@ -27,6 +27,14 @@ impl CorrelationToken {
         Self(Uuid::from_u128(PROCESS_NAMESPACE | u128::from(process_id)))
     }
 
+    pub(crate) fn native_process_id(self) -> Option<u32> {
+        const PROCESS_NAMESPACE: u128 = 0x4c79_6e00_7072_6f63_0000_0000_0000_0000;
+        let value = self.0.as_u128();
+        let process_id = value as u32;
+        (value & !u128::from(u32::MAX) == PROCESS_NAMESPACE && process_id != 0)
+            .then_some(process_id)
+    }
+
     pub(crate) fn from_session_id(session_id: Uuid) -> Self {
         Self(session_id)
     }

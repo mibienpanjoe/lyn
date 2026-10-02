@@ -932,15 +932,17 @@ fn save_text_capture_with_registry_value(
             let Ok(mut registry) = registry.lock() else {
                 return CommandResult::failure(internal_error());
             };
-            registry.get(source_id, Instant::now()).map(|source| {
-                (
-                    source.context().clone(),
-                    source.identity().project_key.clone(),
-                    source.identity().project_path.clone(),
-                    source.identity().branch_name.clone(),
-                    source.provider(),
-                )
-            })
+            registry
+                .revalidate(source_id, Instant::now())
+                .map(|source| {
+                    (
+                        source.context().clone(),
+                        source.identity().project_key.clone(),
+                        source.identity().project_path.clone(),
+                        source.identity().branch_name.clone(),
+                        source.provider(),
+                    )
+                })
         };
         let Some(refreshed) = refreshed else {
             return CommandResult::failure(context_source_stale_error());
@@ -2271,6 +2273,67 @@ mod tests {
             ]
         );
         assert_eq!(service.lock().unwrap().active_session(), Some(session));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn exited_shell_without_an_ended_report_cannot_save_before_the_ttl() {
+        let directory = tempdir().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .current_dir(directory.path())
+            .spawn()
+            .unwrap();
+        let now = Instant::now();
+        let database = Mutex::new(Database::open_in_memory().unwrap());
+        let service = Mutex::new(CaptureSessionService::default());
+        let registry = Mutex::new(ContextSourceRegistry::default());
+        let source_id = registry
+            .lock()
+            .unwrap()
+            .register(
+                ProviderObservation::new(
+                    ContextProviderKind::Shell,
+                    ProviderSourceKind::ExternalTerminal,
+                    Some(WindowCorrelationToken::from_native(77)),
+                    Some(CorrelationToken::from_process_id(child.id())),
+                    Some(CorrelationToken::new()),
+                    directory.path().to_path_buf(),
+                    now,
+                    ObservationLiveness::Live,
+                ),
+                now,
+            )
+            .unwrap();
+        let active = service.lock().unwrap().get_or_prepare();
+        let selected = select_capture_context_source_with_registry_value(
+            json!({ "sessionId": active.session_id, "selection": {"kind": "live_source", "sourceId": source_id} }),
+            &database,
+            &service,
+            &registry,
+        );
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(matches!(selected, CommandResult::Success { .. }));
+        let before = service.lock().unwrap().active_session().unwrap();
+        let result = save_text_capture_with_registry_value(
+            json!({ "sessionId": active.session_id, "textBody": "draft remains after terminal exit" }),
+            &database,
+            &service,
+            &registry,
+        );
+        let CommandResult::Failure { error, .. } = result else {
+            panic!("exited shell saved before the heartbeat TTL");
+        };
+        assert_eq!(error.code, ErrorCode::ContextSourceStale);
+        assert_eq!(service.lock().unwrap().active_session(), Some(before));
+        let count: i64 = database
+            .lock()
+            .unwrap()
+            .connection()
+            .query_row("SELECT count(*) FROM captures", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]
