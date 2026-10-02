@@ -1,6 +1,7 @@
 # Research Note — HEX (Anomaly) and opportunities for Lyn
 
-**Date:** 2026-09-29  
+**Date:** 2026-09-29
+
 **Scope:** Public `anomalyco/hex` repository and Lyn's accepted requirements / speech decision. This is a research note, not a claim that HEX has been run on Lyn's reference machine.
 
 ## Executive recommendation
