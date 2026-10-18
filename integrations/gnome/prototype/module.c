@@ -15,6 +15,37 @@ static gchar *endpoint;
 static gchar *module_path;
 static guint64 next_source;
 
+typedef struct {
+    guint64 id;
+    guint64 revision;
+    gint64 registered_at;
+    gint64 changed_at;
+} TerminalIdentity;
+
+/* GTK3 map/unmap run on its main loop. Record transitions, not just polled
+ * final state: A -> B -> A must invalidate an invocation between those events.
+ * https://docs.gtk.org/gtk3/signal.Widget.map.html
+ * https://docs.gtk.org/glib/func.get_monotonic_time.html */
+static void topology_changed(GtkWidget *widget, gpointer data)
+{
+    (void)widget;
+    TerminalIdentity *identity = data;
+    identity->changed_at = g_get_monotonic_time();
+    identity->revision++;
+}
+
+static void hierarchy_changed(GtkWidget *widget, GtkWidget *previous, gpointer data)
+{
+    (void)previous;
+    topology_changed(widget, data);
+}
+
+static void pty_changed(GObject *object, GParamSpec *property, gpointer data)
+{
+    (void)property;
+    topology_changed(GTK_WIDGET(object), data);
+}
+
 G_MODULE_EXPORT const gchar *g_module_check_init(GModule *module)
 {
     module_path = g_strdup(g_module_name(module));
@@ -62,20 +93,29 @@ static void collect(GtkWidget *widget, gpointer data)
         pid_t foreground = tcgetpgrp(fd);
         if (foreground <= 0 || ioctl(fd, TIOCGPTN, &number) != 0)
             return;
-        guint64 *source = g_object_get_data(G_OBJECT(widget), "lyn-spike-source");
+        TerminalIdentity *source = g_object_get_data(G_OBJECT(widget), "lyn-spike-source");
         if (!source) {
-            source = g_new(guint64, 1);
-            *source = ++next_source;
+            source = g_new0(TerminalIdentity, 1);
+            source->id = ++next_source;
+            source->revision = 1;
+            source->registered_at = source->changed_at = g_get_monotonic_time();
             g_object_set_data_full(G_OBJECT(widget), "lyn-spike-source", source, g_free);
+            g_signal_connect_after(widget, "map", G_CALLBACK(topology_changed), source);
+            g_signal_connect_after(widget, "unmap", G_CALLBACK(topology_changed), source);
+            g_signal_connect_after(widget, "hierarchy-changed", G_CALLBACK(hierarchy_changed), source);
+            g_signal_connect_after(widget, "notify::pty", G_CALLBACK(pty_changed), source);
         }
         if (frame->str[frame->len-1] != '[')
             g_string_append_c(frame, ',');
         g_string_append_printf(frame,
             "{\"sourceId\":%llu,\"windowId\":%lu,\"ptyNumber\":%u,"
-            "\"foregroundPgid\":%ld,\"active\":%s,\"windowFocused\":%s}",
-            (unsigned long long)*source, (unsigned long)gdk_x11_window_get_xid(native),
+            "\"foregroundPgid\":%ld,\"active\":%s,\"windowFocused\":%s,"
+            "\"registeredAtUs\":%lld,\"changedAtUs\":%lld,\"observedAtUs\":%lld,\"revision\":%llu}",
+            (unsigned long long)source->id, (unsigned long)gdk_x11_window_get_xid(native),
             number, (long)foreground, gtk_widget_get_mapped(widget) ? "true" : "false",
-            GTK_IS_WINDOW(top) && gtk_window_is_active(GTK_WINDOW(top)) ? "true" : "false");
+            GTK_IS_WINDOW(top) && gtk_window_is_active(GTK_WINDOW(top)) ? "true" : "false",
+            (long long)source->registered_at, (long long)source->changed_at,
+            (long long)g_get_monotonic_time(), (unsigned long long)source->revision);
     }
     if (GTK_IS_CONTAINER(widget))
         gtk_container_forall(GTK_CONTAINER(widget), collect, frame);

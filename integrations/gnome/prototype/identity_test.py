@@ -102,6 +102,16 @@ def run(module, preserved_module):
             assert observed_projects == set(projects[:2])
             print("PASS: two concurrent GNOME windows have distinct, correct native PTYs/processes")
 
+            invocation_us = time.monotonic_ns() // 1000
+            sources = snapshot(lambda items: len(items) == 2 and
+                               all(item["observedAtUs"] >= invocation_us for item in items),
+                               "native monotonic observation after invocation")
+            for item in sources:
+                assert 0 < item["registeredAtUs"] <= item["changedAtUs"] <= invocation_us
+                assert item["observedAtUs"] <= time.monotonic_ns() // 1000
+                assert item["revision"] >= 1
+            print("PASS: native GLib and invocation monotonic clocks are comparable")
+
             previous = {item["sourceId"] for item in sources}
             target_window = sources[0]["windowId"]
             subprocess.run(["xdotool", "windowfocus", "--sync", str(target_window)], check=True)
@@ -119,7 +129,10 @@ def run(module, preserved_module):
                 "childModuleAbsent": True, "existingModulePreserved": True}, \
                 "Our GTK module propagated to the terminal's GTK child"
             sources = snapshot(lambda items: len(items) == 3 and
-                               sum(item["active"] for item in items) == 2, "third tab with TUI")
+                               sum(item["active"] for item in items) == 2 and
+                               any(item["sourceId"] not in previous and
+                                   Path(f'/proc/{item["foregroundPgid"]}/exe').resolve() ==
+                                   Path("/usr/bin/htop") for item in items), "third tab with real TUI")
             third = next(item for item in sources if item["sourceId"] not in previous)
             assert third["active"]
             assert third["windowId"] == target_window
@@ -134,20 +147,52 @@ def run(module, preserved_module):
             subprocess.run(["xdotool", "windowfocus", "--sync", str(third["windowId"])], check=True)
             for index in range(8):
                 desired = other if index % 2 == 0 else third
+                invocation_us = time.monotonic_ns() // 1000
                 subprocess.run(["xdotool", "key", "--clearmodifiers",
                                 "alt+1" if index % 2 == 0 else "alt+2"], check=True)
                 sources = snapshot(lambda items: any(item["sourceId"] == desired["sourceId"]
-                                                     and item["active"] for item in items),
+                                                     and item["active"]
+                                                     and item["changedAtUs"] > invocation_us
+                                                     for item in items),
                                    "selected native tab")
                 selected = [item for item in sources if item["windowId"] == third["windowId"]
                             and item["active"]]
                 assert len(selected) == 1 and selected[0]["sourceId"] == desired["sourceId"]
+                assert selected[0]["changedAtUs"] > invocation_us, \
+                    "A post-invocation tab must never be accepted as the earlier source"
             print("PASS: native active tab changes correctly across eight switches; TUI identity preserved")
             print("PASS: module is not loaded into a GTK application launched from the terminal")
+
+            before = next(item for item in sources if item["sourceId"] == third["sourceId"])
+            invocation_us = time.monotonic_ns() // 1000
+            subprocess.run(["xdotool", "key", "--delay", "0", "--clearmodifiers",
+                            "alt+1", "alt+2"], check=True)
+            sources = snapshot(lambda items: any(item["sourceId"] == third["sourceId"]
+                                                 and item["active"]
+                                                 and item["revision"] >= before["revision"] + 2
+                                                 for item in items), "A-B-A topology transition")
+            returned = next(item for item in sources if item["sourceId"] == third["sourceId"])
+            assert returned["changedAtUs"] > invocation_us
+            print("PASS: A-B-A tab transitions invalidate an earlier invocation even with the same final source")
+
+            invocation_us = time.monotonic_ns() // 1000
+            background_window = next(item["windowId"] for item in sources
+                                     if item["windowId"] != target_window)
+            subprocess.run(["xdotool", "windowfocus", "--sync", str(background_window)], check=True)
+            sources = snapshot(lambda items: any(item["windowId"] == background_window and
+                                                 item["windowFocused"] for item in items) and
+                               all(item["observedAtUs"] >= invocation_us for item in items),
+                               "loss of foreground after frozen invocation")
+            retained = next(item for item in sources if item["sourceId"] == third["sourceId"])
+            assert not retained["windowFocused"] and retained["active"]
+            assert retained["changedAtUs"] <= invocation_us
+            assert retained["revision"] == returned["revision"]
+            print("PASS: later OS focus loss does not rewrite the bound terminal topology")
 
             prop = subprocess.check_output(["xprop", "-id", str(third["windowId"]),
                                             "_GTK_WINDOW_OBJECT_PATH"], text=True)
             object_path = re.search(r'= "([^"]+)"', prop).group(1)
+            detach_us = time.monotonic_ns() // 1000
             subprocess.run(["gdbus", "call", "--session", "--dest", app_id,
                             "--object-path", object_path, "--method", "org.gtk.Actions.Activate",
                             "tab-detach", "[]", "{}"], check=True, stdout=subprocess.DEVNULL)
@@ -157,6 +202,7 @@ def run(module, preserved_module):
             assert moved["windowId"] != third["windowId"]
             assert moved["ptyNumber"] == third["ptyNumber"]
             assert moved["foregroundPgid"] == pid
+            assert moved["changedAtUs"] > detach_us and moved["revision"] > retained["revision"]
             print("PASS: detached tab retains its source/PTY/process while native window changes")
 
             os.kill(pid, signal.SIGTERM)
