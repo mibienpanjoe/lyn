@@ -132,6 +132,49 @@ impl NativeChannel {
     pub(crate) fn peer_pid(&self) -> u32 {
         self.peer.pid()
     }
+
+    pub(super) fn generation(&self) -> Uuid {
+        self.generation
+    }
+
+    pub(super) fn is_open(&self) -> bool {
+        self.stream.is_some()
+    }
+
+    pub(super) fn close(&mut self) {
+        if let Some(stream) = self.stream.take() {
+            let _ = stream.shutdown(Shutdown::Both);
+        }
+    }
+
+    pub(super) fn revalidate_idle(&mut self) -> bool {
+        let valid = (|| {
+            self.peer
+                .revalidate()
+                .map_err(|_| ChannelError::Disconnected)?;
+            let deadline = monotonic_us()?
+                .checked_add(REPLY_BUDGET_US)
+                .ok_or(ChannelError::Timeout)?;
+            ensure_idle(
+                self.stream.as_ref().ok_or(ChannelError::Disconnected)?,
+                deadline,
+            )
+        })()
+        .is_ok();
+        if !valid {
+            self.close();
+        }
+        valid
+    }
+
+    #[cfg(test)]
+    pub(super) fn connect_fixture(stream: UnixStream) -> Result<Self, ChannelError> {
+        let peer = NativePeer::fixture(&stream).map_err(|_| ChannelError::Unavailable)?;
+        let deadline = monotonic_us()?
+            .checked_add(HANDSHAKE_BUDGET_US)
+            .ok_or(ChannelError::Timeout)?;
+        Self::handshake(stream, peer, deadline)
+    }
 }
 
 pub(crate) fn monotonic_us() -> Result<u64, ChannelError> {
