@@ -114,6 +114,12 @@ Providers are optional. You can configure all of them with **1-click directly in
 
 Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
+### Native GNOME prototype (development only)
+
+`pnpm provider:gnome:test` compiles an experimental GTK3/VTE module and tests real GNOME Terminal windows, tabs, and TUI identity on private Xvfb/D-Bus. It does not install anything or enable native automatic context in Lyn yet.
+
+Requires Linux, GTK3/VTE development headers, GCC/pkg-config, Xvfb/xauth, GNOME Terminal, xdotool/xprop, Python GI GTK3, and htop. Developers can set `LYN_GNOME_SDK_ROOT` to a local directory with packages extracted beneath `root/`; the test never installs system packages or modifies terminal profiles outside its temporary environment.
+
 ## Documentation
 
 - [Project overview](docs/project_overview.md)

@@ -8,6 +8,8 @@ Svelte 5/TypeScript UI lives under `src/`; the Tauri/Rust core lives under `src-
 
 On Linux, GNOME Terminal may inherit `KITTY_WINDOW_ID` from its launcher. Its own `GNOME_TERMINAL_SCREEN` marker keeps the shell helper enabled, while Rust rejects generic shell observations for actual Kitty windows. A new shell helper binds only to the actual foreground window, never Lyn's remembered window. Once bound, it keeps its process/window heartbeat alive in the background; background reports must not replace the remembered foreground window. Multiple sessions in one terminal window still require explicit selection. Editor integration status reports the current embedded extension version as installed, but file presence alone does not prove a live connection or successful capture.
 
+The developer-only native GNOME prototype is under `integrations/gnome/prototype/`. It uses GTK3/VTE to relate terminal widgets to native windows and PTYs, without terminal stream access. Its version-0 test datagrams are not accepted by the production brokers, and the module is neither packaged nor installed by Lyn. Its harness uses Xvfb, a private D-Bus and isolated XDG directories; never point its actions at the user's terminal server. On Pop!_OS use `gnome-terminal.real` to address the already-created fixture server instead of the per-launch wrapper. Keep ordinary GNOME support limitations until the native broker and installed-package acceptance are delivered.
+
 ## Build, Test, and Development Commands
 
 Use Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, and the documented Tauri system prerequisites. Canonical commands are:
@@ -26,6 +28,7 @@ Use Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, and the documented Tauri system pre
 - `pnpm provider:browser:install` — install the Native Messaging manifest for Chrome, Chromium, Brave, Edge, and Firefox.
 - `pnpm provider:terminal:test` — run Rust broker, shell bootstrap, and Kitty watcher contract tests.
 - `pnpm provider:terminal:build` — build the standalone `lyn-context` binary for isolated helper debugging (not required for users; Lyn's own binary handles `watch --process`).
+- `pnpm provider:gnome:test` — compile and run the developer-only native GTK3/VTE prototype on private Xvfb/D-Bus; requires GTK3/VTE development headers, GCC/pkg-config, Xvfb/xauth, GNOME Terminal, xdotool/xprop, Python GI GTK3, and htop. No module is installed. `LYN_GNOME_SDK_ROOT` may point to a local SDK directory containing extracted packages under `root/` instead of installing VTE headers/Xvfb system-wide.
 - `pnpm icons` — regenerate platform icons from the tracked SVG master.
 - `cargo fmt --check --manifest-path src-tauri/Cargo.toml` — check Rust formatting.
 - `cargo test --manifest-path src-tauri/Cargo.toml` — run Rust tests.
