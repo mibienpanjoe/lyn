@@ -81,6 +81,8 @@ Protects: FR-028, FR-064, BR-04.
 
 Automatic context MUST be derived from evidence correlated with the OS window that was focused immediately before Lyn appeared. An unrelated editor or terminal that reported more recently MUST NOT override an exact foreground-window, process, or terminal-session association. A source-application invoke still binds to that OS window at receive time; client-supplied window or process identifiers are rejected.
 
+The separate [native GNOME contract](gnome_native_protocol.md) permits only independently attested native metadata, not authoritative client IDs: Rust must verify the peer/server/window/PTY/process relationship and pre-invocation topology before using a candidate. Its codec is implemented; the production broker and capture wiring remain pending. This does not relax ordinary provider payload rejection or INV-15.
+
 Protects: FR-101, FR-102, FR-103, FR-104, BR-09.
 
 **INV-15 — Explicit context correction authority**

@@ -703,3 +703,11 @@ The Linux browser companion uses Native Messaging to the same running Lyn binary
 **Status:** Accepted, 2026-09-01, for Linux x86_64 T30 implementation.
 
 Lyn installs a CPU-only whisper.cpp v1.9.2 engine and multilingual Whisper `base` model only after an explicit Settings action. Rust owns immutable URLs, exact sizes, SHA-256 digests, staging, verification, atomic activation, runtime limits, and removal. The frontend supplies only an allowlisted product model ID. Moving release URLs, client-selected artifacts, automatic updates, English-only defaults, cloud fallback, and bundling the 142 MiB model with core Lyn are rejected. The complete distribution, licensing, threat, resource, update, and owner-validation policy is recorded in [`09_local_speech_distribution_decision.md`](09_local_speech_distribution_decision.md).
+
+### ADR-011 — Attested native GNOME topology instead of startup-focus inference
+
+**Status:** Accepted contract, 2026-10-18; production integration pending.
+
+Concurrent GNOME Terminal startup can bind different shell helpers to the same foreground window. Neither a delay, global recency nor a terminal-server PID proves an active tab. The native GTK3/VTE adapter must instead relate widgets to native windows and PTYs without reading terminal content, while Rust attests OS identities and derives cwd/Git. Its separate fixed-width metadata protocol avoids adding a C JSON parser or accepting paths/variable payloads. Connection generations and pre-invocation topology timing reject replay, newly registered sources and A→B→A races; unresolved evidence remains manual. Existing editor/browser rejection of native IDs and Capture Service authority remain unchanged.
+
+The owning [native protocol contract](gnome_native_protocol.md) defines framing, lifecycle, timing and shell/TUI policy. The codec and isolated native primitives are tested separately; real broker attestation, producer/consumer integration, capture, reversible installation and packaged acceptance remain required. This ADR does not claim GNOME automatic context is repaired or broaden Windows/macOS/Wayland support.
