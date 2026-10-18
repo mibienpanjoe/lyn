@@ -30,6 +30,12 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     destination = Path(directory)
     module = destination / "liblyn-gnome-prototype.so"
     preserved = destination / "libexisting-gtk-module.so"
+    wire_test = destination / "wire-test"
+    subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                    "-fstack-protector-strong", str(root / "wire_test.c"),
+                    str(root.parent / "wire.c"), "-o", str(wire_test)], check=True)
+    subprocess.run([str(wire_test), str(root.parent / "wire_vectors.txt"),
+                    str(root.parent / "wire_rejects.txt")], check=True)
     for source, output in (("module.c", module), ("preserved_module.c", preserved)):
         subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                         "-fPIC", "-fstack-protector-strong", "-shared", str(root / source),

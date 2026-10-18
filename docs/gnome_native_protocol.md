@@ -37,7 +37,7 @@ Each frame is exactly **112 bytes**, integer fields in network byte order. UUIDs
 
 All fields not used by a kind MUST be zero. Hello uses only capabilities; Bind/Ready add generation. Query uses generation, request, window and invocation time, all nonzero. Reply uses generation, request, window, observation time and status; status `1` (candidate) additionally uses the six source fields at offsets 44–60 and 68–92. Status `2` missing, `3` changed, `4` ambiguous and `5` unavailable carry no source fields. Unknown versions, kinds, capability bits, status, reserved values and noncanonical unused fields are rejected, not silently ignored. Source registration ≤ change ≤ observation, with positive times, is a frame-level requirement.
 
-The Rust contract is [`gnome_protocol.rs`](../src-tauri/src/context/gnome_protocol.rs); its tests include an independent network-order query vector. A C/Rust shared-vector and real-channel test remain required before connecting the producer.
+The codecs are [`gnome_protocol.rs`](../src-tauri/src/context/gnome_protocol.rs) and [`wire.c`](../integrations/gnome/wire.c). Both exercise the same ten valid and 22 refused [wire vectors](../integrations/gnome/wire_vectors.txt), including all kinds/statuses, 64-bit values, invalid identities/timing, capabilities and reserved fields. C decoding also checks bounded input and unchanged output on refusal. A real-channel test remains required before connecting the producer; sharing a wire format does not authenticate a peer.
 
 ## Invocation proof and latency
 
@@ -62,4 +62,4 @@ Native topology timing proves the tab identity, not a historical cwd or foregrou
 
 ## Verification boundary
 
-Rust unit tests cover canonical framing, versions/capabilities, identities, timing, wrong correlation, reconnect generation mismatch, single-use replies, unavailable outcomes and same-microsecond refusal. They do not prove peer authentication, handshake transport order, PTY ownership, source registration, C encoding, installed status or successful capture. Those remain explicit integration requirements. Existing editor/browser parsers continue rejecting client-supplied native IDs; no shared permission or UI contract is widened.
+Rust unit tests cover canonical framing, versions/capabilities, identities, timing, wrong correlation, reconnect generation mismatch, single-use replies, unavailable outcomes and same-microsecond refusal. Shared C/Rust vectors prove encoding/decoding compatibility, not peer authentication, handshake transport order, PTY ownership, source registration, installed status or successful capture. Those remain explicit integration requirements. Existing editor/browser parsers continue rejecting client-supplied native IDs; no shared permission or UI contract is widened.

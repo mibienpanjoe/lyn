@@ -75,6 +75,95 @@ fn all_frame_kinds_roundtrip_with_exact_size() {
 }
 
 #[test]
+fn rust_codec_matches_shared_c_vectors() {
+    let mut frames = vec![
+        ("hello", Frame::Hello),
+        (
+            "bind",
+            Frame::Bind {
+                generation: correlation().generation,
+            },
+        ),
+        (
+            "ready",
+            Frame::Ready {
+                generation: correlation().generation,
+            },
+        ),
+        (
+            "query",
+            Frame::Query {
+                correlation: correlation(),
+                invoked_us: 258,
+            },
+        ),
+        ("candidate", reply()),
+    ];
+    for (name, outcome) in [
+        ("missing", Outcome::Missing),
+        ("changed", Outcome::Changed),
+        ("ambiguous", Outcome::Ambiguous),
+        ("unavailable", Outcome::Unavailable),
+    ] {
+        frames.push((
+            name,
+            Frame::Reply {
+                correlation: correlation(),
+                observed_us: 220,
+                outcome,
+            },
+        ));
+    }
+    frames.push((
+        "wide_candidate",
+        Frame::Reply {
+            correlation: correlation(),
+            observed_us: 0x0100000000000200,
+            outcome: Outcome::Candidate(Candidate {
+                pty_number: 0x01020304,
+                foreground_pgid: 0x01020304,
+                source_id: 0x0102030405060708,
+                revision: 0x0807060504030201,
+                registered_us: 0x0100000000000000,
+                changed_us: 0x0100000000000100,
+            }),
+        },
+    ));
+    let rows: Vec<_> = include_str!("../../../integrations/gnome/wire_vectors.txt")
+        .lines()
+        .collect();
+    assert_eq!(rows.len(), frames.len());
+    for (row, (name, frame)) in rows.iter().zip(frames) {
+        let (label, hex) = row.split_once(' ').unwrap();
+        assert_eq!(label, name);
+        assert_eq!(hex.len(), FRAME_BYTES * 2);
+        let bytes: Vec<_> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        assert_eq!(frame.encode().as_slice(), bytes, "{name}");
+        assert_eq!(Frame::decode(&bytes), Ok(frame), "{name}");
+    }
+}
+
+#[test]
+fn rust_codec_rejects_shared_c_negative_vectors() {
+    let rows: Vec<_> = include_str!("../../../integrations/gnome/wire_rejects.txt")
+        .lines()
+        .collect();
+    assert_eq!(rows.len(), 22);
+    for row in rows {
+        let (name, hex) = row.split_once(' ').unwrap();
+        assert_eq!(hex.len(), FRAME_BYTES * 2);
+        let bytes: Vec<_> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        assert!(Frame::decode(&bytes).is_err(), "{name}");
+    }
+}
+
+#[test]
 fn query_has_independent_network_order_golden_vector() {
     let mut expected = [0; 112];
     expected[0..8].copy_from_slice(&[b'L', b'Y', b'G', b'N', 0, 1, 0, 4]);
