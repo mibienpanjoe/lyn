@@ -16,6 +16,8 @@ Native peer admission lives in `context/gnome_peer.rs`: kernel credentials, allo
 
 `context/gnome_channel.rs` owns the native stream handshake and one-at-a-time exchange. Deadlines are absolute Linux monotonic times, not per-read timeouts; reject future invocation timestamps and never reset the 120 ms budget on partial input. Transport/correlation errors close/drop the socket; only a correlated explicit unresolved reply may keep it for a fresh request. Never receive PTY FDs: the metadata channel rejects ancillary data. Channel tests use real socket pairs with test-only fixture-peer authentication; they do not establish a running broker or GNOME kernel/window/PTY attestation.
 
+`context/gnome_listener.rs` owns only the private native endpoint and cancellable idle accept. Never unlink occupied endpoints; shutdown may remove only the recorded socket inode. Preserve private directory/socket permissions, final-component symlink refusal and the explicit pending-connection backlog. Accepted streams are not authenticated sources: they must pass the native peer/channel boundary and later window/PTY attestation. The active-channel manager and production startup are not wired yet.
+
 ## Build, Test, and Development Commands
 
 Use Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, and the documented Tauri system prerequisites. Canonical commands are:

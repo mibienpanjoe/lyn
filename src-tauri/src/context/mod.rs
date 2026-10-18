@@ -5,6 +5,8 @@ pub(crate) mod browser_provider;
 #[cfg(target_os = "linux")]
 pub(crate) mod gnome_channel;
 #[cfg(target_os = "linux")]
+pub(crate) mod gnome_listener;
+#[cfg(target_os = "linux")]
 pub(crate) mod gnome_peer;
 #[cfg(target_os = "linux")]
 pub(crate) mod gnome_protocol;
