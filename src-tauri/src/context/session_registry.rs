@@ -25,6 +25,7 @@ use super::provider::{
 pub(crate) const LIVE_SOURCE_TTL: Duration = Duration::from_secs(30);
 const MAX_SAFE_LABEL_CHARS: usize = 100;
 
+#[derive(Clone)]
 pub(crate) struct LiveContextSource {
     source_id: ContextSourceId,
     provider: ContextProviderKind,
@@ -198,6 +199,11 @@ impl ContextSourceRegistry {
         let mut sources: Vec<_> = self.sources.values().collect();
         sources.sort_by_key(|source| source.source_id.to_string());
         sources
+    }
+
+    /// Owned invocation evidence: later heartbeats cannot alter this snapshot.
+    pub(crate) fn snapshot_live_sources(&mut self, now: Instant) -> Vec<LiveContextSource> {
+        self.live_sources(now).into_iter().cloned().collect()
     }
 
     /// Revalidate native shell identity before consuming a cached selection.
@@ -401,6 +407,46 @@ mod tests {
             observed_at,
             ObservationLiveness::Live,
         )
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn queued_invocation_snapshot_excludes_a_later_heartbeat() {
+        use super::super::resolution_worker::ResolutionWorker;
+        use std::sync::mpsc;
+        let directory = tempdir().unwrap();
+        let now = Instant::now();
+        let mut registry = ContextSourceRegistry::default();
+        let worker = ResolutionWorker::start().unwrap();
+        let (started, wait_started) = mpsc::channel();
+        let (release, wait_release) = mpsc::channel();
+        let (finished, wait_finished) = mpsc::channel();
+        worker.submit(Box::new(move || {
+            started.send(()).unwrap();
+            wait_release.recv_timeout(Duration::from_secs(2)).unwrap();
+        }));
+        wait_started.recv_timeout(Duration::from_secs(2)).unwrap();
+        let snapshot = registry.snapshot_live_sources(now);
+        worker.submit(Box::new(move || {
+            finished.send(snapshot.len()).unwrap();
+        }));
+        registry
+            .register(
+                observation(
+                    directory.path().to_path_buf(),
+                    ProviderSourceKind::VscodeWindow,
+                    None,
+                    now,
+                ),
+                now,
+            )
+            .unwrap();
+        assert_eq!(registry.live_sources(now).len(), 1);
+        release.send(()).unwrap();
+        assert_eq!(
+            wait_finished.recv_timeout(Duration::from_secs(2)).unwrap(),
+            0
+        );
     }
 
     #[test]

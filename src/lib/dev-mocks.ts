@@ -148,6 +148,7 @@ let devSpeechStatus: SpeechModelStatus = {
 
 let devSession: CaptureSession = {
   sessionId: 'dev-session-1',
+  contextRevision: 0,
   contextResolution: {
     state: 'resolved',
     candidate: {
@@ -352,6 +353,7 @@ export const devCaptureClient: CaptureClient = {
       sampleContexts.find((c) => c.id === contextId) ?? sampleContexts[0];
     devSession = {
       ...devSession,
+      contextRevision: devSession.contextRevision + 1,
       contextResolution: {
         state: 'resolved',
         candidate: {
@@ -370,6 +372,7 @@ export const devCaptureClient: CaptureClient = {
       devLiveSources.find((s) => s.sourceId === sourceId) ?? devLiveSources[0];
     devSession = {
       ...devSession,
+      contextRevision: devSession.contextRevision + 1,
       contextResolution: {
         state: 'resolved',
         candidate: {

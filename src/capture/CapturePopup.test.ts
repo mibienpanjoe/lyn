@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import axe from 'axe-core';
+import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -19,6 +20,7 @@ const inbox: ContextRef = {
 
 const requiredSession: CaptureSession = {
   sessionId: 'session-1',
+  contextRevision: 0,
   contextResolution: {
     state: 'required',
     candidate: null,
@@ -42,6 +44,7 @@ const liveSource: ContextSourceOption = {
 function resolvedSession(context = inbox): CaptureSession {
   return {
     ...requiredSession,
+    contextRevision: 1,
     contextResolution: {
       state: 'resolved',
       candidate: {
@@ -165,7 +168,9 @@ describe('quick-capture popup', () => {
     );
 
     await fireEvent.click(
-      screen.getByRole('button', { name: 'Context Inbox. Change context' }),
+      await screen.findByRole('button', {
+        name: 'Context Inbox. Change context',
+      }),
     );
     await waitFor(() =>
       expect(client.setPopupLayout).toHaveBeenLastCalledWith('chooser'),
@@ -663,6 +668,125 @@ describe('quick-capture popup', () => {
       ).toBeVisible(),
     );
     expect(input).toHaveValue('Stay');
+  });
+
+  it('ignores an automatic event older than a successful manual correction', async () => {
+    let revise: ((session: CaptureSession) => void) | undefined;
+    const selected = { ...resolvedSession(), contextRevision: 3 };
+    const client = createClient({
+      getActiveSession: vi.fn().mockResolvedValue(requiredSession),
+      selectContext: vi.fn().mockResolvedValue(selected),
+      onContextRevised: vi.fn().mockImplementation((listener) => {
+        revise = listener;
+        return Promise.resolve(() => undefined);
+      }),
+    });
+    render(CapturePopup, { client });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Choose context' }),
+    );
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Use context Inbox' }),
+    );
+    await screen.findByRole('button', {
+      name: 'Context Inbox. Change context',
+    });
+    revise?.({ ...requiredSession, contextRevision: 2 } as CaptureSession);
+    await tick();
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Context Inbox. Change context' }),
+      ).toBeVisible(),
+    );
+  });
+
+  it('keeps a revision delivered before the initial session response', async () => {
+    let resolveInitial!: (session: CaptureSession) => void;
+    let revise: ((session: CaptureSession) => void) | undefined;
+    const client = createClient({
+      listContextSources: vi.fn().mockReturnValue(new Promise(() => undefined)),
+      getActiveSession: vi.fn().mockReturnValue(
+        new Promise<CaptureSession>((resolve) => {
+          resolveInitial = resolve;
+        }),
+      ),
+      onContextRevised: vi.fn().mockImplementation((listener) => {
+        revise = listener;
+        return Promise.resolve(() => undefined);
+      }),
+    });
+    render(CapturePopup, { client });
+    await waitFor(() => expect(revise).toBeTypeOf('function'));
+    revise?.({ ...resolvedSession(), contextRevision: 2 } as CaptureSession);
+    resolveInitial({
+      ...requiredSession,
+      contextRevision: 1,
+    } as CaptureSession);
+    await screen.findByRole('button', {
+      name: 'Context Inbox. Change context',
+    });
+  });
+
+  it('does not roll back context when the same session-ready event arrives late', async () => {
+    let ready: ((session: CaptureSession) => void) | undefined;
+    const client = createClient({
+      getActiveSession: vi
+        .fn()
+        .mockResolvedValue({ ...resolvedSession(), contextRevision: 3 }),
+      onSessionReady: vi.fn().mockImplementation((listener) => {
+        ready = listener;
+        return Promise.resolve(() => undefined);
+      }),
+    });
+    render(CapturePopup, { client });
+    await screen.findByRole('button', {
+      name: 'Context Inbox. Change context',
+    });
+    ready?.(requiredSession);
+    await tick();
+    expect(
+      screen.getByRole('button', { name: 'Context Inbox. Change context' }),
+    ).toBeVisible();
+  });
+
+  it('applies media removal without replacing a newer context revision', async () => {
+    let revise: ((session: CaptureSession) => void) | undefined;
+    let finishDiscard!: (session: CaptureSession) => void;
+    const client = createClient({
+      getActiveSession: vi.fn().mockResolvedValue(requiredSession),
+      discardStagedMedia: vi.fn().mockReturnValue(
+        new Promise<CaptureSession>((resolve) => {
+          finishDiscard = resolve;
+        }),
+      ),
+      onContextRevised: vi.fn().mockImplementation((listener) => {
+        revise = listener;
+        return Promise.resolve(() => undefined);
+      }),
+    });
+    render(CapturePopup, { client });
+    await waitFor(() => expect(client.getActiveSession).toHaveBeenCalled());
+    await fireEvent.paste(
+      screen.getByRole('textbox', { name: 'Capture text' }),
+      {
+        clipboardData: { items: [{ type: 'image/png' }] },
+      },
+    );
+    await screen.findByRole('img', { name: 'Screenshot ready to save' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove image' }));
+    revise?.({ ...resolvedSession(), contextRevision: 2 });
+    await screen.findByRole('button', {
+      name: 'Context Inbox. Change context',
+    });
+    finishDiscard(requiredSession);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('img', { name: 'Screenshot ready to save' }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole('button', { name: 'Context Inbox. Change context' }),
+    ).toBeVisible();
   });
 
   it('keeps a screenshot, voice note, and captions when context is revised', async () => {

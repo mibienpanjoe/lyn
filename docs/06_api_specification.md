@@ -136,6 +136,7 @@ type ContextResolution =
 
 interface CaptureSession {
   sessionId: string;
+  contextRevision: number;       // Rust-owned u32, increasing within this session
   contextResolution: ContextResolution;
   stagedMedia: StagedMedia | null;
   recordingState: RecordingState;
@@ -734,6 +735,8 @@ Payload: `CaptureSession`.
 ### `capture://context-revised`
 
 Emitted when the active session's context resolution changes while that session is already open (including a second invoke of the same session). Payload: `CaptureSession`. The event MUST NOT be treated as a new capture: the UI updates context only and MUST leave draft text, staged media, and recording state untouched. A later automatic revision MUST NOT replace a user selection for this capture (INV-15).
+
+`contextRevision` is additive output metadata, initialized to zero and incremented by Rust on every context mutation; overflow refuses the mutation. It is not an authorization token or a media revision. Receivers register listeners before reading the initial session, retain newer context revisions received during bootstrap, and ignore equal/older same-session context events. Command responses may update media but MUST preserve a newer context already received. Revisions cannot be compared across session IDs. Linux automatic resolution freezes eligible source metadata before dispatch and runs on one worker with one coalesced pending request, outside the capture-session mutex; a Rust-only single-use ticket fences session, context and invocation changes before publication. These ordering safeguards do not establish native GNOME capture or packaged-runtime latency acceptance.
 
 ### `context://sources-changed`
 

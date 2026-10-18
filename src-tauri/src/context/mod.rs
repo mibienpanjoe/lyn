@@ -19,6 +19,8 @@ pub(crate) mod gnome_pty;
 pub(crate) mod invocation_protocol;
 pub(crate) mod localhost_resolver;
 pub(crate) mod provider;
+#[cfg(target_os = "linux")]
+pub(crate) mod resolution_worker;
 pub(crate) mod resolver;
 pub(crate) mod session_registry;
 #[cfg(target_os = "linux")]
@@ -113,6 +115,7 @@ impl DirectorySelectionRegistry {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct ProjectDirectoryIdentity {
     pub(crate) project_key: Option<String>,
     pub(crate) project_path: String,

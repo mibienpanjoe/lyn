@@ -55,11 +55,22 @@ enum ContextAuthority {
     User,
 }
 
+/// Rust-only, single-use authority for an out-of-lock context query.
+#[derive(Clone, Copy)]
+pub(crate) struct AutomaticContextTicket {
+    session_id: CaptureSessionId,
+    generation: Uuid,
+    revision: Uuid,
+    invoke_generation: Option<Uuid>,
+}
+
 #[derive(Default)]
 pub(crate) struct CaptureSessionService {
     active: Option<CaptureSession>,
     invoke_generation: Option<Uuid>,
     context_authority: ContextAuthority,
+    context_revision: Uuid,
+    automatic_query: Option<Uuid>,
     last_cancelled: Option<CaptureSessionId>,
     last_completed: Option<(CaptureSessionId, CaptureId)>,
     cleanup_requests: VecDeque<StagingCleanupRequest>,
@@ -80,6 +91,7 @@ impl CaptureSessionService {
 
         let session = CaptureSession {
             session_id: CaptureSessionId::new(),
+            context_revision: 0,
             context_resolution: ContextResolution::Required {
                 candidate: (),
                 selection: (),
@@ -90,6 +102,8 @@ impl CaptureSessionService {
         self.active = Some(session.clone());
         self.invoke_generation = request_id;
         self.context_authority = ContextAuthority::Automatic;
+        self.context_revision = Uuid::new_v4();
+        self.automatic_query = None;
         InvocationPrepare::New(session)
     }
 
@@ -116,14 +130,74 @@ impl CaptureSessionService {
         self.active.clone()
     }
 
+    pub(crate) fn context_revision(&self) -> Uuid {
+        self.context_revision
+    }
+
+    pub(crate) fn begin_automatic_query(
+        &mut self,
+        session_id: CaptureSessionId,
+    ) -> Option<AutomaticContextTicket> {
+        if self.has_user_context_authority() {
+            return None;
+        }
+        self.set_context_resolution(
+            session_id,
+            ContextResolution::Required {
+                candidate: (),
+                selection: (),
+            },
+        )
+        .ok()?;
+        let generation = Uuid::new_v4();
+        self.automatic_query = Some(generation);
+        Some(AutomaticContextTicket {
+            session_id,
+            generation,
+            revision: self.context_revision,
+            invoke_generation: self.invoke_generation,
+        })
+    }
+
+    pub(crate) fn finish_automatic_query(
+        &mut self,
+        ticket: AutomaticContextTicket,
+        resolution: ContextResolution,
+    ) -> Result<Option<CaptureSession>, SessionStateError> {
+        if self
+            .active
+            .as_ref()
+            .is_none_or(|active| active.session_id != ticket.session_id)
+        {
+            return Err(SessionStateError::StaleSession);
+        }
+        if self.has_user_context_authority()
+            || self.automatic_query != Some(ticket.generation)
+            || self.context_revision != ticket.revision
+            || self.invoke_generation != ticket.invoke_generation
+        {
+            return Ok(None);
+        }
+        self.set_context_resolution(ticket.session_id, resolution)
+            .map(Some)
+    }
+
     pub(crate) fn set_context_resolution(
         &mut self,
         session_id: CaptureSessionId,
         resolution: ContextResolution,
     ) -> Result<CaptureSession, SessionStateError> {
         let session = self.active_mut(session_id)?;
+        let revision = session
+            .context_revision
+            .checked_add(1)
+            .ok_or(SessionStateError::StaleSession)?;
         session.context_resolution = resolution;
-        Ok(session.clone())
+        session.context_revision = revision;
+        let result = session.clone();
+        self.context_revision = Uuid::new_v4();
+        self.automatic_query = None;
+        Ok(result)
     }
 
     pub(crate) fn apply_automatic_context_resolution(
@@ -588,6 +662,117 @@ mod tests {
         assert_eq!(ignored.context_resolution, user.context_resolution);
         assert_eq!(ignored.staged_media, Some(staged));
         assert!(service.has_user_context_authority());
+    }
+
+    #[test]
+    fn automatic_query_ticket_is_latest_only_and_single_use() {
+        let mut service = CaptureSessionService::default();
+        let session = service.get_or_prepare();
+        let old = service.begin_automatic_query(session.session_id).unwrap();
+        let current = service.begin_automatic_query(session.session_id).unwrap();
+        assert_eq!(
+            service
+                .finish_automatic_query(old, resolved_context())
+                .unwrap(),
+            None
+        );
+        assert!(
+            service
+                .finish_automatic_query(current, resolved_context())
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            service
+                .finish_automatic_query(current, resolved_context())
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn user_correction_or_new_session_invalidates_a_pending_query_without_losing_media() {
+        let mut service = CaptureSessionService::default();
+        let session = service.get_or_prepare();
+        service
+            .set_staged_media(session.session_id, staged_image())
+            .unwrap();
+        let ticket = service.begin_automatic_query(session.session_id).unwrap();
+        let corrected = service
+            .apply_user_context_resolution(session.session_id, resolved_context())
+            .unwrap();
+        assert_eq!(
+            service
+                .finish_automatic_query(
+                    ticket,
+                    ContextResolution::Required {
+                        candidate: (),
+                        selection: ()
+                    }
+                )
+                .unwrap(),
+            None
+        );
+        assert_eq!(service.active_session(), Some(corrected));
+        service.cancel(session.session_id).unwrap();
+        let next = service.get_or_prepare();
+        assert_eq!(
+            service.finish_automatic_query(ticket, resolved_context()),
+            Err(SessionStateError::StaleSession)
+        );
+        assert_eq!(service.active_session(), Some(next));
+    }
+
+    #[test]
+    fn context_revision_changes_even_when_selection_changes_away_and_back() {
+        let mut service = CaptureSessionService::default();
+        let session = service.get_or_prepare();
+        let first = service.context_revision();
+        service
+            .set_context_resolution(session.session_id, resolved_context())
+            .unwrap();
+        let second = service.context_revision();
+        service
+            .set_context_resolution(session.session_id, session.context_resolution)
+            .unwrap();
+        assert_ne!(first, second);
+        assert_ne!(first, service.context_revision());
+        assert_eq!(service.active_session().unwrap().context_revision, 2);
+    }
+
+    #[test]
+    fn public_context_revision_exhaustion_refuses_without_changing_context() {
+        let mut service = CaptureSessionService::default();
+        let session = service.get_or_prepare();
+        service.active.as_mut().unwrap().context_revision = u32::MAX;
+        let before = service.active_session();
+        assert_eq!(
+            service.set_context_resolution(session.session_id, resolved_context()),
+            Err(SessionStateError::StaleSession)
+        );
+        assert_eq!(service.active_session(), before);
+    }
+
+    #[test]
+    fn popup_get_keeps_ticket_but_a_new_provider_invoke_retires_it() {
+        let mut service = CaptureSessionService::default();
+        let session = service.get_or_prepare();
+        let first = service.begin_automatic_query(session.session_id).unwrap();
+        service.get_or_prepare();
+        assert!(
+            service
+                .finish_automatic_query(first, resolved_context())
+                .unwrap()
+                .is_some()
+        );
+        let pending = service.begin_automatic_query(session.session_id).unwrap();
+        service.prepare_invocation(Some(Uuid::new_v4()));
+        assert_eq!(
+            service
+                .finish_automatic_query(pending, resolved_context())
+                .unwrap(),
+            None
+        );
     }
 
     #[test]

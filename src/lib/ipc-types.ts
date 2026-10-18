@@ -102,7 +102,7 @@ export type StagedMedia = { stagedMediaId: StagedMediaId, kind: MediaKind, previ
 
 export type RecordingState = { "state": "idle" } | { "state": "recording", elapsedMs: number, } | { "state": "stopped", elapsedMs: number, stagedMediaId: StagedMediaId, };
 
-export type CaptureSession = { sessionId: CaptureSessionId, contextResolution: ContextResolution, stagedMedia: StagedMedia | null, recordingState: RecordingState, };
+export type CaptureSession = { sessionId: CaptureSessionId, contextRevision: number, contextResolution: ContextResolution, stagedMedia: StagedMedia | null, recordingState: RecordingState, };
 
 export type CancelCaptureSessionInput = { sessionId: CaptureSessionId, };
 

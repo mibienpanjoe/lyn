@@ -139,6 +139,10 @@ pub fn run() {
             // A missing or unusable runtime socket therefore disables only this provider.
             let _ = context::vscode_provider::start(app.handle().clone());
             #[cfg(target_os = "linux")]
+            if let Ok(worker) = context::resolution_worker::ResolutionWorker::start() {
+                app.manage(worker);
+            }
+            #[cfg(target_os = "linux")]
             let _ = context::browser_provider::start(app.handle().clone());
             #[cfg(target_os = "linux")]
             let _ = context::shell_provider::start(app.handle().clone());
@@ -333,6 +337,14 @@ pub(crate) fn invoke_capture_popup_with_request(
 
     let mut platform = platform::x11::X11CaptureWindowPlatform::new(app.clone());
     let foreground = platform.capture_foreground().ok();
+    // Freeze eligibility before queuing: a later heartbeat is not invocation
+    // evidence, even when it refers to the same native window.
+    let sources = app
+        .state::<Mutex<context::session_registry::ContextSourceRegistry>>()
+        .lock()
+        .ok()
+        .map(|mut registry| registry.snapshot_live_sources(std::time::Instant::now()))
+        .unwrap_or_default();
     if let Ok(mut invocation) = app.state::<Mutex<platform::InvocationContext>>().lock() {
         if foreground.is_some() || !invocation.has_foreground() {
             invocation.record_foreground(foreground);
@@ -347,24 +359,28 @@ pub(crate) fn invoke_capture_popup_with_request(
             let is_new = prepared.is_new();
             let apply_automatic =
                 service.should_apply_automatic_foreground(is_new, foreground.is_some());
-            (prepared.session(), is_new, apply_automatic)
+            let ticket = apply_automatic
+                .then(|| service.begin_automatic_query(prepared.session().session_id))
+                .flatten();
+            (
+                service
+                    .active_session()
+                    .unwrap_or_else(|| prepared.session()),
+                is_new,
+                ticket,
+            )
         });
     let is_new = prepared.as_ref().is_some_and(|(_, is_new, _)| *is_new);
-    let apply_automatic = prepared
-        .as_ref()
-        .is_some_and(|(_, _, apply_automatic)| *apply_automatic);
+    let ticket = prepared.as_ref().and_then(|(_, _, ticket)| *ticket);
     let prepared_session = prepared.map(|(session, _, _)| session);
-    let session = prepared_session.map(|session| {
-        if apply_automatic {
-            resolve_invocation_context(app, session, foreground)
-        } else {
-            session
-        }
-    });
+    let (popup_ready, wait_popup_ready) = std::sync::mpsc::channel();
+    if let Some(ticket) = ticket {
+        queue_invocation_resolution(app, foreground, sources, ticket, wait_popup_ready);
+    }
     if platform.show_capture_popup().is_err() {
         return;
     }
-    if let Some(session) = session {
+    if let Some(session) = prepared_session {
         if is_new {
             let _ = app.emit("capture://session-ready", &session);
         } else {
@@ -375,16 +391,60 @@ pub(crate) fn invoke_capture_popup_with_request(
             serde_json::json!({ "sessionId": session.session_id }),
         );
     }
+    // The worker can compute during popup construction, but never publishes a
+    // result before the initial session event. Failure to show drops this gate.
+    let _ = popup_ready.send(());
 }
 
 #[cfg(target_os = "linux")]
-fn resolve_invocation_context(
+fn queue_invocation_resolution(
     app: &tauri::AppHandle,
-    session: contract::CaptureSession,
     foreground: Option<platform::ForegroundWindowIdentity>,
-) -> contract::CaptureSession {
-    // Lock order: registry (memory) → drop → database I/O → drop → session.
-    // Never hold the session mutex during Git or SQLite work.
+    sources: Vec<context::session_registry::LiveContextSource>,
+    ticket: capture::session::AutomaticContextTicket,
+    popup_ready: std::sync::mpsc::Receiver<()>,
+) {
+    let Some(worker) = app.try_state::<context::resolution_worker::ResolutionWorker>() else {
+        return;
+    };
+    let app = app.clone();
+    worker.submit(Box::new(move || {
+        let Some(resolution) = compute_invocation_context(&app, foreground, sources) else {
+            return;
+        };
+        if popup_ready
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .is_err()
+        {
+            return;
+        }
+        let revised = app
+            .state::<Mutex<capture::session::CaptureSessionService>>()
+            .lock()
+            .ok()
+            .and_then(|mut service| {
+                service
+                    .finish_automatic_query(ticket, resolution)
+                    .ok()
+                    .flatten()
+            });
+        if let Some(session) = revised {
+            let _ = app.emit("capture://context-revised", &session);
+            let _ = app.emit(
+                "context://sources-changed",
+                serde_json::json!({"sessionId":session.session_id}),
+            );
+        }
+    }));
+}
+
+#[cfg(target_os = "linux")]
+fn compute_invocation_context(
+    app: &tauri::AppHandle,
+    foreground: Option<platform::ForegroundWindowIdentity>,
+    sources: Vec<context::session_registry::LiveContextSource>,
+) -> Option<contract::ContextResolution> {
+    // Sources were frozen before dispatch. No registry/session guard spans I/O.
     use context::resolver::{InvocationAssociations, ResolutionOutcome, classify, resolve};
     use contract::{ContextCandidate, ContextProviderKind, ContextResolution, ContextSelection};
 
@@ -396,13 +456,8 @@ fn resolve_invocation_context(
         inferred_windows: &[],
     };
     let outcome = {
-        let registry_state = app.state::<Mutex<context::session_registry::ContextSourceRegistry>>();
-        let Ok(mut registry) = registry_state.lock() else {
-            return session;
-        };
-        let candidates: Vec<_> = registry
-            .live_sources(std::time::Instant::now())
-            .into_iter()
+        let candidates: Vec<_> = sources
+            .iter()
             .filter_map(|source| {
                 classify(
                     source.source_id(),
@@ -447,14 +502,9 @@ fn resolve_invocation_context(
         },
         ResolutionOutcome::Resolved(source_id) => {
             let source = {
-                let registry_state =
-                    app.state::<Mutex<context::session_registry::ContextSourceRegistry>>();
-                let Ok(mut registry) = registry_state.lock() else {
-                    return session;
-                };
-                let Some(source) = registry.get(source_id, std::time::Instant::now()) else {
-                    return session;
-                };
+                let source = sources
+                    .iter()
+                    .find(|source| source.source_id() == source_id)?;
                 (
                     source.context().clone(),
                     source.identity().project_key.clone(),
@@ -466,12 +516,12 @@ fn resolve_invocation_context(
             let context = {
                 let database_state = app.state::<Mutex<storage::Database>>();
                 let Ok(database) = database_state.lock() else {
-                    return session;
+                    return None;
                 };
                 let Ok(context) = storage::contexts::ContextRepository::new(database.connection())
                     .ensure_project(source.0.id, &source.0.name, source.1.as_deref(), &source.2)
                 else {
-                    return session;
+                    return None;
                 };
                 context
             };
@@ -486,15 +536,7 @@ fn resolve_invocation_context(
             }
         }
     };
-    app.state::<Mutex<capture::session::CaptureSessionService>>()
-        .lock()
-        .ok()
-        .and_then(|mut service| {
-            service
-                .apply_automatic_context_resolution(session.session_id, resolution)
-                .ok()
-        })
-        .unwrap_or(session)
+    Some(resolution)
 }
 
 #[cfg(all(desktop, not(target_os = "linux")))]

@@ -65,10 +65,17 @@
 
   onMount(() => {
     draftInput?.focus();
-    void initialise();
+    let pendingRevision: CaptureSession | null = null;
     const unlisten = client.onSessionReady((readySession) => {
       const sameSession = session?.sessionId === readySession.sessionId;
-      session = readySession;
+      if (sameSession) {
+        applyContextRevision(readySession);
+      } else {
+        session = readySession;
+      }
+      if (pendingRevision?.sessionId === readySession.sessionId)
+        applyContextRevision(pendingRevision);
+      pendingRevision = null;
       if (!sameSession) {
         draft = '';
         error = null;
@@ -85,13 +92,29 @@
         void refreshSources();
     });
     const unlistenRevised = client.onContextRevised((revised) => {
-      if (session?.sessionId !== revised.sessionId) return;
-      session = {
-        ...session,
-        contextResolution: revised.contextResolution,
-      };
+      if (!session) {
+        if (
+          pendingRevision?.sessionId !== revised.sessionId ||
+          revised.contextRevision > pendingRevision.contextRevision
+        )
+          pendingRevision = revised;
+        return;
+      }
+      applyContextRevision(revised);
       if (chooserOpen) void refreshSources();
     });
+    // Register every event receiver before taking the bootstrap snapshot.
+    void Promise.all([unlisten, unlistenSources, unlistenRevised])
+      .then(async () => {
+        await initialise(() => pendingRevision);
+        pendingRevision = null;
+      })
+      .catch((caught) => {
+        error = toAppError(
+          caught,
+          'Lyn could not prepare this capture. Try again.',
+        );
+      });
     return () => {
       void unlisten.then((removeListener) => removeListener());
       void unlistenSources.then((removeListener) => removeListener());
@@ -99,10 +122,42 @@
     };
   });
 
-  async function initialise() {
+  function applyContextRevision(revised: CaptureSession) {
+    if (
+      !session ||
+      session.sessionId !== revised.sessionId ||
+      revised.contextRevision <= session.contextRevision
+    )
+      return;
+    session = {
+      ...session,
+      contextResolution: revised.contextResolution,
+      contextRevision: revised.contextRevision,
+    };
+  }
+
+  function applyOperationResult(result: CaptureSession) {
+    if (!session || session.sessionId !== result.sessionId) return;
+    // A media operation can return an older context snapshot. Keep its media
+    // result, but never roll back a context already received through an event.
+    const current = session;
+    session =
+      result.contextRevision < current.contextRevision
+        ? {
+            ...result,
+            contextResolution: current.contextResolution,
+            contextRevision: current.contextRevision,
+          }
+        : result;
+  }
+
+  async function initialise(pending: () => CaptureSession | null) {
     try {
       const activeSession = await client.getActiveSession();
-      session = activeSession;
+      if (!session) session = activeSession;
+      else applyContextRevision(activeSession);
+      const revised = pending();
+      if (revised) applyContextRevision(revised);
       await refreshSources();
       if (cancelRequested) {
         await cancel();
@@ -155,7 +210,9 @@
   async function selectContext(context: ContextRef) {
     if (!session) return;
     try {
-      session = await client.selectContext(session.sessionId, context.id);
+      applyOperationResult(
+        await client.selectContext(session.sessionId, context.id),
+      );
       sourceStale = false;
       error = null;
       await closeChooser();
@@ -170,9 +227,8 @@
   async function selectLiveSource(source: ContextSourceOption) {
     if (!session) return;
     try {
-      session = await client.selectLiveSource(
-        session.sessionId,
-        source.sourceId,
+      applyOperationResult(
+        await client.selectLiveSource(session.sessionId, source.sourceId),
       );
       sourceStale = false;
       error = null;
@@ -355,9 +411,11 @@
       if (staged.kind === 'audio' && isPlaying) {
         await client.stopAudioPlayback(staged.stagedMediaId).catch(() => {});
       }
-      session = await client.discardStagedMedia(
-        session.sessionId,
-        staged.stagedMediaId,
+      applyOperationResult(
+        await client.discardStagedMedia(
+          session.sessionId,
+          staged.stagedMediaId,
+        ),
       );
       isPlaying = false;
       mediaNotice = null;

@@ -16,6 +16,7 @@ const context: ContextRef = {
 
 const session: CaptureSession = {
   sessionId: 'session-1',
+  contextRevision: 0,
   contextResolution: {
     state: 'required',
     candidate: null,

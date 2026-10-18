@@ -446,6 +446,7 @@ pub enum RecordingState {
 #[serde(rename_all = "camelCase")]
 pub struct CaptureSession {
     pub session_id: CaptureSessionId,
+    pub context_revision: u32,
     pub context_resolution: ContextResolution,
     pub staged_media: Option<StagedMedia>,
     pub recording_state: RecordingState,
@@ -898,6 +899,7 @@ mod tests {
         };
         let session = CaptureSession {
             session_id: CaptureSessionId::new(),
+            context_revision: 0,
             context_resolution: ContextResolution::Resolved {
                 candidate: candidate.clone(),
                 selection: Some(selection.clone()),
