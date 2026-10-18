@@ -279,6 +279,8 @@ Live sources are revalidated before selection. A saved context has `branchName: 
 
 Live sources are revalidated at selection and save time. A stale source returns `CONTEXT_SOURCE_STALE` without changing the session or its draft state.
 
+Manual selection reserves a Rust-only ticket before lookup, preventing automatic completion from overtaking the user's choice. A newer selection supersedes it; a failed lookup releases its reservation without changing the context/media. Saves are refused while a selection is pending. An automatic query invalidated by that attempt is not revived after failure; retry selection or invoke again.
+
 For text, image and audio saves, source revalidation and project lookup run outside the capture-session mutex against a snapshot. Before `save_once`, Rust checks the same active session and private context epoch; an intervening correction (including away-and-back), cancellation or replacement returns `STALE_SESSION`. Media-only changes do not invalidate the context epoch; final validation uses the current session under `save_once`, not the earlier snapshot. Capture persistence and staged-media finalization stay inside this serialized boundary.
 
 Text, image, and audio saves use the same serialized live-selection validation before persistence or media finalization. On Linux, a native shell source must still match its registered process uid/inode and project directory; a recent heartbeat alone is insufficient. Rejection leaves staged media available for preview and context reselection.

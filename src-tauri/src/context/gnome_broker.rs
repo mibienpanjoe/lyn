@@ -38,12 +38,55 @@ pub(crate) struct NativeEvidence {
 
 pub(crate) struct NativeProcessEvidence {
     pub(crate) native: NativeEvidence,
+    window_id: u32,
     group: super::gnome_process::ForegroundGroup,
 }
 
 impl NativeProcessEvidence {
     pub(crate) fn directory(&self) -> &Path {
         &self.group.directory
+    }
+
+    pub(crate) fn revalidate(&self, broker: &NativeBroker) -> Result<(), BrokerError> {
+        self.group
+            .revalidate_lifetimes()
+            .map_err(|_| BrokerError::Unavailable)?;
+        let now =
+            super::gnome_process::ProcessInvocation::now().map_err(|_| BrokerError::Unavailable)?;
+        let current = broker.query_window_process(self.window_id, now)?;
+        if current.native != self.native || current.group != self.group {
+            return Err(BrokerError::Unavailable);
+        }
+        self.group
+            .revalidate_lifetimes()
+            .map_err(|_| BrokerError::Unavailable)
+    }
+}
+
+/// A source cannot be assembled from an ordinary provider payload. It retains
+/// the original kernel pins and the broker generation through selection/save.
+pub(crate) struct NativeSourceLease {
+    broker: Arc<NativeBroker>,
+    evidence: NativeProcessEvidence,
+}
+
+impl NativeSourceLease {
+    pub(crate) fn query(
+        broker: Arc<NativeBroker>,
+        window: u32,
+        invocation: super::gnome_process::ProcessInvocation,
+    ) -> Result<Self, BrokerError> {
+        let evidence = broker.query_window_process(window, invocation)?;
+        Ok(Self { broker, evidence })
+    }
+    pub(crate) fn directory(&self) -> &Path {
+        self.evidence.directory()
+    }
+    pub(crate) fn window(&self) -> u32 {
+        self.evidence.window_id
+    }
+    pub(crate) fn revalidate(&self) -> bool {
+        self.evidence.revalidate(&self.broker).is_ok()
     }
 }
 
@@ -235,7 +278,11 @@ impl NativeBroker {
         if super::gnome_channel::monotonic_us().map_err(BrokerError::Channel)? >= deadline {
             return Err(BrokerError::Unavailable);
         }
-        Ok(NativeProcessEvidence { native, group })
+        Ok(NativeProcessEvidence {
+            native,
+            window_id,
+            group,
+        })
     }
 
     fn query_window_pty_with<W: PartialEq>(

@@ -31,16 +31,7 @@ impl X11CaptureWindowPlatform {
 
 impl CaptureWindowPlatform for X11CaptureWindowPlatform {
     fn capture_foreground(&mut self) -> Result<ForegroundWindowIdentity, PlatformError> {
-        let window = active_window()?;
-        if is_lyn_window(window) {
-            return last_context_foreground();
-        }
-        if let Some(class) = window_class(window) {
-            let _ = remember_active_context_window(window, &class);
-        }
-        Ok(ForegroundWindowIdentity {
-            window: WindowCorrelationToken::from_native(u64::from(window)),
-        })
+        sample_foreground().map(|(identity, _)| identity)
     }
 
     fn show_capture_popup(&mut self) -> Result<(), PlatformError> {
@@ -80,6 +71,24 @@ impl CaptureWindowPlatform for X11CaptureWindowPlatform {
     ) -> Result<(), PlatformError> {
         activate_window(identity.window.native() as u32)
     }
+}
+
+/// A remembered window is useful for focus restoration, never fresh native
+/// invocation proof. Sample once so native routing cannot mix two OS samples.
+pub(crate) fn sample_foreground() -> Result<(ForegroundWindowIdentity, bool), PlatformError> {
+    let window = active_window()?;
+    if is_lyn_window(window) {
+        return last_context_foreground().map(|identity| (identity, false));
+    }
+    if let Some(class) = window_class(window) {
+        let _ = remember_active_context_window(window, &class);
+    }
+    Ok((
+        ForegroundWindowIdentity {
+            window: WindowCorrelationToken::from_native(u64::from(window)),
+        },
+        true,
+    ))
 }
 
 pub(crate) fn is_lyn_window(window: u32) -> bool {

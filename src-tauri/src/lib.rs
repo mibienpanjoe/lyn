@@ -143,6 +143,13 @@ pub fn run() {
                 app.manage(worker);
             }
             #[cfg(target_os = "linux")]
+            if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR")
+                && let Ok(broker) =
+                    context::gnome_broker::NativeBroker::start(std::path::Path::new(&runtime))
+            {
+                app.manage(std::sync::Arc::new(broker));
+            }
+            #[cfg(target_os = "linux")]
             let _ = context::browser_provider::start(app.handle().clone());
             #[cfg(target_os = "linux")]
             let _ = context::shell_provider::start(app.handle().clone());
@@ -302,6 +309,12 @@ fn dismiss_and_cancel_capture(app: &tauri::AppHandle) {
     {
         if let Some(session) = service.active_session() {
             let _ = service.cancel(session.session_id);
+            if let Ok(mut registry) = app
+                .state::<Mutex<context::session_registry::ContextSourceRegistry>>()
+                .lock()
+            {
+                registry.release_native(session.session_id);
+            }
             if let Ok(mut media_store) = app.state::<Mutex<media::staging::MediaStore>>().lock() {
                 while let Some(cleanup) = service.take_cleanup_request() {
                     let _ = media_store.discard_staged(cleanup.session_id, cleanup.staged_media_id);
@@ -329,6 +342,13 @@ pub(crate) fn invoke_capture_popup(app: &tauri::AppHandle) {
 }
 
 #[cfg(target_os = "linux")]
+enum NativeInvocationRoute {
+    Other,
+    Refused,
+    Query(u32, context::gnome_process::ProcessInvocation),
+}
+
+#[cfg(target_os = "linux")]
 pub(crate) fn invoke_capture_popup_with_request(
     app: &tauri::AppHandle,
     request_id: Option<uuid::Uuid>,
@@ -336,7 +356,24 @@ pub(crate) fn invoke_capture_popup_with_request(
     use crate::platform::CaptureWindowPlatform;
 
     let mut platform = platform::x11::X11CaptureWindowPlatform::new(app.clone());
-    let foreground = platform.capture_foreground().ok();
+    let native_time = context::gnome_process::ProcessInvocation::now().ok();
+    let sample = platform::x11::sample_foreground().ok();
+    let foreground = sample.map(|(identity, _)| identity);
+    let native_route = sample
+        .map(|(identity, actual)| {
+            let window = identity.window.native() as u32;
+            match platform::x11::classify_native_window(window).map(|(_, kind)| kind) {
+                Some(platform::x11::ContextWindowKind::GnomeTerminal) => {
+                    match native_time.filter(|_| actual) {
+                        Some(time) => NativeInvocationRoute::Query(window, time),
+                        None => NativeInvocationRoute::Refused,
+                    }
+                }
+                Some(_) => NativeInvocationRoute::Other,
+                None => NativeInvocationRoute::Refused,
+            }
+        })
+        .unwrap_or(NativeInvocationRoute::Refused);
     // Freeze eligibility before queuing: a later heartbeat is not invocation
     // evidence, even when it refers to the same native window.
     let sources = app
@@ -357,8 +394,10 @@ pub(crate) fn invoke_capture_popup_with_request(
         .map(|mut service| {
             let prepared = service.prepare_invocation(request_id);
             let is_new = prepared.is_new();
-            let apply_automatic =
-                service.should_apply_automatic_foreground(is_new, foreground.is_some());
+            let apply_automatic = service.should_apply_automatic_foreground(
+                is_new,
+                sample.is_some_and(|(_, actual)| actual),
+            );
             let ticket = apply_automatic
                 .then(|| service.begin_automatic_query(prepared.session().session_id))
                 .flatten();
@@ -375,7 +414,14 @@ pub(crate) fn invoke_capture_popup_with_request(
     let prepared_session = prepared.map(|(session, _, _)| session);
     let (popup_ready, wait_popup_ready) = std::sync::mpsc::channel();
     if let Some(ticket) = ticket {
-        queue_invocation_resolution(app, foreground, sources, ticket, wait_popup_ready);
+        queue_invocation_resolution(
+            app,
+            foreground,
+            sources,
+            native_route,
+            ticket,
+            wait_popup_ready,
+        );
     }
     if platform.show_capture_popup().is_err() {
         return;
@@ -401,6 +447,7 @@ fn queue_invocation_resolution(
     app: &tauri::AppHandle,
     foreground: Option<platform::ForegroundWindowIdentity>,
     sources: Vec<context::session_registry::LiveContextSource>,
+    native_route: NativeInvocationRoute,
     ticket: capture::session::AutomaticContextTicket,
     popup_ready: std::sync::mpsc::Receiver<()>,
 ) {
@@ -409,7 +456,9 @@ fn queue_invocation_resolution(
     };
     let app = app.clone();
     worker.submit(Box::new(move || {
-        let Some(resolution) = compute_invocation_context(&app, foreground, sources) else {
+        let Some((resolution, native_source)) =
+            compute_invocation_context(&app, foreground, sources, native_route)
+        else {
             return;
         };
         if popup_ready
@@ -423,10 +472,19 @@ fn queue_invocation_resolution(
             .lock()
             .ok()
             .and_then(|mut service| {
-                service
+                // Native source preparation did I/O before either guard. Retire
+                // the previous lease only after this exact ticket is accepted.
+                let registry_state =
+                    app.state::<Mutex<context::session_registry::ContextSourceRegistry>>();
+                let mut registry = registry_state.lock().ok()?;
+                let session = service
                     .finish_automatic_query(ticket, resolution)
                     .ok()
-                    .flatten()
+                    .flatten()?;
+                if let Some(source) = native_source {
+                    registry.register_native(session.session_id, source);
+                }
+                Some(session)
             });
         if let Some(session) = revised {
             let _ = app.emit("capture://context-revised", &session);
@@ -443,10 +501,38 @@ fn compute_invocation_context(
     app: &tauri::AppHandle,
     foreground: Option<platform::ForegroundWindowIdentity>,
     sources: Vec<context::session_registry::LiveContextSource>,
-) -> Option<contract::ContextResolution> {
+    native_route: NativeInvocationRoute,
+) -> Option<(
+    contract::ContextResolution,
+    Option<context::session_registry::LiveContextSource>,
+)> {
     // Sources were frozen before dispatch. No registry/session guard spans I/O.
     use context::resolver::{InvocationAssociations, ResolutionOutcome, classify, resolve};
     use contract::{ContextCandidate, ContextProviderKind, ContextResolution, ContextSelection};
+
+    if !matches!(native_route, NativeInvocationRoute::Other) {
+        let resolved = (|| {
+            let NativeInvocationRoute::Query(window, invocation) = native_route else {
+                return None;
+            };
+            let broker = app.try_state::<std::sync::Arc<context::gnome_broker::NativeBroker>>()?;
+            let database = app.state::<Mutex<storage::Database>>();
+            let (resolution, source) = context::gnome_capture::prepare(
+                broker.inner().clone(),
+                window,
+                invocation,
+                database.inner(),
+            )?;
+            Some((resolution, Some(source)))
+        })();
+        return Some(resolved.unwrap_or((
+            ContextResolution::Required {
+                candidate: (),
+                selection: (),
+            },
+            None,
+        )));
+    }
 
     let foreground_window = foreground.map(|identity| identity.window);
     let associations = InvocationAssociations {
@@ -536,7 +622,7 @@ fn compute_invocation_context(
             }
         }
     };
-    Some(resolution)
+    Some((resolution, None))
 }
 
 #[cfg(all(desktop, not(target_os = "linux")))]

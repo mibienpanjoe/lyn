@@ -5,6 +5,8 @@ pub(crate) mod browser_provider;
 #[cfg(target_os = "linux")]
 pub(crate) mod gnome_broker;
 #[cfg(target_os = "linux")]
+pub(crate) mod gnome_capture;
+#[cfg(target_os = "linux")]
 pub(crate) mod gnome_channel;
 #[cfg(target_os = "linux")]
 pub(crate) mod gnome_listener;

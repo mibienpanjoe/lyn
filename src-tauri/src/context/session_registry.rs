@@ -41,9 +41,104 @@ pub(crate) struct LiveContextSource {
     expires_at: Instant,
     #[cfg(target_os = "linux")]
     process_identity: Option<(u32, u64)>,
+    #[cfg(target_os = "linux")]
+    native: Option<std::sync::Arc<super::gnome_broker::NativeSourceLease>>,
 }
 
 impl LiveContextSource {
+    pub(crate) fn is_native(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            self.native.is_some()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn from_native(lease: super::gnome_broker::NativeSourceLease) -> Option<Self> {
+        let identity = inspect_project_directory(lease.directory()).ok()?;
+        let name = safe_directory_name(lease.directory());
+        if !lease.revalidate() {
+            return None;
+        }
+        let now = Instant::now();
+        Some(Self {
+            source_id: ContextSourceId::new(),
+            provider: ContextProviderKind::Shell,
+            source_kind: ProviderSourceKind::ExternalTerminal,
+            window: Some(WindowCorrelationToken::from_native(u64::from(
+                lease.window(),
+            ))),
+            process: None,
+            session: Some(CorrelationToken::new()),
+            identity,
+            context: ContextRef {
+                id: ContextId::new(),
+                kind: ContextKind::Project,
+                name: name.clone(),
+            },
+            application_name: "GNOME Terminal",
+            label: name,
+            observed_at: now,
+            expires_at: now + LIVE_SOURCE_TTL,
+            process_identity: None,
+            native: Some(std::sync::Arc::new(lease)),
+        })
+    }
+
+    /// Operates on an owned snapshot: never invoke while holding the registry
+    /// or capture-session mutex. Native sources retain their lifetime pins.
+    pub(crate) fn revalidated(mut self) -> Option<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if let Some(lease) = &self.native {
+                let refreshed = inspect_project_directory(lease.directory()).ok()?;
+                if refreshed.project_key != self.identity.project_key
+                    || refreshed.project_path != self.identity.project_path
+                    || !lease.revalidate()
+                {
+                    return None;
+                }
+                self.identity = refreshed;
+            } else if let Some(pid) = self.process.and_then(CorrelationToken::native_process_id) {
+                let path = format!("/proc/{pid}");
+                let before = fs::metadata(&path).ok()?;
+                let process_identity = (before.uid(), before.ino());
+                if Some(process_identity) != self.process_identity
+                    || before.uid() != fs::metadata("/proc/self").ok()?.uid()
+                {
+                    return None;
+                }
+                let directory = fs::canonicalize(format!("{path}/cwd")).ok()?;
+                let refreshed = inspect_project_directory(&directory).ok()?;
+                let after = fs::metadata(&path).ok()?;
+                if process_identity != (after.uid(), after.ino())
+                    || refreshed.project_key != self.identity.project_key
+                    || refreshed.project_path != self.identity.project_path
+                {
+                    return None;
+                }
+                self.identity = refreshed;
+            }
+        }
+        Some(self)
+    }
+
+    pub(crate) fn revalidate_native_lifetime(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            self.native.as_ref().is_none_or(|lease| lease.revalidate())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            true
+        }
+    }
+
     pub(crate) fn source_id(&self) -> ContextSourceId {
         self.source_id
     }
@@ -82,6 +177,8 @@ impl LiveContextSource {
 #[derive(Default)]
 pub(crate) struct ContextSourceRegistry {
     sources: HashMap<ContextSourceId, LiveContextSource>,
+    #[cfg(target_os = "linux")]
+    native_session: Option<crate::contract::CaptureSessionId>,
 }
 
 impl ContextSourceRegistry {
@@ -180,6 +277,8 @@ impl ContextSourceRegistry {
                         fs::metadata(format!("/proc/{}", token.native_process_id()?)).ok()?;
                     Some((metadata.uid(), metadata.ino()))
                 }),
+                #[cfg(target_os = "linux")]
+                native: None,
             },
         );
         Some(source_id)
@@ -203,46 +302,53 @@ impl ContextSourceRegistry {
 
     /// Owned invocation evidence: later heartbeats cannot alter this snapshot.
     pub(crate) fn snapshot_live_sources(&mut self, now: Instant) -> Vec<LiveContextSource> {
-        self.live_sources(now).into_iter().cloned().collect()
+        self.live_sources(now)
+            .into_iter()
+            .filter(|source| !source.is_native())
+            .cloned()
+            .collect()
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn register_native(
+        &mut self,
+        session_id: crate::contract::CaptureSessionId,
+        source: LiveContextSource,
+    ) {
+        assert!(source.is_native());
+        // One active capture, one retained native lease. Call only after its
+        // invocation ticket is accepted, so stale jobs cannot retire a source.
+        self.sources.retain(|_, source| !source.is_native());
+        self.sources.insert(source.source_id, source);
+        self.native_session = Some(session_id);
+    }
+
+    pub(crate) fn release_native(&mut self, session_id: crate::contract::CaptureSessionId) {
+        #[cfg(target_os = "linux")]
+        if self.native_session == Some(session_id) {
+            self.sources.retain(|_, source| !source.is_native());
+            self.native_session = None;
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = session_id;
     }
 
     /// Revalidate native shell identity before consuming a cached selection.
+    #[cfg(test)]
     pub(crate) fn revalidate(
         &mut self,
         source_id: ContextSourceId,
         now: Instant,
     ) -> Option<&LiveContextSource> {
         self.expire(now);
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::fs::MetadataExt;
-            let source = self.sources.get(&source_id)?;
-            if let Some(process_id) = source.process.and_then(CorrelationToken::native_process_id) {
-                let valid = (|| {
-                    let process_path = format!("/proc/{process_id}");
-                    let metadata = fs::metadata(&process_path).ok()?;
-                    let identity = (metadata.uid(), metadata.ino());
-                    if Some(identity) != source.process_identity
-                        || metadata.uid() != fs::metadata("/proc/self").ok()?.uid()
-                    {
-                        return None;
-                    }
-                    let directory = fs::canonicalize(format!("{process_path}/cwd")).ok()?;
-                    let refreshed = inspect_project_directory(&directory).ok()?;
-                    let after = fs::metadata(&process_path).ok()?;
-                    if identity != (after.uid(), after.ino())
-                        || refreshed.project_key != source.identity.project_key
-                        || refreshed.project_path != source.identity.project_path
-                    {
-                        return None;
-                    }
-                    Some(refreshed)
-                })();
-                let Some(identity) = valid else {
-                    self.sources.remove(&source_id);
-                    return None;
-                };
-                self.sources.get_mut(&source_id)?.identity = identity;
+        let source = self.sources.get(&source_id)?.clone();
+        match source.revalidated() {
+            Some(source) => {
+                self.sources.insert(source_id, source);
+            }
+            None => {
+                self.sources.remove(&source_id);
+                return None;
             }
         }
         self.sources.get(&source_id)
@@ -261,7 +367,8 @@ impl ContextSourceRegistry {
     }
 
     fn expire(&mut self, now: Instant) {
-        self.sources.retain(|_, source| source.expires_at > now);
+        self.sources
+            .retain(|_, source| source.is_native() || source.expires_at > now);
     }
 }
 

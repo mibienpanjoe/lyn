@@ -63,7 +63,7 @@ pub(crate) fn get_capture(
     get_capture_value(input, database.inner(), media_store.inner())
 }
 
-fn get_capture_value(
+pub(crate) fn get_capture_value(
     input: serde_json::Value,
     database: &Mutex<Database>,
     media_store: &Mutex<MediaStore>,

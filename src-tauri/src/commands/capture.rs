@@ -454,6 +454,9 @@ fn save_audio_capture_with_registry_value(
         saved.map(|saved| (capture_id, saved))
     }) {
         Ok(SaveOnceResult::Saved { mut value, .. }) => {
+            if let Ok(mut registry) = registry.lock() {
+                registry.release_native(input.session_id);
+            }
             value.enrichment_scheduled =
                 schedule_enrichment(database, value.capture_id, processor_available);
             CommandResult::success(value)
@@ -560,7 +563,12 @@ fn save_image_capture_with_registry_value(
         }
         saved.map(|saved| (capture_id, saved))
     }) {
-        Ok(SaveOnceResult::Saved { value, .. }) => CommandResult::success(value),
+        Ok(SaveOnceResult::Saved { value, .. }) => {
+            if let Ok(mut registry) = registry.lock() {
+                registry.release_native(input.session_id);
+            }
+            CommandResult::success(value)
+        }
         Ok(SaveOnceResult::AlreadySaved(_)) | Err(SaveOnceError::Session(_)) => {
             CommandResult::failure(stale_session_error())
         }
@@ -781,9 +789,16 @@ pub(crate) fn cancel_capture_session(
     input: serde_json::Value,
     service: State<'_, Mutex<CaptureSessionService>>,
     media_store: State<'_, Mutex<MediaStore>>,
+    registry: State<'_, Mutex<ContextSourceRegistry>>,
 ) -> CommandResult<CancelCaptureSessionResult> {
+    let target = serde_json::from_value::<CancelCaptureSessionInput>(input.clone()).ok();
     let result = cancel_capture_session_value(input, service.inner());
     if matches!(result, CommandResult::Success { .. }) {
+        if let Some(target) = target
+            && let Ok(mut registry) = registry.lock()
+        {
+            registry.release_native(target.session_id);
+        }
         drain_staging_cleanup(service.inner(), media_store.inner());
     }
     result
@@ -837,26 +852,27 @@ fn select_capture_context_source_with_registry_value(
     let Ok(input) = serde_json::from_value::<SelectCaptureContextSourceInput>(input) else {
         return CommandResult::failure(validation_error());
     };
-    let Ok(mut service) = service.lock() else {
-        return CommandResult::failure(internal_error());
+    let ticket = {
+        let Ok(mut service) = service.lock() else {
+            return CommandResult::failure(internal_error());
+        };
+        match service.begin_user_selection(input.session_id) {
+            Ok(ticket) => ticket,
+            Err(_) => return CommandResult::failure(stale_session_error()),
+        }
     };
-    if service.active_session().map(|session| session.session_id) != Some(input.session_id) {
-        return CommandResult::failure(stale_session_error());
-    }
 
-    let resolution = match input.selection {
+    let resolution = (|| match input.selection {
         ContextSelection::SavedContext { context_id } => {
             let context = {
-                let Ok(database) = database.lock() else {
-                    return CommandResult::failure(internal_error());
-                };
+                let database = database.lock().map_err(|_| internal_error())?;
                 match ContextRepository::new(database.connection()).get(context_id) {
                     Ok(Some(context)) => context,
-                    Ok(None) => return CommandResult::failure(context_not_found_error()),
-                    Err(_) => return CommandResult::failure(storage_unavailable_error()),
+                    Ok(None) => return Err(context_not_found_error()),
+                    Err(_) => return Err(storage_unavailable_error()),
                 }
             };
-            ContextResolution::Resolved {
+            Ok(ContextResolution::Resolved {
                 candidate: ContextCandidate {
                     context,
                     branch_name: None,
@@ -864,51 +880,32 @@ fn select_capture_context_source_with_registry_value(
                     requires_confirmation: false,
                 },
                 selection: Some(ContextSelection::SavedContext { context_id }),
-            }
+            })
         }
         ContextSelection::LiveSource { source_id } => {
-            let source = {
-                let Ok(mut registry) = registry.lock() else {
-                    return CommandResult::failure(internal_error());
-                };
-                let Some(source) = registry.get(source_id, Instant::now()) else {
-                    return CommandResult::failure(context_source_not_found_error());
-                };
-                (
-                    source.context().clone(),
-                    source.identity().project_key.clone(),
-                    source.identity().project_path.clone(),
-                    source.identity().branch_name.clone(),
-                    source.provider(),
-                )
-            };
-            let context = {
-                let Ok(database) = database.lock() else {
-                    return CommandResult::failure(internal_error());
-                };
-                match ContextRepository::new(database.connection()).ensure_project(
-                    source.0.id,
-                    &source.0.name,
-                    source.1.as_deref(),
-                    &source.2,
-                ) {
-                    Ok(context) => context,
-                    Err(_) => return CommandResult::failure(storage_unavailable_error()),
-                }
-            };
-            ContextResolution::Resolved {
-                candidate: ContextCandidate {
-                    context,
-                    branch_name: source.3,
-                    provider: source.4,
-                    requires_confirmation: false,
-                },
-                selection: Some(ContextSelection::LiveSource { source_id }),
+            let exists = registry
+                .lock()
+                .map_err(|_| internal_error())?
+                .get(source_id, Instant::now())
+                .is_some();
+            if !exists {
+                return Err(context_source_not_found_error());
             }
+            resolve_live_source(source_id, database, registry)
+        }
+    })();
+
+    let Ok(mut service) = service.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    let resolution = match resolution {
+        Ok(resolution) => resolution,
+        Err(error) => {
+            service.cancel_user_selection(ticket);
+            return CommandResult::failure(error);
         }
     };
-
-    match service.apply_user_context_resolution(input.session_id, resolution) {
+    match service.finish_user_selection(ticket, resolution) {
         Ok(session) => CommandResult::success(session),
         Err(SessionStateError::StaleSession) => CommandResult::failure(stale_session_error()),
     }
@@ -953,6 +950,9 @@ fn lock_session_after_context_check(
 ) -> Result<std::sync::MutexGuard<'_, CaptureSessionService>, AppError> {
     let (snapshot, revision) = {
         let service = service.lock().map_err(|_| internal_error())?;
+        if service.has_pending_user_selection() {
+            return Err(stale_session_error());
+        }
         let snapshot = service
             .active_session()
             .filter(|session| session.session_id == session_id)
@@ -963,6 +963,7 @@ fn lock_session_after_context_check(
     let mut service = service.lock().map_err(|_| internal_error())?;
     if service.active_session().map(|session| session.session_id) != Some(session_id)
         || service.context_revision() != revision
+        || service.has_pending_user_selection()
     {
         return Err(stale_session_error());
     }
@@ -984,53 +985,60 @@ fn refresh_selected_live_context(
         ..
     } = session.context_resolution
     {
-        let refreshed = {
-            let Ok(mut registry) = registry.lock() else {
-                return Err(internal_error());
-            };
-            registry
-                .revalidate(source_id, Instant::now())
-                .map(|source| {
-                    (
-                        source.context().clone(),
-                        source.identity().project_key.clone(),
-                        source.identity().project_path.clone(),
-                        source.identity().branch_name.clone(),
-                        source.provider(),
-                    )
-                })
-        };
-        let Some(refreshed) = refreshed else {
-            return Err(context_source_stale_error());
-        };
-        let context = {
-            let Ok(database) = database.lock() else {
-                return Err(internal_error());
-            };
-            match ContextRepository::new(database.connection()).ensure_project(
-                refreshed.0.id,
-                &refreshed.0.name,
-                refreshed.1.as_deref(),
-                &refreshed.2,
-            ) {
-                Ok(context) => context,
-                Err(_) => return Err(storage_unavailable_error()),
-            }
-        };
-        return Ok(Some(ContextResolution::Resolved {
-            candidate: ContextCandidate {
-                context,
-                branch_name: refreshed.3,
-                provider: refreshed.4,
-                requires_confirmation: false,
-            },
-            selection: Some(ContextSelection::LiveSource { source_id }),
-        }));
+        return resolve_live_source(source_id, database, registry).map(Some);
     }
     Ok(None)
 }
 
-fn save_text_capture_with_registry_value(
+fn resolve_live_source(
+    source_id: crate::contract::ContextSourceId,
+    database: &Mutex<Database>,
+    registry: &Mutex<ContextSourceRegistry>,
+) -> Result<ContextResolution, AppError> {
+    let snapshot = registry
+        .lock()
+        .map_err(|_| internal_error())?
+        .get(source_id, Instant::now())
+        .cloned()
+        .ok_or_else(context_source_stale_error)?;
+    let source = snapshot
+        .revalidated()
+        .ok_or_else(context_source_stale_error)?;
+    let identity = source.identity();
+    let context = {
+        let database = database.lock().map_err(|_| internal_error())?;
+        ContextRepository::new(database.connection())
+            .ensure_project(
+                source.context().id,
+                &source.context().name,
+                identity.project_key.as_deref(),
+                &identity.project_path,
+            )
+            .map_err(|_| storage_unavailable_error())?
+    };
+    // SQLite lookup may have waited: native lifetime/topology is checked again
+    // after it, without any service/registry/database mutex held.
+    if !source.revalidate_native_lifetime()
+        || registry
+            .lock()
+            .map_err(|_| internal_error())?
+            .get(source_id, Instant::now())
+            .is_none()
+    {
+        return Err(context_source_stale_error());
+    }
+    Ok(ContextResolution::Resolved {
+        candidate: ContextCandidate {
+            context,
+            branch_name: identity.branch_name.clone(),
+            provider: source.provider(),
+            requires_confirmation: false,
+        },
+        selection: Some(ContextSelection::LiveSource { source_id }),
+    })
+}
+
+pub(crate) fn save_text_capture_with_registry_value(
     input: serde_json::Value,
     database: &Mutex<Database>,
     service: &Mutex<CaptureSessionService>,
@@ -1068,7 +1076,12 @@ fn save_text_capture_with_registry_value(
             .map_err(|_| storage_write_error())?;
         Ok((saved.capture_id, saved))
     }) {
-        Ok(SaveOnceResult::Saved { value, .. }) => CommandResult::success(value),
+        Ok(SaveOnceResult::Saved { value, .. }) => {
+            if let Ok(mut registry) = registry.lock() {
+                registry.release_native(input.session_id);
+            }
+            CommandResult::success(value)
+        }
         Ok(SaveOnceResult::AlreadySaved(_))
         | Err(SaveOnceError::Session(SessionStateError::StaleSession)) => {
             CommandResult::failure(stale_session_error())
@@ -1376,6 +1389,46 @@ mod tests {
                 .context_resolution,
             ContextResolution::Ambiguous { .. }
         ));
+    }
+
+    #[test]
+    fn a_manual_lookup_in_progress_retires_an_older_save_preflight() {
+        let service = Mutex::new(CaptureSessionService::default());
+        let active = service.lock().unwrap().get_or_prepare();
+        let result = super::lock_session_after_context_check(active.session_id, &service, |_| {
+            service
+                .try_lock()
+                .unwrap()
+                .begin_user_selection(active.session_id)
+                .unwrap();
+            Ok(None)
+        });
+        assert!(matches!(result, Err(error) if error.code == ErrorCode::StaleSession));
+    }
+
+    #[test]
+    fn save_started_during_manual_lookup_cannot_refresh_the_old_context() {
+        let service = Mutex::new(CaptureSessionService::default());
+        let active = service.lock().unwrap().get_or_prepare();
+        let ticket = service
+            .lock()
+            .unwrap()
+            .begin_user_selection(active.session_id)
+            .unwrap();
+        let result = super::lock_session_after_context_check(active.session_id, &service, |_| {
+            Ok(Some(ContextResolution::Ambiguous {
+                candidate: (),
+                selection: (),
+            }))
+        });
+        assert!(matches!(result, Err(error) if error.code == ErrorCode::StaleSession));
+        let mut service = service.lock().unwrap();
+        assert_eq!(service.active_session(), Some(active.clone()));
+        assert!(
+            service
+                .finish_user_selection(ticket, active.context_resolution)
+                .is_ok()
+        );
     }
 
     #[test]

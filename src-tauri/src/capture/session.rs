@@ -64,6 +64,13 @@ pub(crate) struct AutomaticContextTicket {
     invoke_generation: Option<Uuid>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct UserSelectionTicket {
+    session_id: CaptureSessionId,
+    generation: Uuid,
+    revision: Uuid,
+}
+
 #[derive(Default)]
 pub(crate) struct CaptureSessionService {
     active: Option<CaptureSession>,
@@ -71,6 +78,7 @@ pub(crate) struct CaptureSessionService {
     context_authority: ContextAuthority,
     context_revision: Uuid,
     automatic_query: Option<Uuid>,
+    user_selection: Option<Uuid>,
     last_cancelled: Option<CaptureSessionId>,
     last_completed: Option<(CaptureSessionId, CaptureId)>,
     cleanup_requests: VecDeque<StagingCleanupRequest>,
@@ -104,6 +112,7 @@ impl CaptureSessionService {
         self.context_authority = ContextAuthority::Automatic;
         self.context_revision = Uuid::new_v4();
         self.automatic_query = None;
+        self.user_selection = None;
         InvocationPrepare::New(session)
     }
 
@@ -112,7 +121,46 @@ impl CaptureSessionService {
     }
 
     pub(crate) fn has_user_context_authority(&self) -> bool {
-        matches!(self.context_authority, ContextAuthority::User)
+        matches!(self.context_authority, ContextAuthority::User) || self.user_selection.is_some()
+    }
+
+    pub(crate) fn has_pending_user_selection(&self) -> bool {
+        self.user_selection.is_some()
+    }
+
+    pub(crate) fn begin_user_selection(
+        &mut self,
+        session_id: CaptureSessionId,
+    ) -> Result<UserSelectionTicket, SessionStateError> {
+        self.active_mut(session_id)?;
+        let generation = Uuid::new_v4();
+        self.user_selection = Some(generation);
+        self.automatic_query = None;
+        self.context_revision = Uuid::new_v4();
+        Ok(UserSelectionTicket {
+            session_id,
+            generation,
+            revision: self.context_revision,
+        })
+    }
+
+    pub(crate) fn cancel_user_selection(&mut self, ticket: UserSelectionTicket) {
+        if self.user_selection == Some(ticket.generation) {
+            self.user_selection = None;
+        }
+    }
+
+    pub(crate) fn finish_user_selection(
+        &mut self,
+        ticket: UserSelectionTicket,
+        resolution: ContextResolution,
+    ) -> Result<CaptureSession, SessionStateError> {
+        if self.user_selection != Some(ticket.generation)
+            || self.context_revision != ticket.revision
+        {
+            return Err(SessionStateError::StaleSession);
+        }
+        self.apply_user_context_resolution(ticket.session_id, resolution)
     }
 
     /// Automatic context binds to the pre-popup editor window. A later invoke
@@ -197,6 +245,7 @@ impl CaptureSessionService {
         let result = session.clone();
         self.context_revision = Uuid::new_v4();
         self.automatic_query = None;
+        self.user_selection = None;
         Ok(result)
     }
 
@@ -329,6 +378,9 @@ impl CaptureSessionService {
             && completed_session_id == session_id
         {
             return Ok(SaveOnceResult::AlreadySaved(capture_id));
+        }
+        if self.user_selection.is_some() {
+            return Err(SaveOnceError::Session(SessionStateError::StaleSession));
         }
         let session = self
             .active
@@ -751,6 +803,65 @@ mod tests {
             Err(SessionStateError::StaleSession)
         );
         assert_eq!(service.active_session(), before);
+    }
+
+    #[test]
+    fn manual_selection_reserves_priority_while_lookup_is_out_of_lock() {
+        let mut service = CaptureSessionService::default();
+        let session = service.get_or_prepare();
+        let automatic = service.begin_automatic_query(session.session_id).unwrap();
+        let before = service.active_session();
+        let user = service.begin_user_selection(session.session_id).unwrap();
+        assert_eq!(
+            service
+                .finish_automatic_query(automatic, resolved_context())
+                .unwrap(),
+            None
+        );
+        assert_eq!(service.active_session(), before);
+        let chosen = service
+            .finish_user_selection(user, resolved_context())
+            .unwrap();
+        assert_eq!(
+            chosen.context_revision,
+            before.unwrap().context_revision + 1
+        );
+        assert!(service.has_user_context_authority());
+    }
+
+    #[test]
+    fn failed_and_superseded_manual_lookups_do_not_mutate_the_draft_context() {
+        let mut service = CaptureSessionService::default();
+        let session = service.get_or_prepare();
+        let first = service.begin_user_selection(session.session_id).unwrap();
+        let second = service.begin_user_selection(session.session_id).unwrap();
+        service.cancel_user_selection(first);
+        assert!(service.has_user_context_authority());
+        assert_eq!(
+            service.finish_user_selection(first, resolved_context()),
+            Err(SessionStateError::StaleSession)
+        );
+        service.cancel_user_selection(second);
+        assert!(!service.has_user_context_authority());
+        assert_eq!(service.active_session(), Some(session));
+    }
+
+    #[test]
+    fn pending_manual_lookup_refuses_save_before_entering_persistence() {
+        let mut service = CaptureSessionService::default();
+        let session = service.get_or_prepare();
+        service.begin_user_selection(session.session_id).unwrap();
+        let saved: Result<super::SaveOnceResult<()>, super::SaveOnceError<()>> = service
+            .save_once(session.session_id, |_| {
+                panic!("pending choice reached persistence")
+            });
+        assert!(matches!(
+            saved,
+            Err(super::SaveOnceError::Session(
+                SessionStateError::StaleSession
+            ))
+        ));
+        assert_eq!(service.active_session(), Some(session));
     }
 
     #[test]

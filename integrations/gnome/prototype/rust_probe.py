@@ -85,3 +85,7 @@ class RustProbe:
     def process_query(self, window, expected_directory):
         return self.request({"kind": "processQuery", "windowId": window,
                              "expectedDirectory": str(expected_directory)})
+
+    def capture_probe(self, window, expected_directory):
+        return self.request({"kind": "captureProbe", "windowId": window,
+                             "expectedDirectory": str(expected_directory)})

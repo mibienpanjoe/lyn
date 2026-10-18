@@ -1,6 +1,6 @@
 # Native GNOME metadata protocol
 
-**Status:** Accepted implementation contract for Linux/X11. The Rust/C codecs and invocation-correlation rules are tested; the developer-only GTK/VTE module also answers v1 queries through the actual Rust broker in an isolated real GNOME server. Native peer admission, X-Resource window ownership and live PTY/foreground-group directory checks use the production policy. Application startup, source registration/revalidation, capture wiring, installer and packaged acceptance remain pending. This page does not expand current provider support.
+**Status:** Accepted implementation contract for Linux/X11. The developer-only GTK/VTE module answers v1 queries through the production-policy Rust broker in isolated real GNOME. Rust startup, invocation routing, native source preparation and selection/save revalidation are wired; the isolated harness saves synthetic notes through the capture service and reads them through Library. Desktop popup/focus acceptance, module discovery/reconnection, installer, packaging and installed acceptance remain pending. This page does not expand current provider support.
 
 ## Boundary and lifecycle
 
@@ -32,7 +32,7 @@ The Rust [stream channel](../src-tauri/src/context/gnome_channel.rs) implements 
 
 The Rust [listener primitive](../src-tauri/src/context/gnome_listener.rs) binds a mode-0600 socket in an absolute same-user private directory, rejecting a symlink final component even with trailing separators. It never removes an occupied endpoint; shutdown removes only its recorded socket inode and preserves a replacement. Its pending listen backlog is 16 (Linux may admit one additional queued connection), separate from the active-channel limit. Idle accept blocks on readiness and an explicit stop/handle-drop wakeup, with no periodic timer. Accepted streams remain unauthenticated until passed to the native peer/channel boundary. Listener tests cover permissions, occupied/replaced paths, cancellation, close-on-exec and queue saturation.
 
-The Rust [connection manager](../src-tauri/src/context/gnome_broker.rs) composes these primitives on one admission worker, with one bounded handshake and at most eight admitted server PIDs. Its public Rust query path derives the server from the frozen window's XRes owner as described below; there is no fallback to another peer. It never holds the registry mutex across peer checks or stream exchanges, and a busy channel immediately refuses a second query. Idle reconnect replaces and closes the old generation; a busy reconnect is refused. Dead idle channels are reaped on admission, while fatal query failures retire only the matching slot. Returned evidence includes the authenticated PID and connection generation, but still requires PTY/process attestation and later source revalidation. Shutdown marks the manager unavailable, wakes accept and joins the worker; a pending handshake may consume its remaining 500 ms budget. Unit tests use real sockets and same-executable fixture peers, including distinct subprocess PIDs for capacity. The separate native harness exercises real GNOME admission/exchanges, not application startup/capture wiring.
+The Rust [connection manager](../src-tauri/src/context/gnome_broker.rs) composes these primitives on one admission worker, with one bounded handshake and at most eight admitted server PIDs. Its public Rust query path derives the server from the frozen window's XRes owner as described below; there is no fallback to another peer. It never holds the registry mutex across peer checks or stream exchanges, and a busy channel immediately refuses a second query. Idle reconnect replaces and closes the old generation; a busy reconnect is refused. Dead idle channels are reaped on admission, while fatal query failures retire only the matching slot. Returned evidence includes the authenticated PID and connection generation, but still requires PTY/process attestation and later source revalidation. Shutdown marks the manager unavailable, wakes accept and joins the worker; a pending handshake may consume its remaining 500 ms budget. Unit tests use real sockets and same-executable fixture peers, including distinct subprocess PIDs for capacity. The separate native harness exercises real GNOME admission, source preparation, capture persistence and Library reads; it does not launch the desktop popup.
 
 ## X11 window ownership
 
@@ -93,17 +93,26 @@ popup or owner/socket work. It freezes a BOOTTIME lower bound before sampling
 MONOTONIC; it never reconstructs an earlier invocation using a later suspend
 offset. The [proc starttime](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html)
 tick must entirely precede that frozen bound. The private test control mints this
-clock on Rust receipt, not at the earlier Python dispatch. Production shortcut
-wiring still needs this clock captured alongside the frozen window. Physical
+clock on Rust receipt, not at the earlier Python dispatch. The Linux shortcut
+now captures this clock before sampling the foreground window. Physical
 suspend/resume remains a separate manual check.
 
 The directory and pinned snapshot stay Rust-owned and ephemeral. These are
 consistent live observations, not a historical cwd or a permanently valid
-capture context. Git enrichment, source registration, selection/save validation
-and the first saved capture remain integration work. Real process fixtures cover
+capture context. Real process fixtures cover
 wrong TTY/ancestry, exited lifetimes, coherent two-member groups and distinct-cwd
 refusal; the real GNOME harness checks the directory derived by Rust without
 returning raw paths through its cfg(test)-only control endpoint.
+
+## Capture integration and continuity
+
+Linux startup attempts the private broker endpoint in `XDG_RUNTIME_DIR`; unavailable or occupied endpoints do not enable a weaker provider. The shortcut samples the OS foreground once and distinguishes a real window from Lyn's remembered restore target. A GNOME window routes only to native preparation or `Required`, never a generic shell heartbeat. Unknown classes fail closed. A second invoke while Lyn holds focus cannot mint new native proof from a remembered window.
+
+[`gnome_capture::prepare`](../src-tauri/src/context/gnome_capture.rs) uses the initial frozen invocation for full attestation, derives cwd/Git in Rust, and looks up the project outside capture/registry locks. `NativeSourceLease` retains the original window, candidate, generation, complete process/group snapshot and pidfds. Continuity checks after Git/SQLite and at selection/save issue fresh bounded queries but require equality with that original evidence, including topology revision/change time, process/executable/cwd identities and original lifetime pins. They cannot replace a changed source with a new candidate. Each exchange has its own absolute 120 ms reply refusal bound; this does not impose a 120 ms bound on the whole Git/SQLite/UI workflow or reset an expired initial exchange. End-to-end latency remains a separate acceptance measurement.
+
+Only an accepted Rust invocation ticket publishes its native source. The registry retains at most one native lease, owned by its capture session, independently of heartbeat TTL; ordinary invocation snapshots exclude it. Successful text/image/audio saves, cancellation and popup close release that session's native entry. A repeated cancellation for an older session cannot release a newer lease. Selection/save revalidate owned snapshots outside session/registry/database locks, then fence the context epoch before the existing serialized `save_once` boundary. Manual lookup reserves priority before I/O; pending lookups block saves and automatic completion, and failed/superseded lookups do not mutate the context or staged media.
+
+The private harness shares this preparation and the normal capture/Library gateways: three concurrent native windows, including a TUI, save one synthetic note each into the expected project/branch; duplicate save is refused, Library reads the text, and the native entry is released. It includes a 150 ms pre-save fixture pause to exercise fresh continuity rather than reuse an expired reply. A closed window cannot prepare a capture. This is backend integration evidence, not rendered Library, global shortcut, desktop focus, installed module, latency distribution or lifecycle/reconnect acceptance.
 
 ## Fixed frame layout
 
