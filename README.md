@@ -116,9 +116,9 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 ### Native GNOME prototype (development only)
 
-`pnpm provider:gnome:test` compiles an experimental GTK3/VTE module and tests real GNOME Terminal windows, tabs, and TUI identity on private Xvfb/D-Bus. It does not install anything or enable native automatic context in Lyn yet.
+`pnpm provider:gnome:test` compiles an experimental GTK3/VTE module and the current Rust test harness. It tests real GNOME Terminal windows, tabs, TUI identity, and native module-to-Rust broker exchanges on private Xvfb/D-Bus. It does not install anything or enable native automatic context in Lyn yet.
 
-Requires Linux, GTK3/VTE development headers, GCC/pkg-config, Xvfb/xauth, GNOME Terminal, xdotool/xprop, Python GI GTK3, and htop. Developers can set `LYN_GNOME_SDK_ROOT` to a local directory with packages extracted beneath `root/`; the test never installs system packages or modifies terminal profiles outside its temporary environment.
+Requires the Rust toolchain above, Linux with pidfd support, GTK3/VTE development headers, GCC/pkg-config, Xvfb/xauth, GNOME Terminal, xdotool/xprop, Python with pidfd APIs and GI GTK3, and htop. Developers can set `LYN_GNOME_SDK_ROOT` to a local directory with packages extracted beneath `root/`; the test never installs system packages or modifies terminal profiles outside its temporary environment.
 
 ## Documentation
 

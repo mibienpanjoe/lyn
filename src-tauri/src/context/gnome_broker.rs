@@ -215,3 +215,7 @@ impl Drop for NativeBroker {
 #[cfg(test)]
 #[path = "gnome_broker_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "gnome_probe_tests.rs"]
+mod probe_tests;

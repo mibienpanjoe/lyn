@@ -1,6 +1,7 @@
 """Build and exercise the opt-in native prototype; install nothing."""
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import shlex
@@ -10,6 +11,7 @@ import tempfile
 
 
 root = Path(__file__).resolve().parent
+subprocess.run([sys.executable, str(root / "isolation_test.py")], check=True)
 sdk_value = os.environ.get("LYN_GNOME_SDK_ROOT")
 sdk = Path(sdk_value).resolve(strict=True) if sdk_value else None
 packages = ["gtk+-3.0", "gmodule-2.0"]
@@ -25,6 +27,19 @@ if sdk:
     if not headers.is_dir():
         raise SystemExit("LYN_GNOME_SDK_ROOT must contain an extracted VTE development package.")
     flags.extend(["-I", str(headers), "-l:libvte-2.91.so.0"])
+
+# Build the current cfg(test) entrypoint, never expose its control socket in the
+# application. Cargo's artifact message is authoritative even with TARGET_DIR.
+repo = root.parents[2]
+build = subprocess.run(["cargo", "test", "--manifest-path", str(repo / "src-tauri/Cargo.toml"),
+                        "--lib", "--no-run", "--message-format=json"],
+                       cwd=repo, check=True, stdout=subprocess.PIPE, text=True)
+artifacts = [json.loads(line) for line in build.stdout.splitlines()]
+probes = [item["executable"] for item in artifacts
+          if item.get("reason") == "compiler-artifact" and item["target"]["name"] == "lyn_lib"
+          and item["profile"]["test"] and item.get("executable")]
+assert len(probes) == 1, "Expected one current Rust library test executable"
+probe = Path(probes[0]).resolve(strict=True)
 
 with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     destination = Path(directory)
@@ -44,7 +59,8 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                         *extra_sources, "-o", str(output), *flags], check=True)
     print("Native prototype SHA256:", hashlib.sha256(module.read_bytes()).hexdigest(), flush=True)
     for test, arguments in (("smoke_test.py", [str(module)]),
-                            ("identity_test.py", [str(module), str(preserved)])):
+                            ("identity_test.py", [str(module), str(preserved)]),
+                            ("rust_broker_test.py", [str(module), str(probe)])):
         subprocess.run([sys.executable, str(root / "isolated_run.py"),
                         str(sdk) if sdk else "-", str(root / test), *arguments], check=True)
-    print("PASS: GNOME native prototype compiled and passed isolated runtime checks; nothing installed")
+    print("PASS: native prototype and real Rust broker passed isolated runtime checks; nothing installed")
