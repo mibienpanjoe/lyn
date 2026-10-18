@@ -10,6 +10,7 @@
 #include <sys/ioctl.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include "../native_channel.h"
 
 static gchar *endpoint;
 static gchar *module_path;
@@ -76,6 +77,41 @@ static void remove_own_module(const char *variable)
     g_strfreev(parts);
 }
 
+static gboolean observe(GtkWidget *widget, LynFrame *result)
+{
+    VtePty *pty = vte_terminal_get_pty(VTE_TERMINAL(widget));
+    GtkWidget *top = gtk_widget_get_toplevel(widget);
+    GdkWindow *native = gtk_widget_get_window(top);
+    if (!pty || !native || !GDK_IS_X11_WINDOW(native))
+        return FALSE;
+    int fd = vte_pty_get_fd(pty);
+    unsigned int number;
+    pid_t foreground = tcgetpgrp(fd);
+    if (foreground <= 0 || ioctl(fd, TIOCGPTN, &number) != 0)
+        return FALSE;
+    TerminalIdentity *source = g_object_get_data(G_OBJECT(widget), "lyn-spike-source");
+    if (!source) {
+        source = g_new0(TerminalIdentity, 1);
+        source->id = ++next_source;
+        source->revision = 1;
+        source->registered_at = source->changed_at = g_get_monotonic_time();
+        g_object_set_data_full(G_OBJECT(widget), "lyn-spike-source", source, g_free);
+        g_signal_connect_after(widget, "map", G_CALLBACK(topology_changed), source);
+        g_signal_connect_after(widget, "unmap", G_CALLBACK(topology_changed), source);
+        g_signal_connect_after(widget, "hierarchy-changed", G_CALLBACK(hierarchy_changed), source);
+        g_signal_connect_after(widget, "notify::pty", G_CALLBACK(pty_changed), source);
+    }
+    result->window = gdk_x11_window_get_xid(native);
+    result->pty = number;
+    result->pgid = foreground;
+    result->source = source->id;
+    result->registered_us = source->registered_at;
+    result->changed_us = source->changed_at;
+    result->revision = source->revision;
+    result->at_us = g_get_monotonic_time();
+    return TRUE;
+}
+
 /* Prototype only: enumerate native widget identities, never screen text. */
 static void collect(GtkWidget *widget, gpointer data)
 {
@@ -83,42 +119,83 @@ static void collect(GtkWidget *widget, gpointer data)
     if (frame->len > 6000)
         return;
     if (VTE_IS_TERMINAL(widget)) {
-        VtePty *pty = vte_terminal_get_pty(VTE_TERMINAL(widget));
+        LynFrame source = {0};
+        if (!observe(widget, &source)) return;
         GtkWidget *top = gtk_widget_get_toplevel(widget);
-        GdkWindow *native = gtk_widget_get_window(top);
-        if (!pty || !native || !GDK_IS_X11_WINDOW(native))
-            return;
-        int fd = vte_pty_get_fd(pty);
-        unsigned int number;
-        pid_t foreground = tcgetpgrp(fd);
-        if (foreground <= 0 || ioctl(fd, TIOCGPTN, &number) != 0)
-            return;
-        TerminalIdentity *source = g_object_get_data(G_OBJECT(widget), "lyn-spike-source");
-        if (!source) {
-            source = g_new0(TerminalIdentity, 1);
-            source->id = ++next_source;
-            source->revision = 1;
-            source->registered_at = source->changed_at = g_get_monotonic_time();
-            g_object_set_data_full(G_OBJECT(widget), "lyn-spike-source", source, g_free);
-            g_signal_connect_after(widget, "map", G_CALLBACK(topology_changed), source);
-            g_signal_connect_after(widget, "unmap", G_CALLBACK(topology_changed), source);
-            g_signal_connect_after(widget, "hierarchy-changed", G_CALLBACK(hierarchy_changed), source);
-            g_signal_connect_after(widget, "notify::pty", G_CALLBACK(pty_changed), source);
-        }
         if (frame->str[frame->len-1] != '[')
             g_string_append_c(frame, ',');
         g_string_append_printf(frame,
             "{\"sourceId\":%llu,\"windowId\":%lu,\"ptyNumber\":%u,"
             "\"foregroundPgid\":%ld,\"active\":%s,\"windowFocused\":%s,"
             "\"registeredAtUs\":%lld,\"changedAtUs\":%lld,\"observedAtUs\":%lld,\"revision\":%llu}",
-            (unsigned long long)source->id, (unsigned long)gdk_x11_window_get_xid(native),
-            number, (long)foreground, gtk_widget_get_mapped(widget) ? "true" : "false",
+            (unsigned long long)source.source, (unsigned long)source.window,
+            source.pty, (long)source.pgid, gtk_widget_get_mapped(widget) ? "true" : "false",
             GTK_IS_WINDOW(top) && gtk_window_is_active(GTK_WINDOW(top)) ? "true" : "false",
-            (long long)source->registered_at, (long long)source->changed_at,
-            (long long)g_get_monotonic_time(), (unsigned long long)source->revision);
+            (long long)source.registered_us, (long long)source.changed_us,
+            (long long)source.at_us, (unsigned long long)source.revision);
     }
     if (GTK_IS_CONTAINER(widget))
         gtk_container_forall(GTK_CONTAINER(widget), collect, frame);
+}
+
+typedef struct {
+    const LynFrame *query;
+    LynFrame source;
+    guint visits, depth, matches;
+    gboolean unavailable;
+} NativeLookup;
+
+static void lookup_widget(GtkWidget *widget, gpointer data)
+{
+    NativeLookup *lookup = data;
+    if (lookup->unavailable) return;
+    if (++lookup->visits > 2048 || lookup->depth >= 32) {
+        lookup->unavailable = TRUE;
+        return;
+    }
+    if (VTE_IS_TERMINAL(widget) && gtk_widget_get_mapped(widget)) {
+        GtkWidget *top = gtk_widget_get_toplevel(widget);
+        GdkWindow *native = gtk_widget_get_window(top);
+        if (!native || !GDK_IS_X11_WINDOW(native) ||
+            gdk_x11_window_get_xid(native) != lookup->query->window) return;
+        LynFrame source = {0};
+        if (!observe(widget, &source)) lookup->unavailable = TRUE;
+        else if (source.window == lookup->query->window) {
+            lookup->source = source;
+            lookup->matches++;
+        }
+    }
+    if (GTK_IS_CONTAINER(widget)) {
+        lookup->depth++;
+        gtk_container_forall(GTK_CONTAINER(widget), lookup_widget, lookup);
+        lookup->depth--;
+    }
+}
+
+static void answer_query(const LynFrame *query, LynFrame *reply)
+{
+    NativeLookup lookup = {.query = query};
+    GList *windows = gtk_window_list_toplevels();
+    for (GList *item = windows; item; item = item->next) {
+        if (lookup.unavailable) break;
+        lookup_widget(GTK_WIDGET(item->data), &lookup);
+    }
+    g_list_free(windows);
+    reply->at_us = g_get_monotonic_time();
+    if (lookup.unavailable || query->at_us > reply->at_us) reply->status = LYN_UNAVAILABLE;
+    else if (!lookup.matches) reply->status = LYN_MISSING;
+    else if (lookup.matches > 1) reply->status = LYN_AMBIGUOUS;
+    else if (lookup.source.changed_us >= query->at_us) reply->status = LYN_CHANGED;
+    else {
+        // Preserve broker-issued generation/request/window; copy metadata only.
+        reply->status = LYN_CANDIDATE;
+        reply->pty = lookup.source.pty;
+        reply->pgid = lookup.source.pgid;
+        reply->source = lookup.source.source;
+        reply->registered_us = lookup.source.registered_us;
+        reply->changed_us = lookup.source.changed_us;
+        reply->revision = lookup.source.revision;
+    }
 }
 
 static void publish(const char *frame, size_t length)
@@ -179,4 +256,6 @@ G_MODULE_EXPORT void gtk_module_init(gint *argc, gchar ***argv)
     if (length > 0 && (size_t)length < sizeof(frame))
         publish(frame, (size_t)length);
     g_timeout_add(25, snapshot, NULL);
+    const gchar *stream = g_getenv("LYN_GNOME_TEST_STREAM");
+    if (stream) (void)lyn_native_connect(stream, answer_query);
 }

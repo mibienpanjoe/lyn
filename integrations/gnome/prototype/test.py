@@ -37,9 +37,11 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     subprocess.run([str(wire_test), str(root.parent / "wire_vectors.txt"),
                     str(root.parent / "wire_rejects.txt")], check=True)
     for source, output in (("module.c", module), ("preserved_module.c", preserved)):
+        extra_sources = [str(root.parent / file) for file in ("wire.c", "native_channel.c")] \
+            if source == "module.c" else []
         subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                         "-fPIC", "-fstack-protector-strong", "-shared", str(root / source),
-                        "-o", str(output), *flags], check=True)
+                        *extra_sources, "-o", str(output), *flags], check=True)
     print("Native prototype SHA256:", hashlib.sha256(module.read_bytes()).hexdigest(), flush=True)
     for test, arguments in (("smoke_test.py", [str(module)]),
                             ("identity_test.py", [str(module), str(preserved)])):

@@ -14,12 +14,14 @@ import tempfile
 import time
 
 from fixtures import repositories
+from stream_fixture import NativeStream
 
 
 def run(module, preserved_module):
     with tempfile.TemporaryDirectory(prefix="lyn-gnome-identity-") as directory:
         projects = repositories(directory, ("alpha", "beta", "gamma"))
         endpoint = str(Path(directory) / "module.sock")
+        native = NativeStream(directory)
         child_endpoint = str(Path(directory) / "child.sock")
         child_channel = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         child_channel.bind(child_endpoint)
@@ -34,6 +36,7 @@ def run(module, preserved_module):
         assert config.parent.name.startswith("lyn-gnome-run-"), "Use isolated_run.py"
         environment = dict(os.environ, GTK3_MODULES=f"{module}:{preserved_module}",
                            LYN_GNOME_TEST_SOCKET=endpoint,
+                           LYN_GNOME_TEST_STREAM=native.path,
                            GSETTINGS_BACKEND="keyfile", NO_AT_BRIDGE="1")
         profile_id = subprocess.check_output(
             ["gsettings", "get", "org.gnome.Terminal.ProfilesList", "default"],
@@ -69,6 +72,7 @@ def run(module, preserved_module):
             raise AssertionError(f"Native snapshot missing: {description}; identities={last_sources}")
 
         try:
+            native.handshake(server)
             subprocess.run(["gdbus", "wait", "--session", "--timeout", "5", app_id], check=True)
             # Pop!_OS wraps gnome-terminal with a per-launch server spawner.
             # Target the already authenticated fixture server with the real client.
@@ -111,6 +115,10 @@ def run(module, preserved_module):
                 assert item["observedAtUs"] <= time.monotonic_ns() // 1000
                 assert item["revision"] >= 1
             print("PASS: native GLib and invocation monotonic clocks are comparable")
+            for source in sources:
+                native.query(source)
+            native.query({"windowId": 0xfffffffe}, status=2)
+            print("PASS: v1 stream handshake and queries identify both native windows")
 
             previous = {item["sourceId"] for item in sources}
             target_window = sources[0]["windowId"]
@@ -121,6 +129,7 @@ def run(module, preserved_module):
             prop = subprocess.check_output(["xprop", "-id", str(target_window),
                                             "_GTK_WINDOW_OBJECT_PATH"], text=True)
             object_path = re.search(r'= "([^"]+)"', prop).group(1)
+            creation_invoked_us = time.monotonic_ns() // 1000
             subprocess.run(["gdbus", "call", "--session", "--dest", app_id,
                             "--object-path", object_path, "--method", "org.gtk.Actions.Activate",
                             "new-terminal", "[<('tab', 'current')>]", "{}"], check=True,
@@ -135,6 +144,7 @@ def run(module, preserved_module):
                                    Path("/usr/bin/htop") for item in items), "third tab with real TUI")
             third = next(item for item in sources if item["sourceId"] not in previous)
             assert third["active"]
+            native.query(third, creation_invoked_us, status=3)
             assert third["windowId"] == target_window
             assert len({item["windowId"] for item in sources}) == 2
             pid = third["foregroundPgid"]
@@ -161,6 +171,7 @@ def run(module, preserved_module):
                 assert selected[0]["changedAtUs"] > invocation_us, \
                     "A post-invocation tab must never be accepted as the earlier source"
             print("PASS: native active tab changes correctly across eight switches; TUI identity preserved")
+            native.query(selected[0])
             print("PASS: module is not loaded into a GTK application launched from the terminal")
 
             before = next(item for item in sources if item["sourceId"] == third["sourceId"])
@@ -173,6 +184,7 @@ def run(module, preserved_module):
                                                  for item in items), "A-B-A topology transition")
             returned = next(item for item in sources if item["sourceId"] == third["sourceId"])
             assert returned["changedAtUs"] > invocation_us
+            native.query(returned, invocation_us, status=3)
             print("PASS: A-B-A tab transitions invalidate an earlier invocation even with the same final source")
 
             invocation_us = time.monotonic_ns() // 1000
@@ -187,6 +199,7 @@ def run(module, preserved_module):
             assert not retained["windowFocused"] and retained["active"]
             assert retained["changedAtUs"] <= invocation_us
             assert retained["revision"] == returned["revision"]
+            native.query(retained, invocation_us)
             print("PASS: later OS focus loss does not rewrite the bound terminal topology")
 
             prop = subprocess.check_output(["xprop", "-id", str(third["windowId"]),
@@ -203,6 +216,7 @@ def run(module, preserved_module):
             assert moved["ptyNumber"] == third["ptyNumber"]
             assert moved["foregroundPgid"] == pid
             assert moved["changedAtUs"] > detach_us and moved["revision"] > retained["revision"]
+            native.query(moved, detach_us, status=3)
             print("PASS: detached tab retains its source/PTY/process while native window changes")
 
             os.kill(pid, signal.SIGTERM)
@@ -212,6 +226,11 @@ def run(module, preserved_module):
                                "closed TUI tab removed")
             assert {item["sourceId"] for item in sources} == previous
             print("PASS: closed native tab disappears without replacing another source")
+            # The VTE can still exist with a closed PTY until its native window
+            # is destroyed. Both explicit refusal states are valid; no candidate is.
+            native.query(moved, status=(2, 5))
+            native.reject_wrong_generation()
+            print("PASS: stream refuses detached/closed sources and disconnects wrong generations")
         finally:
             for pid in fixture_processes:
                 try:
@@ -227,6 +246,7 @@ def run(module, preserved_module):
                 server.wait(timeout=2)
             channel.close()
             child_channel.close()
+            native.close()
 
 
 if __name__ == "__main__":

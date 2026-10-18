@@ -10,7 +10,11 @@ import tempfile
 with tempfile.TemporaryDirectory(prefix="lyn-gnome-run-") as directory:
     root = Path(directory)
     environment = dict(os.environ, GSETTINGS_BACKEND="memory", GIO_USE_VFS="local",
-                       GTK_USE_PORTAL="0", NO_AT_BRIDGE="1", GTK_A11Y="none")
+                       GTK_USE_PORTAL="0", NO_AT_BRIDGE="1", GTK_A11Y="none",
+                       MESA_SHADER_CACHE_DISABLE="true")
+    # These ephemeral displays need no persistent GPU compilation cache.
+    # Mesa otherwise creates cache files during Xvfb teardown, racing cleanup.
+    # https://docs.mesa3d.org/envvars.html#envvar-MESA_SHADER_CACHE_DISABLE
     for variable, subdirectory in (("XDG_RUNTIME_DIR", "runtime"),
                                    ("XDG_CONFIG_HOME", "config"),
                                    ("XDG_DATA_HOME", "data"),
@@ -40,4 +44,5 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-run-") as directory:
         "-screen 0 1280x800x24 -nolisten tcp", "dbus-run-session",
         "--config-file", str(bus_config), "--",
         sys.executable, *sys.argv[2:]], env=environment)
+    assert not list((root / "cache").glob("mesa_shader_cache*")), "Unexpected test-owned GPU cache"
 raise SystemExit(result.returncode)
