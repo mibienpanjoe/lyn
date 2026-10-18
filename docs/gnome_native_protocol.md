@@ -1,6 +1,6 @@
 # Native GNOME metadata protocol
 
-**Status:** Accepted implementation contract for Linux/X11. The Rust/C codecs and invocation-correlation rules are tested; the developer-only GTK/VTE module also answers v1 queries through the actual Rust broker in an isolated real GNOME server. Native peer admission and X-Resource window ownership are exercised with the production policy. Application startup, PTY/process attestation, capture wiring, installer and packaged acceptance remain pending. This page does not expand current provider support.
+**Status:** Accepted implementation contract for Linux/X11. The Rust/C codecs and invocation-correlation rules are tested; the developer-only GTK/VTE module also answers v1 queries through the actual Rust broker in an isolated real GNOME server. Native peer admission, X-Resource window ownership and live PTY/foreground-group directory checks use the production policy. Application startup, source registration/revalidation, capture wiring, installer and packaged acceptance remain pending. This page does not expand current provider support.
 
 ## Boundary and lifecycle
 
@@ -8,7 +8,7 @@ The dedicated Rust-owned Unix stream socket is `lyn-gnome-v1.sock` inside Lyn's 
 
 The broker must authenticate the same-user peer using kernel credentials, pin the GNOME Terminal server executable and process lifetime, and cross-check the frozen X11 window owner against that server. An executable basename or a payload PID is insufficient. The candidate PTY must belong to that server, and the reported foreground process group must match the kernel terminal/process identities. These checks are mandatory before registering a source; decoding a `Candidate` alone never resolves context.
 
-The Rust [native peer primitive](../src-tauri/src/context/gnome_peer.rs) implements the first admission boundary: kernel `SO_PEERCRED`, same effective uid, and executable device/inode equality with a root-owned, non-group/world-writable GNOME server at an allowlisted system path. It pins a `pidfd` plus proc inode, uid, executable inode and starttime, and rejects exit or identity change on revalidation. `pidfd_open` support (Linux 5.3+) is required; permission/kernel failure leaves the native provider unavailable, with no weaker PID-only fallback. The pidfd is only polled, never read, signalled, or used to duplicate a process FD. The peer, stream, listener, connection manager and window-owner adapter have component tests; production PTY/process attestation remains pending.
+The Rust [native peer primitive](../src-tauri/src/context/gnome_peer.rs) implements the first admission boundary: kernel `SO_PEERCRED`, same effective uid, and executable device/inode equality with a root-owned, non-group/world-writable GNOME server at an allowlisted system path. It pins a `pidfd` plus proc inode, uid, executable inode and starttime, and rejects exit or identity change on revalidation. `pidfd_open` support (Linux 5.3+) is required; permission/kernel failure leaves the native provider unavailable, with no weaker PID-only fallback. The pidfd is only polled, never read, signalled, or used to duplicate a process FD. Peer admission alone does not prove the PTY/process associations checked by the broker paths below.
 
 Handshake order is module `Hello` → Rust `Bind` → module `Ready`. Rust creates a fresh non-nil UUID generation for each authenticated connection; `Ready` must echo it before queries are permitted. Reconnection invalidates all pending requests and source identities of the previous generation. A module source ID is nonzero, monotonic within the server lifetime, and never reused there; Rust scopes it by server identity and connection generation. No live identity is persisted.
 
@@ -54,7 +54,44 @@ followed by owner and current-channel fences. Later selection/save still needs
 fresh source validation. Real isolated GNOME tests exercise this Rust path for
 three concurrent windows including a TUI; unit tests cover ownership, closure,
 duplicates, metadata limits and confirmation ordering. This does **not** yet
-prove foreground-group ancestry, cwd/Git, register a source or wire capture.
+itself prove foreground-group ancestry or cwd/Git, register a source or wire capture.
+
+## Foreground group and local directory
+
+[`gnome_process.rs`](../src-tauri/src/context/gnome_process.rs) treats the native
+PGID as a group, not an interchangeable PID. It scans bounded kernel stat
+metadata, refusing foreign-uid live members in that group rather than selecting
+only the readable same-user subset. Every member must have the owned slave's
+controlling TTY, the reported foreground group, one session and canonical cwd,
+and a same-user ancestry reaching the admitted server. Process roots and
+mount/user/PID namespaces must match the broker. Standard system SSH/multiplexer/
+container proxy executable inodes are refused; this is not exhaustive detection
+of copied/custom remote clients or a claim to resolve their remote directory.
+
+`NativeBroker::query_window_process` compares two complete snapshots (including
+proc/starttime, executable and directory identities) before final native
+source/revision confirmation and owner/generation checks. It retains pidfd pins
+for members/ancestors and polls them again before returning, then checks the
+original deadline again. Bounds are 8192 proc entries, 64 members, 64 ancestry
+steps per member, 256 retained pins and 4096 bytes per stat file, under the
+original 120 ms refusal budget. Local filesystem calls are not preemptible.
+
+`ProcessInvocation::now` must run at the Rust invocation boundary **before**
+popup or owner/socket work. It freezes a BOOTTIME lower bound before sampling
+MONOTONIC; it never reconstructs an earlier invocation using a later suspend
+offset. The [proc starttime](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html)
+tick must entirely precede that frozen bound. The private test control mints this
+clock on Rust receipt, not at the earlier Python dispatch. Production shortcut
+wiring still needs this clock captured alongside the frozen window. Physical
+suspend/resume remains a separate manual check.
+
+The directory and pinned snapshot stay Rust-owned and ephemeral. These are
+consistent live observations, not a historical cwd or a permanently valid
+capture context. Git enrichment, source registration, selection/save validation
+and the first saved capture remain integration work. Real process fixtures cover
+wrong TTY/ancestry, exited lifetimes, coherent two-member groups and distinct-cwd
+refusal; the real GNOME harness checks the directory derived by Rust without
+returning raw paths through its cfg(test)-only control endpoint.
 
 ## Fixed frame layout
 
@@ -106,4 +143,4 @@ Native topology timing proves the tab identity, not a historical cwd or foregrou
 
 ## Verification boundary
 
-Rust tests cover canonical framing, versions/capabilities, identities, timing, wrong correlation, generation mismatch, single-use replies, unavailable outcomes, same-microsecond refusal, bounded stream exchange, extra input, ancillary FD refusal and socket invalidation. Shared C/Rust vectors prove encoding/decoding compatibility. The native harness covers both producer exchanges with a Python fixture and real GNOME → Rust peer/channel/listener/manager exchanges, including XRes ownership checks. Its cfg(test)-only control endpoint uses the production broker constructor, not fixture authentication. It verifies exact metadata for concurrent windows and a TUI, no fallback for an unknown server, missing-window reuse, frozen-window retention after OS focus changes, same-microsecond refusal and revocation on actual server exit. Python fixture checks of parent/TTY/cwd do not replace Rust production PTY/process attestation. That verification, source registration, application startup, installed status and successful capture remain explicit integration requirements. Ordinary library tests alone do not run the real-GNOME probe. Existing editor/browser parsers continue rejecting client-supplied native IDs; no shared permission or UI contract is widened.
+Rust tests cover canonical framing, versions/capabilities, identities, timing, wrong correlation, generation mismatch, single-use replies, unavailable outcomes, same-microsecond refusal, bounded stream exchange, extra input, ancillary FD refusal and socket invalidation. Shared C/Rust vectors prove encoding/decoding compatibility. The native harness covers both producer exchanges with a Python fixture and real GNOME → Rust peer/channel/listener/manager exchanges, including XRes, master-PTY and foreground-group directory checks. Its cfg(test)-only control endpoint uses the production broker constructor, not fixture authentication. It verifies metadata for concurrent windows and a TUI, no fallback for an unknown server, missing-window reuse, frozen-window retention after OS focus changes, same-microsecond refusal and revocation on actual server exit. Source registration, application startup, installed status and successful capture remain explicit integration requirements. Ordinary library tests alone do not run the real-GNOME probe. Existing editor/browser parsers continue rejecting client-supplied native IDs; no shared permission or UI contract is widened.

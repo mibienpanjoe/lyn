@@ -20,6 +20,13 @@ const MAX_CONTROL_BYTES: usize = 2048;
 enum Control {
     #[serde(rename = "status")]
     Status,
+    #[serde(rename = "processQuery")]
+    ProcessQuery {
+        #[serde(rename = "windowId")]
+        window_id: u32,
+        #[serde(rename = "expectedDirectory")]
+        expected_directory: std::path::PathBuf,
+    },
     #[serde(rename = "ptyQuery")]
     PtyQuery {
         #[serde(rename = "windowId")]
@@ -47,6 +54,19 @@ enum Control {
 
 fn reply(broker: &NativeBroker, control: Control) -> Value {
     let result = match control {
+        Control::ProcessQuery {
+            window_id,
+            expected_directory,
+        } => {
+            let invocation = super::super::gnome_process::ProcessInvocation::now().unwrap();
+            return match broker.query_window_process(window_id, invocation) {
+                Ok(evidence) => {
+                    json!({"status": "candidate", "sourceId": evidence.native.candidate.source_id,
+                    "directoryMatches": std::fs::canonicalize(expected_directory).is_ok_and(|path| path == evidence.directory())})
+                }
+                Err(_) => json!({"status": "unavailable"}),
+            };
+        }
         Control::PtyQuery {
             window_id,
             invoked_us,

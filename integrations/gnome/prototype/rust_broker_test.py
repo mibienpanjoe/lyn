@@ -100,6 +100,9 @@ def run(module, executable):
                     raise
                 children[pid] = pidfd
                 project = Path(f"/proc/{pid}/cwd").resolve()
+                process_verified = probe.process_query(source["windowId"], project)
+                assert process_verified == {"status": "candidate", "sourceId": source["sourceId"],
+                                            "directoryMatches": True}, process_verified
                 role = subprocess.check_output(["xprop", "-id", str(source["windowId"]), "WM_WINDOW_ROLE"],
                                                text=True, timeout=3)
                 assert f'"lyn-rust-{project.name}"' in role, "Native window does not match its process/project"
@@ -107,6 +110,7 @@ def run(module, executable):
             assert {Path(f'/proc/{source["foregroundPgid"]}/cwd').resolve() for source in sources} == set(projects)
             assert any(Path(f'/proc/{source["foregroundPgid"]}/exe').resolve() == Path("/usr/bin/htop") for source in sources)
             print("PASS: Rust receives exact window/PTy/process metadata for two projects and a real TUI", flush=True)
+            print("PASS: Rust attests owned PTY, foreground group ancestry and unique cwd for all three windows", flush=True)
             window = sources[0]["windowId"]
             try:
                 subprocess.run(["xprop", "-id", str(window), "-f", "_NET_WM_PID", "32c",
@@ -213,8 +217,18 @@ def run(module, executable):
             assert probe.window_query(closed["windowId"])["status"] == "candidate"
             signal.pidfd_send_signal(children[closed["foregroundPgid"]], signal.SIGTERM)
             snapshot(lambda items: all(item["sourceId"] != closed["sourceId"] for item in items))
+            # Widget destruction can precede the asynchronous XDestroyWindow.
+            # Establish the actual X11 precondition for the owner-refusal test.
+            deadline = time.monotonic() + 3
+            while subprocess.run(["xdotool", "getwindowgeometry", str(closed["windowId"])],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 timeout=1).returncode == 0:
+                assert time.monotonic() < deadline, "Fixture X11 window did not close"
+                time.sleep(.005)
             assert server.poll() is None
-            assert probe.window_query(closed["windowId"])["status"] == "unavailable"
+            closed_result = probe.window_query(closed["windowId"])
+            assert closed_result["status"] == "unavailable", closed_result
+            assert probe.process_query(closed["windowId"], projects[0])["status"] == "unavailable"
             assert probe.window_query(frozen["windowId"])["status"] == "candidate"
             print("PASS: a previously admitted closed window is refused while its GNOME client stays live", flush=True)
             server.terminate()

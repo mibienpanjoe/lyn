@@ -36,6 +36,17 @@ pub(crate) struct NativeEvidence {
     pub(crate) candidate: Candidate,
 }
 
+pub(crate) struct NativeProcessEvidence {
+    pub(crate) native: NativeEvidence,
+    group: super::gnome_process::ForegroundGroup,
+}
+
+impl NativeProcessEvidence {
+    pub(crate) fn directory(&self) -> &Path {
+        &self.group.directory
+    }
+}
+
 #[derive(Default)]
 struct Shared {
     channels: Mutex<HashMap<u32, ChannelSlot>>,
@@ -186,8 +197,45 @@ impl NativeBroker {
             window_id,
             invoked_us,
             crate::platform::x11_owner::local_owner,
-            super::gnome_pty::inspect,
+            |pid, candidate, deadline| {
+                super::gnome_pty::inspect(pid, candidate.pty_number, deadline)
+            },
         )
+        .map(|(evidence, _)| evidence)
+    }
+
+    pub(crate) fn query_window_process(
+        &self,
+        window_id: u32,
+        invocation: super::gnome_process::ProcessInvocation,
+    ) -> Result<NativeProcessEvidence, BrokerError> {
+        let invoked_us = invocation.monotonic_us();
+        let (native, (_, group)) = self.query_window_pty_with(
+            window_id,
+            invoked_us,
+            crate::platform::x11_owner::local_owner,
+            |pid, candidate, deadline| {
+                let pty = super::gnome_pty::inspect(pid, candidate.pty_number, deadline)?;
+                let group = super::gnome_process::inspect(
+                    pid,
+                    candidate.foreground_pgid,
+                    pty.slave_device,
+                    invocation,
+                    deadline,
+                )?;
+                Ok((pty, group))
+            },
+        )?;
+        group
+            .revalidate_lifetimes()
+            .map_err(|_| BrokerError::Unavailable)?;
+        let deadline = invoked_us
+            .checked_add(super::gnome_protocol::REPLY_BUDGET_US)
+            .ok_or(BrokerError::Unavailable)?;
+        if super::gnome_channel::monotonic_us().map_err(BrokerError::Channel)? >= deadline {
+            return Err(BrokerError::Unavailable);
+        }
+        Ok(NativeProcessEvidence { native, group })
     }
 
     fn query_window_pty_with<W: PartialEq>(
@@ -195,8 +243,8 @@ impl NativeBroker {
         window_id: u32,
         invoked_us: u64,
         mut owner: impl FnMut(u32) -> Option<u32>,
-        mut inspect: impl FnMut(u32, u32, u64) -> io::Result<W>,
-    ) -> Result<NativeEvidence, BrokerError> {
+        mut inspect: impl FnMut(u32, Candidate, u64) -> io::Result<W>,
+    ) -> Result<(NativeEvidence, W), BrokerError> {
         let evidence = self.query_window_with(window_id, invoked_us, &mut owner)?;
         let deadline = invoked_us
             .checked_add(super::gnome_protocol::REPLY_BUDGET_US)
@@ -213,11 +261,11 @@ impl NativeBroker {
         if channel.generation() != evidence.generation || !channel.revalidate_idle() {
             return Err(BrokerError::Unavailable);
         }
-        let before = inspect(evidence.server_pid, evidence.candidate.pty_number, deadline)
+        let before = inspect(evidence.server_pid, evidence.candidate, deadline)
             .map_err(|_| BrokerError::Unavailable)?;
         // Inodes and indices can recycle. Finish kernel observations BEFORE
         // confirming GTK source lifetime/revision against the frozen invocation.
-        if inspect(evidence.server_pid, evidence.candidate.pty_number, deadline)
+        if inspect(evidence.server_pid, evidence.candidate, deadline)
             .map_err(|_| BrokerError::Unavailable)?
             != before
         {
@@ -237,7 +285,7 @@ impl NativeBroker {
         {
             return Err(BrokerError::Unavailable);
         }
-        Ok(evidence)
+        Ok((evidence, before))
     }
 
     fn connection_is_current(&self, evidence: &NativeEvidence) -> bool {
