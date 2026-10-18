@@ -77,3 +77,7 @@ class RustProbe:
     def window_query(self, window):
         return self.request({"kind": "windowQuery", "windowId": window,
                              "invokedUs": time.monotonic_ns() // 1000})
+
+    def pty_query(self, window):
+        return self.request({"kind": "ptyQuery", "windowId": window,
+                             "invokedUs": time.monotonic_ns() // 1000})

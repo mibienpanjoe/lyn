@@ -12,6 +12,8 @@ pub(crate) mod gnome_listener;
 pub(crate) mod gnome_peer;
 #[cfg(target_os = "linux")]
 pub(crate) mod gnome_protocol;
+#[cfg(target_os = "linux")]
+pub(crate) mod gnome_pty;
 pub(crate) mod invocation_protocol;
 pub(crate) mod localhost_resolver;
 pub(crate) mod provider;

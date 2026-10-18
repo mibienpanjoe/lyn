@@ -83,6 +83,9 @@ def run(module, executable):
                 verified = probe.window_query(source["windowId"])
                 assert verified["status"] == "candidate" and verified["serverPid"] == server.pid, verified
                 assert verified["sourceId"] == result["sourceId"]
+                pty_verified = probe.pty_query(source["windowId"])
+                assert pty_verified["status"] == "candidate", pty_verified
+                assert pty_verified["sourceId"] == result["sourceId"]
                 for field in ("sourceId", "ptyNumber", "foregroundPgid", "revision", "registeredAtUs", "changedAtUs"):
                     assert result[field] == source[field], (field, result, source)
                 generations.add(result["generation"])

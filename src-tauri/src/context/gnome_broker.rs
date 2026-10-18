@@ -175,6 +175,71 @@ impl NativeBroker {
         Ok(evidence)
     }
 
+    /// Additional live kernel master-PTY proof. This is not process/cwd proof
+    /// and must not yet be promoted to a registered context source.
+    pub(crate) fn query_window_pty(
+        &self,
+        window_id: u32,
+        invoked_us: u64,
+    ) -> Result<NativeEvidence, BrokerError> {
+        self.query_window_pty_with(
+            window_id,
+            invoked_us,
+            crate::platform::x11_owner::local_owner,
+            super::gnome_pty::inspect,
+        )
+    }
+
+    fn query_window_pty_with<W: PartialEq>(
+        &self,
+        window_id: u32,
+        invoked_us: u64,
+        mut owner: impl FnMut(u32) -> Option<u32>,
+        mut inspect: impl FnMut(u32, u32, u64) -> io::Result<W>,
+    ) -> Result<NativeEvidence, BrokerError> {
+        let evidence = self.query_window_with(window_id, invoked_us, &mut owner)?;
+        let deadline = invoked_us
+            .checked_add(super::gnome_protocol::REPLY_BUDGET_US)
+            .ok_or(BrokerError::Unavailable)?;
+        let slot = self
+            .shared
+            .channels
+            .lock()
+            .map_err(|_| BrokerError::Unavailable)?
+            .get(&evidence.server_pid)
+            .cloned()
+            .ok_or(BrokerError::Unavailable)?;
+        let mut channel = slot.try_lock().map_err(|_| BrokerError::Busy)?;
+        if channel.generation() != evidence.generation || !channel.revalidate_idle() {
+            return Err(BrokerError::Unavailable);
+        }
+        let before = inspect(evidence.server_pid, evidence.candidate.pty_number, deadline)
+            .map_err(|_| BrokerError::Unavailable)?;
+        // Inodes and indices can recycle. Finish kernel observations BEFORE
+        // confirming GTK source lifetime/revision against the frozen invocation.
+        if inspect(evidence.server_pid, evidence.candidate.pty_number, deadline)
+            .map_err(|_| BrokerError::Unavailable)?
+            != before
+        {
+            return Err(BrokerError::Unavailable);
+        }
+        // Re-query the frozen window under the ORIGINAL invocation fence.
+        let confirmed = channel
+            .query(window_id, invoked_us)
+            .map_err(BrokerError::Channel)?;
+        if confirmed != evidence.candidate || !channel.revalidate_idle() {
+            return Err(BrokerError::Unavailable);
+        }
+        drop(channel);
+        if owner(window_id) != Some(evidence.server_pid)
+            || !self.connection_is_current(&evidence)
+            || super::gnome_channel::monotonic_us().map_err(BrokerError::Channel)? >= deadline
+        {
+            return Err(BrokerError::Unavailable);
+        }
+        Ok(evidence)
+    }
+
     fn connection_is_current(&self, evidence: &NativeEvidence) -> bool {
         let slot = match self.shared.channels.lock() {
             Ok(channels) => channels.get(&evidence.server_pid).cloned(),

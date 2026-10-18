@@ -30,6 +30,32 @@ Connections use local Unix sockets, kernel peer uid root/current user before sen
 
 `NativeBroker::query_window` derives the server PID from XRes, exchanges metadata with that admitted peer, then repeats ownership verification and fences the current connection slot/generation and peer identity. The raw-PID exchange is private; only test controls exercise it separately. Reconnection during the second owner check must not return evidence from the retired generation. These checks establish window/server association, not PTY ownership or an authoritative project directory. Runtime tests cover spoofed PID properties, foreign and closed windows with a still-live GNOME client, and timeout/recovery while only the private Xvfb is stopped. They are not packaged latency measurements or installed capture acceptance.
 
+## Kernel master-PTY observation
+
+`NativeBroker::query_window_pty` adds a metadata-only cross-check through
+[`gnome_pty.rs`](../src-tauri/src/context/gnome_pty.rs). It requires a matching
+`tty-index` in the authenticated server's bounded `/proc/PID/fdinfo` scan,
+stats the descriptor target without opening it, and checks the PTMX device,
+inode and supported devpts route. At most 4096 descriptors and 16 KiB per
+metadata file are inspected; work is refused after the original invocation's
+120 ms deadline. Local filesystem operations are not preemptible hard deadlines.
+
+Both `/dev/pts/ptmx` and the root-owned legacy `/dev/ptmx` node are supported.
+The latter uses the kernel's documented [sibling `pts` lookup](https://docs.kernel.org/filesystems/devpts.html),
+not equality of master/slave filesystem devices. Mount/user/PID namespaces and
+process roots must match the broker; other paths, chroots and duplicate masters
+remain unresolved. Root-managed device nodes/mount topology are trusted;
+privileged remount attacks are outside this metadata-only check's threat model.
+
+Inode/index/descriptor values can recycle: they are observations, not terminal
+lifetime identities. After the kernel reads, another query of the same frozen
+window and **original** invocation must confirm the same source/revision/PTY,
+followed by owner and current-channel fences. Later selection/save still needs
+fresh source validation. Real isolated GNOME tests exercise this Rust path for
+three concurrent windows including a TUI; unit tests cover ownership, closure,
+duplicates, metadata limits and confirmation ordering. This does **not** yet
+prove foreground-group ancestry, cwd/Git, register a source or wire capture.
+
 ## Fixed frame layout
 
 Each frame is exactly **112 bytes**, integer fields in network byte order. UUIDs use their 16 RFC bytes. There is no string, variable-length body, native C struct serialization, ancillary FD, or extensible field bag. Stream readers assemble exactly one frame under a deadline; a truncated frame or invalid next frame terminates the connection rather than resynchronizing by scanning content.

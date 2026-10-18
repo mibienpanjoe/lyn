@@ -115,6 +115,71 @@ fn ordinary_same_user_client_is_not_admitted_by_production_broker() {
 }
 
 #[test]
+fn topology_is_confirmed_after_the_last_kernel_observation() {
+    use std::sync::atomic::AtomicUsize;
+    let runtime = runtime();
+    let broker = NativeBroker::start_fixture(runtime.path()).unwrap();
+    let path = runtime.path().join("lyn-gnome-v1.sock");
+    let reads = Arc::new(AtomicUsize::new(0));
+    let producer_reads = reads.clone();
+    let worker = thread::spawn(move || {
+        let mut client = UnixStream::connect(path).unwrap();
+        client_handshake(&mut client);
+        answer(&mut client);
+        // The simulated source changes at the SECOND kernel observation.
+        // This is a deterministic ordering regression, not real PTY proof.
+        let Frame::Query {
+            correlation,
+            invoked_us,
+        } = receive(&mut client)
+        else {
+            panic!("query")
+        };
+        let outcome = if producer_reads.load(Ordering::Acquire) < 2 {
+            Outcome::Candidate(super::super::gnome_protocol::Candidate {
+                source_id: u64::from(std::process::id()),
+                pty_number: 0,
+                foreground_pgid: std::process::id(),
+                registered_us: invoked_us - 2,
+                changed_us: invoked_us - 1,
+                revision: 1,
+            })
+        } else {
+            Outcome::Changed
+        };
+        client
+            .write_all(
+                &Frame::Reply {
+                    correlation,
+                    observed_us: monotonic_us().unwrap(),
+                    outcome,
+                }
+                .encode(),
+            )
+            .unwrap();
+        assert_closed(&mut client);
+    });
+    wait_until(|| broker.shared.channels.lock().unwrap().len() == 1);
+    let result = broker.query_window_pty_with(
+        77,
+        monotonic_us().unwrap(),
+        |_| Some(std::process::id()),
+        |_, _, _| {
+            reads.fetch_add(1, Ordering::Release);
+            Ok(())
+        },
+    );
+    drop(broker);
+    worker.join().unwrap();
+    assert_eq!(
+        result,
+        Err(BrokerError::Channel(ChannelError::Reply(
+            ReplyReject::Unresolved(Outcome::Changed)
+        )))
+    );
+}
+
+#[test]
 fn fixture_server_receives_only_exact_pid_requests_and_unresolved_stays_reusable() {
     let runtime = runtime();
     let broker = NativeBroker::start_fixture(runtime.path()).unwrap();

@@ -20,6 +20,13 @@ const MAX_CONTROL_BYTES: usize = 2048;
 enum Control {
     #[serde(rename = "status")]
     Status,
+    #[serde(rename = "ptyQuery")]
+    PtyQuery {
+        #[serde(rename = "windowId")]
+        window_id: u32,
+        #[serde(rename = "invokedUs")]
+        invoked_us: u64,
+    },
     #[serde(rename = "windowQuery")]
     WindowQuery {
         #[serde(rename = "windowId")]
@@ -40,6 +47,10 @@ enum Control {
 
 fn reply(broker: &NativeBroker, control: Control) -> Value {
     let result = match control {
+        Control::PtyQuery {
+            window_id,
+            invoked_us,
+        } => broker.query_window_pty(window_id, invoked_us),
         Control::Status => {
             let mut peers: Vec<_> = broker
                 .shared
