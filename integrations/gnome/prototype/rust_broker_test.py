@@ -113,6 +113,25 @@ def run(module, executable):
             assert len(generations) == 1
             assert {Path(f'/proc/{source["foregroundPgid"]}/cwd').resolve() for source in sources} == set(projects)
             print("PASS: each native window/TUI saves once to its own project/branch, Library reads it and its source is released", flush=True)
+            failures = []
+            durations = []
+            expected_save = {"status": "saved", "bodyMatches": True, "projectMatches": True,
+                             "branchMatches": True, "duplicateRefused": True, "captureCount": 1,
+                             "leaseReleased": True}
+            # Independent captures, not retries: every refusal stays a failure.
+            # Keep the outer owned-process-group lifetime at 60 seconds.
+            for attempt in range(100):
+                source = sources[attempt % len(sources)]
+                project = Path(f'/proc/{source["foregroundPgid"]}/cwd').resolve()
+                started = time.monotonic()
+                saved = probe.capture_probe(source["windowId"], project)
+                elapsed = round((time.monotonic() - started) * 1000, 2)
+                durations.append(elapsed)
+                if saved != expected_save:
+                    failures.append({"attempt": attempt, "elapsedMs": elapsed, "result": saved})
+            assert not failures, {"failures": failures[:5], "failureCount": len(failures)}
+            print(json.dumps({"check": "native_capture_100_independent", "passed": 100,
+                              "maxMsIncluding150msFixturePause": max(durations)}), flush=True)
             assert any(Path(f'/proc/{source["foregroundPgid"]}/exe').resolve() == Path("/usr/bin/htop") for source in sources)
             print("PASS: Rust receives exact window/PTy/process metadata for two projects and a real TUI", flush=True)
             print("PASS: Rust attests owned PTY, foreground group ancestry and unique cwd for all three windows", flush=True)

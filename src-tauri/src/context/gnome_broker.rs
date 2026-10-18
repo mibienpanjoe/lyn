@@ -53,8 +53,21 @@ impl NativeProcessEvidence {
             .map_err(|_| BrokerError::Unavailable)?;
         let now =
             super::gnome_process::ProcessInvocation::now().map_err(|_| BrokerError::Unavailable)?;
-        let current = broker.query_window_process(self.window_id, now)?;
+        let current = broker
+            .query_window_process(self.window_id, now)
+            .inspect_err(|error| {
+                #[cfg(test)]
+                eprintln!("native continuity query refused: {error:?}");
+                #[cfg(not(test))]
+                let _ = error;
+            })?;
         if current.native != self.native || current.group != self.group {
+            #[cfg(test)]
+            eprintln!(
+                "native continuity mismatch: topology={}, group={}",
+                current.native != self.native,
+                current.group != self.group
+            );
             return Err(BrokerError::Unavailable);
         }
         self.group
