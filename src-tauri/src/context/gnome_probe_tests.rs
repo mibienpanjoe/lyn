@@ -20,6 +20,13 @@ const MAX_CONTROL_BYTES: usize = 2048;
 enum Control {
     #[serde(rename = "status")]
     Status,
+    #[serde(rename = "windowQuery")]
+    WindowQuery {
+        #[serde(rename = "windowId")]
+        window_id: u32,
+        #[serde(rename = "invokedUs")]
+        invoked_us: u64,
+    },
     #[serde(rename = "query")]
     Query {
         #[serde(rename = "serverPid")]
@@ -32,7 +39,7 @@ enum Control {
 }
 
 fn reply(broker: &NativeBroker, control: Control) -> Value {
-    match control {
+    let result = match control {
         Control::Status => {
             let mut peers: Vec<_> = broker
                 .shared
@@ -43,42 +50,47 @@ fn reply(broker: &NativeBroker, control: Control) -> Value {
                 .copied()
                 .collect();
             peers.sort_unstable();
-            json!({"peers": peers})
+            return json!({"peers": peers});
         }
         Control::Query {
             server_pid,
             window_id,
             invoked_us,
-        } => match broker.query(server_pid, window_id, invoked_us) {
-            Ok(evidence) => json!({
-                "status": "candidate", "serverPid": evidence.server_pid,
-                "generation": evidence.generation, "sourceId": evidence.candidate.source_id,
-                "ptyNumber": evidence.candidate.pty_number,
-                "foregroundPgid": evidence.candidate.foreground_pgid,
-                "registeredAtUs": evidence.candidate.registered_us,
-                "changedAtUs": evidence.candidate.changed_us,
-                "revision": evidence.candidate.revision,
-            }),
-            Err(error) => {
-                let status = match error {
-                    BrokerError::Unavailable => "unavailable",
-                    BrokerError::Busy => "busy",
-                    BrokerError::Channel(ChannelError::Disconnected) => "disconnected",
-                    BrokerError::Channel(ChannelError::Timeout) => "timeout",
-                    BrokerError::Channel(ChannelError::Reply(ReplyReject::Unresolved(outcome))) => {
-                        match outcome {
-                            Outcome::Missing => "missing",
-                            Outcome::Changed => "changed",
-                            Outcome::Ambiguous => "ambiguous",
-                            Outcome::Unavailable => "unavailable",
-                            Outcome::Candidate(_) => panic!("candidate cannot be unresolved"),
-                        }
+        } => broker.query(server_pid, window_id, invoked_us),
+        Control::WindowQuery {
+            window_id,
+            invoked_us,
+        } => broker.query_window(window_id, invoked_us),
+    };
+    match result {
+        Ok(evidence) => json!({
+            "status": "candidate", "serverPid": evidence.server_pid,
+            "generation": evidence.generation, "sourceId": evidence.candidate.source_id,
+            "ptyNumber": evidence.candidate.pty_number,
+            "foregroundPgid": evidence.candidate.foreground_pgid,
+            "registeredAtUs": evidence.candidate.registered_us,
+            "changedAtUs": evidence.candidate.changed_us,
+            "revision": evidence.candidate.revision,
+        }),
+        Err(error) => {
+            let status = match error {
+                BrokerError::Unavailable => "unavailable",
+                BrokerError::Busy => "busy",
+                BrokerError::Channel(ChannelError::Disconnected) => "disconnected",
+                BrokerError::Channel(ChannelError::Timeout) => "timeout",
+                BrokerError::Channel(ChannelError::Reply(ReplyReject::Unresolved(outcome))) => {
+                    match outcome {
+                        Outcome::Missing => "missing",
+                        Outcome::Changed => "changed",
+                        Outcome::Ambiguous => "ambiguous",
+                        Outcome::Unavailable => "unavailable",
+                        Outcome::Candidate(_) => panic!("candidate cannot be unresolved"),
                     }
-                    _ => "rejected",
-                };
-                json!({"status": status})
-            }
-        },
+                }
+                _ => "rejected",
+            };
+            json!({"status": status})
+        }
     }
 }
 

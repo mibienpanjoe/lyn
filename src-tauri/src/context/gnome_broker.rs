@@ -147,10 +147,63 @@ impl NativeBroker {
         })
     }
 
+    /// Resolve the owner from the local X server, then revalidate it after the
+    /// native exchange. Evidence still needs PTY/process attestation.
+    pub(crate) fn query_window(
+        &self,
+        window_id: u32,
+        invoked_us: u64,
+    ) -> Result<NativeEvidence, BrokerError> {
+        self.query_window_with(
+            window_id,
+            invoked_us,
+            crate::platform::x11_owner::local_owner,
+        )
+    }
+
+    fn query_window_with(
+        &self,
+        window_id: u32,
+        invoked_us: u64,
+        mut owner: impl FnMut(u32) -> Option<u32>,
+    ) -> Result<NativeEvidence, BrokerError> {
+        let pid = owner(window_id).ok_or(BrokerError::Unavailable)?;
+        let evidence = self.query(pid, window_id, invoked_us)?;
+        if owner(window_id) != Some(pid) || !self.connection_is_current(&evidence) {
+            return Err(BrokerError::Unavailable);
+        }
+        Ok(evidence)
+    }
+
+    fn connection_is_current(&self, evidence: &NativeEvidence) -> bool {
+        let slot = match self.shared.channels.lock() {
+            Ok(channels) => channels.get(&evidence.server_pid).cloned(),
+            Err(_) => return false,
+        };
+        let Some(slot) = slot else {
+            return false;
+        };
+        let Ok(mut channel) = slot.try_lock() else {
+            return false;
+        };
+        if channel.generation() != evidence.generation || !channel.revalidate_idle() {
+            return false;
+        }
+        // Revalidation did kernel/socket checks without the registry mutex.
+        // Hold the slot guard through this final fence so admission cannot
+        // replace the connection between validation and the observation point.
+        !self.shared.stopping.load(Ordering::Acquire)
+            && self.shared.channels.lock().is_ok_and(|channels| {
+                channels
+                    .get(&evidence.server_pid)
+                    .is_some_and(|current| Arc::ptr_eq(current, &slot))
+            })
+    }
+
     /// `server_pid` must come from verified frozen-window ownership, not a
     /// provider payload or latest-report heuristic. No fallback to other peers.
     /// Call on a context worker, never while holding the capture-session mutex.
-    pub(crate) fn query(
+    fn query(
         &self,
         server_pid: u32,
         window_id: u32,

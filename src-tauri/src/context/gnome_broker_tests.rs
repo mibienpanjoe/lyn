@@ -340,6 +340,48 @@ fn subprocess_fixture_peer_entry() {
 
 struct FixtureChildren(Vec<std::process::Child>);
 
+#[test]
+fn reconnect_during_post_query_owner_check_cannot_return_retired_evidence() {
+    let runtime = runtime();
+    let broker = NativeBroker::start_fixture(runtime.path()).unwrap();
+    let path = runtime.path().join("lyn-gnome-v1.sock");
+    let first_path = path.clone();
+    let first = thread::spawn(move || {
+        let mut client = UnixStream::connect(first_path).unwrap();
+        client_handshake(&mut client);
+        answer(&mut client);
+        assert_closed(&mut client);
+    });
+    wait_until(|| broker.shared.channels.lock().unwrap().len() == 1);
+    let mut checks = 0;
+    let mut replacement = None;
+    let result = broker.query_window_with(77, monotonic_us().unwrap(), |_| {
+        checks += 1;
+        if checks == 2 {
+            let mut client = UnixStream::connect(&path).unwrap();
+            let generation = client_handshake(&mut client);
+            wait_until(|| {
+                broker
+                    .shared
+                    .channels
+                    .lock()
+                    .unwrap()
+                    .get(&std::process::id())
+                    .is_some_and(|slot| {
+                        slot.try_lock()
+                            .is_ok_and(|channel| channel.generation() == generation)
+                    })
+            });
+            replacement = Some(client);
+        }
+        Some(std::process::id())
+    });
+    assert_eq!(result, Err(BrokerError::Unavailable));
+    drop(replacement);
+    drop(broker);
+    first.join().unwrap();
+}
+
 impl FixtureChildren {
     fn spawn(&mut self, path: &std::path::Path) -> u32 {
         let child = std::process::Command::new(std::env::current_exe().unwrap())

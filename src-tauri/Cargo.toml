@@ -42,4 +42,4 @@ tauri-plugin-global-shortcut = "2.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
-x11rb = "0.13"
+x11rb = { version = "0.13", features = ["res"] }

@@ -73,3 +73,7 @@ class RustProbe:
             self.process.wait(timeout=2)
             raise AssertionError("Rust probe did not stop after control EOF")
         assert code == 0, f"Rust broker probe exited with status {code}"
+
+    def window_query(self, window):
+        return self.request({"kind": "windowQuery", "windowId": window,
+                             "invokedUs": time.monotonic_ns() // 1000})

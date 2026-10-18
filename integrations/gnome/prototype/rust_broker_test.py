@@ -29,7 +29,7 @@ def run(module, executable):
         probe = RustProbe(directory, executable)
         app_id = "org.lyn.NativeRust"
         server = None
-        children = []
+        children = {}
 
         def snapshot(predicate):
             after_us = time.monotonic_ns() // 1000
@@ -80,6 +80,9 @@ def run(module, executable):
                 result = probe.query(server.pid, source["windowId"])
                 assert result["status"] == "candidate", result
                 assert result["serverPid"] == server.pid
+                verified = probe.window_query(source["windowId"])
+                assert verified["status"] == "candidate" and verified["serverPid"] == server.pid, verified
+                assert verified["sourceId"] == result["sourceId"]
                 for field in ("sourceId", "ptyNumber", "foregroundPgid", "revision", "registeredAtUs", "changedAtUs"):
                     assert result[field] == source[field], (field, result, source)
                 generations.add(result["generation"])
@@ -92,7 +95,7 @@ def run(module, executable):
                 except BaseException:
                     os.close(pidfd)
                     raise
-                children.append(pidfd)
+                children[pid] = pidfd
                 project = Path(f"/proc/{pid}/cwd").resolve()
                 role = subprocess.check_output(["xprop", "-id", str(source["windowId"]), "WM_WINDOW_ROLE"],
                                                text=True, timeout=3)
@@ -101,6 +104,67 @@ def run(module, executable):
             assert {Path(f'/proc/{source["foregroundPgid"]}/cwd').resolve() for source in sources} == set(projects)
             assert any(Path(f'/proc/{source["foregroundPgid"]}/exe').resolve() == Path("/usr/bin/htop") for source in sources)
             print("PASS: Rust receives exact window/PTy/process metadata for two projects and a real TUI", flush=True)
+            window = sources[0]["windowId"]
+            try:
+                subprocess.run(["xprop", "-id", str(window), "-f", "_NET_WM_PID", "32c",
+                                "-set", "_NET_WM_PID", str(os.getpid())], check=True, timeout=3,
+                               stdout=subprocess.DEVNULL)
+                assert probe.window_query(window)["serverPid"] == server.pid
+            finally:
+                subprocess.run(["xprop", "-id", str(window), "-f", "_NET_WM_PID", "32c",
+                                "-set", "_NET_WM_PID", str(server.pid)], check=True, timeout=3,
+                               stdout=subprocess.DEVNULL)
+            import gi
+            gi.require_version("Gtk", "3.0")
+            from gi.repository import Gtk
+            foreign = Gtk.Window()
+            try:
+                foreign.show_all()
+                while Gtk.events_pending():
+                    Gtk.main_iteration_do(False)
+                foreign_id = foreign.get_window().get_xid()
+                subprocess.run(["xprop", "-id", str(foreign_id), "-f", "_NET_WM_PID", "32c",
+                                "-set", "_NET_WM_PID", str(server.pid)], check=True, timeout=3,
+                               stdout=subprocess.DEVNULL)
+                assert probe.window_query(foreign_id)["status"] == "unavailable"
+            finally:
+                foreign.destroy()
+            assert probe.window_query(foreign_id)["status"] == "unavailable"
+            assert probe.window_query(0xfffffffe)["status"] == "unavailable"
+            print("PASS: XRes proves real window ownership; spoofed _NET_WM_PID and foreign windows cannot route to GNOME", flush=True)
+            xvfb_fds = []
+            try:
+                for entry in Path("/proc").iterdir():
+                    if not entry.name.isdecimal():
+                        continue
+                    try:
+                        text = (entry / "stat").read_text()
+                        fields = text.rsplit(")", 1)[1].split()
+                        if text.split("(", 1)[1].rsplit(")", 1)[0] != "Xvfb" or int(fields[2]) != os.getpgrp():
+                            continue
+                        fd = os.pidfd_open(int(entry.name))
+                        try:
+                            current = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+                            assert int(current[2]) == os.getpgrp() and int(current[3]) == os.getsid(0)
+                        except BaseException:
+                            os.close(fd)
+                            raise
+                        xvfb_fds.append(fd)
+                    except FileNotFoundError:
+                        continue
+                assert len(xvfb_fds) == 1, "Expected exactly one Xvfb in our private fixture session"
+                signal.pidfd_send_signal(xvfb_fds[0], signal.SIGSTOP)
+                started = time.monotonic()
+                assert probe.window_query(window)["status"] == "unavailable"
+                assert time.monotonic() - started < .5, "Stopped X server blocked the ownership worker"
+            finally:
+                for fd in xvfb_fds:
+                    try:
+                        signal.pidfd_send_signal(fd, signal.SIGCONT)
+                    finally:
+                        os.close(fd)
+            assert probe.window_query(window)["status"] == "candidate"
+            print("PASS: stopped private X server times out safely; recovery keeps the native channel usable", flush=True)
             assert probe.query(os.getpid(), sources[0]["windowId"])["status"] == "unavailable"
             assert probe.query(server.pid, 0xfffffffe)["status"] == "missing"
             assert probe.query(server.pid, sources[0]["windowId"])["status"] == "candidate"
@@ -130,7 +194,7 @@ def run(module, executable):
             except BaseException:
                 os.close(pidfd)
                 raise
-            children.append(pidfd)
+            children[source["foregroundPgid"]] = pidfd
             frozen = source
             destination = next(item["windowId"] for item in sources if item["windowId"] != frozen["windowId"])
             subprocess.run(["xdotool", "windowfocus", "--sync", str(frozen["windowId"])], check=True, timeout=3)
@@ -142,6 +206,14 @@ def run(module, executable):
             retained = probe.query(server.pid, frozen["windowId"], invoked_us)
             assert retained["status"] == "candidate" and retained["sourceId"] == frozen["sourceId"], retained
             print("PASS: actual Rust query keeps the frozen window after OS focus moves elsewhere", flush=True)
+            closed = next(item for item in sources if item["windowId"] != frozen["windowId"])
+            assert probe.window_query(closed["windowId"])["status"] == "candidate"
+            signal.pidfd_send_signal(children[closed["foregroundPgid"]], signal.SIGTERM)
+            snapshot(lambda items: all(item["sourceId"] != closed["sourceId"] for item in items))
+            assert server.poll() is None
+            assert probe.window_query(closed["windowId"])["status"] == "unavailable"
+            assert probe.window_query(frozen["windowId"])["status"] == "candidate"
+            print("PASS: a previously admitted closed window is refused while its GNOME client stays live", flush=True)
             server.terminate()
             server.wait(timeout=5)
             assert probe.query(server.pid, source["windowId"])["status"] in ("unavailable", "disconnected")
@@ -156,7 +228,7 @@ def run(module, executable):
                     server.kill()
                     server.wait(timeout=2)
             # Pin fixture children before cleanup; never signal a recycled PID.
-            for pidfd in children:
+            for pidfd in children.values():
                 try:
                     signal.pidfd_send_signal(pidfd, signal.SIGTERM)
                 except ProcessLookupError:

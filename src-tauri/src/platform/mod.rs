@@ -15,6 +15,9 @@ use tauri::Manager;
 #[cfg(target_os = "linux")]
 pub(crate) mod x11;
 
+#[cfg(target_os = "linux")]
+pub(crate) mod x11_owner;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct WindowCorrelationToken(u64);
 
