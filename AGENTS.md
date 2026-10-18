@@ -12,6 +12,8 @@ The developer-only native GNOME prototype is under `integrations/gnome/prototype
 
 The native GNOME v1 contract is owned by `docs/gnome_native_protocol.md` and `context/gnome_protocol.rs`, with its C codec in `integrations/gnome/wire.c`. Its fixed 112-byte codecs have shared valid/refused wire vectors; those and single-use invocation validation are not a running integration. The future dedicated broker must attest peer/server/window/PTY/process identities before promoting decoded metadata to a source; ordinary editor/browser payloads still cannot supply native IDs. Reject topology changes at or after invocation, including equal microsecond timestamps and A→B→A; opening Lyn and losing OS focus alone does not invalidate an unchanged tab. No PTY FD or stream access is permitted. Keep the 120 ms reply refusal bound distinct from measured input/context latency targets.
 
+Native peer admission lives in `context/gnome_peer.rs`: kernel credentials, allowlisted root-owned executable inode, proc identity and a polled pidfd. Do not replace unavailable pidfd support/permissions with a numeric-PID heuristic. Its tests require Linux pidfd support and Python3 for an isolated connecting-process fixture; restricted sandboxes may require running these tests outside the sandbox. Peer admission alone does not attest the window/PTY or register a context source.
+
 ## Build, Test, and Development Commands
 
 Use Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, and the documented Tauri system prerequisites. Canonical commands are:

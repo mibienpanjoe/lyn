@@ -3,6 +3,8 @@
 #[cfg(target_os = "linux")]
 pub(crate) mod browser_provider;
 #[cfg(target_os = "linux")]
+pub(crate) mod gnome_peer;
+#[cfg(target_os = "linux")]
 pub(crate) mod gnome_protocol;
 pub(crate) mod invocation_protocol;
 pub(crate) mod localhost_resolver;

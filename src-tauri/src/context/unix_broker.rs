@@ -153,6 +153,11 @@ pub(crate) fn recv_unix_message(
 }
 
 fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
+    peer_credentials(stream).map(|credentials| credentials.uid)
+}
+
+/// Kernel connection credentials, never a PID/uid copied from a payload.
+pub(crate) fn peer_credentials(stream: &UnixStream) -> io::Result<libc::ucred> {
     unsafe {
         let mut cred = std::mem::MaybeUninit::<libc::ucred>::uninit();
         let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
@@ -166,7 +171,14 @@ fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
         if result != 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(cred.assume_init().uid)
+        if len as usize != std::mem::size_of::<libc::ucred>() {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+        let credentials = cred.assume_init();
+        if credentials.pid <= 0 {
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        }
+        Ok(credentials)
     }
 }
 
