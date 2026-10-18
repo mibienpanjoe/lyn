@@ -14,6 +14,8 @@ The native GNOME v1 contract is owned by `docs/gnome_native_protocol.md` and `co
 
 Native peer admission lives in `context/gnome_peer.rs`: kernel credentials, allowlisted root-owned executable inode, proc identity and a polled pidfd. Do not replace unavailable pidfd support/permissions with a numeric-PID heuristic. Its tests require Linux pidfd support and Python3 for an isolated connecting-process fixture; restricted sandboxes may require running these tests outside the sandbox. Peer admission alone does not attest the window/PTY or register a context source.
 
+`context/gnome_channel.rs` owns the native stream handshake and one-at-a-time exchange. Deadlines are absolute Linux monotonic times, not per-read timeouts; reject future invocation timestamps and never reset the 120 ms budget on partial input. Transport/correlation errors close/drop the socket; only a correlated explicit unresolved reply may keep it for a fresh request. Never receive PTY FDs: the metadata channel rejects ancillary data. Channel tests use real socket pairs with test-only fixture-peer authentication; they do not establish a running broker or GNOME kernel/window/PTY attestation.
+
 ## Build, Test, and Development Commands
 
 Use Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, and the documented Tauri system prerequisites. Canonical commands are:

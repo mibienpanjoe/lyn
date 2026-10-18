@@ -86,6 +86,15 @@ impl NativePeer {
         self.pid
     }
 
+    #[cfg(test)]
+    pub(super) fn fixture(stream: &UnixStream) -> io::Result<Self> {
+        Self::authenticate_executable(
+            stream,
+            unsafe { libc::geteuid() },
+            &std::env::current_exe()?,
+        )
+    }
+
     pub(crate) fn revalidate(&self) -> io::Result<()> {
         let mut event = libc::pollfd {
             fd: self.lifetime.as_raw_fd(),
