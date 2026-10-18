@@ -14,6 +14,18 @@ Handshake order is module `Hello` → Rust `Bind` → module `Ready`. Rust creat
 
 The C [channel](../integrations/gnome/native_channel.c) uses nonblocking GLib FD watches, one 112-byte input and output frame, a 500 ms initial handshake limit and 120 ms partial-read/output limits. It checks the broker peer uid, closes on wrong generation/kind/framing, and refuses output backlog rather than blocking GTK. The prototype enables it only with a private harness endpoint; automatic production endpoint discovery and reconnection are not enabled. These C-side checks do not replace Rust-side native peer/window/PTY attestation. Query traversal is capped at 2048 widgets and depth 32; reaching a limit returns unavailable, never a partial exact candidate.
 
+The module schedules its initial connection with a one-shot
+[`g_idle_add_full`](https://docs.gtk.org/glib/func.idle_add_full.html) callback,
+copying and freeing the endpoint around that deferral. Protocol deadlines begin
+when the GTK main context can dispatch channel I/O, not during module loading.
+The GTK startup fixture stalls 300 ms before the first dispatch: the previous
+implementation disconnected before Hello, while deferred connection completes
+handshake and query without increasing the 500/120 ms limits. That fixture's
+private executable basename enables only the prototype guard; it does not meet
+Rust's production GNOME executable-inode admission. The separate real GNOME
+matrix remains required. This check covers pre-loop delay, not arbitrary nested
+loops, sustained event starvation or reconnect/installed acceptance.
+
 Rust creates a distinct request UUID per invocation and freezes the pre-popup XID and monotonic invocation time. The module only answers queries; it cannot request capture, change focus or execute a command. One pending request permits one reply attempt, including refusal. Wrong kind/identity, replay, expiration, disconnect and incompatible capability/version fail closed. The broker must bound authentication, reads and writes, cap connections and pending queries, and never hold the capture-session mutex while waiting on this channel. GTK must never block on socket I/O. These transport/resource rules require broker/module integration tests before activation.
 
 The Rust [stream channel](../src-tauri/src/context/gnome_channel.rs) implements the 500 ms absolute handshake and invocation-relative 120 ms exchange deadlines with nonblocking sockets and `poll`. Partial input, interruptions and byte-by-byte delivery do not reset the deadline; a future invocation timestamp is rejected before any request is sent. It revalidates the peer around exchanges, checks unsolicited trailing input, and rejects ancillary data with no FD receive buffer. Protocol, transport or correlation errors close/drop the socket and invalidate the generation. A correlated explicit missing/changed/ambiguous/unavailable response permits a new request UUID on the same connection. Exclusive mutable ownership allows only one exchange at a time. This component has socket-pair/fixture-peer tests; it does not yet listen, manage multiple server connections, attest a PTY or register a source.

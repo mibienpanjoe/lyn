@@ -227,6 +227,14 @@ static gboolean snapshot(gpointer data)
     return G_SOURCE_CONTINUE;
 }
 
+static gboolean connect_when_dispatching(gpointer data)
+{
+    /* Start protocol deadlines only once GTK can dispatch channel I/O.
+     * Initialization work before the main loop is not peer response latency. */
+    (void)lyn_native_connect((const gchar *)data, answer_query);
+    return G_SOURCE_REMOVE;
+}
+
 G_MODULE_EXPORT void gtk_module_init(gint *argc, gchar ***argv)
 {
     (void)argc;
@@ -257,5 +265,7 @@ G_MODULE_EXPORT void gtk_module_init(gint *argc, gchar ***argv)
         publish(frame, (size_t)length);
     g_timeout_add(25, snapshot, NULL);
     const gchar *stream = g_getenv("LYN_GNOME_TEST_STREAM");
-    if (stream) (void)lyn_native_connect(stream, answer_query);
+    if (stream)
+        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, connect_when_dispatching,
+                        g_strdup(stream), g_free);
 }

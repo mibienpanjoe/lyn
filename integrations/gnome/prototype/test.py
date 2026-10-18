@@ -46,6 +46,10 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     module = destination / "liblyn-gnome-prototype.so"
     preserved = destination / "libexisting-gtk-module.so"
     wire_test = destination / "wire-test"
+    startup_fixture = destination / "gnome-terminal-server"
+    subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                    "-fstack-protector-strong", str(root / "startup_fixture.c"),
+                    "-o", str(startup_fixture), *flags], check=True)
     subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-fstack-protector-strong", str(root / "wire_test.c"),
                     str(root.parent / "wire.c"), "-o", str(wire_test)], check=True)
@@ -58,7 +62,8 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                         "-fPIC", "-fstack-protector-strong", "-shared", str(root / source),
                         *extra_sources, "-o", str(output), *flags], check=True)
     print("Native prototype SHA256:", hashlib.sha256(module.read_bytes()).hexdigest(), flush=True)
-    for test, arguments in (("smoke_test.py", [str(module)]),
+    for test, arguments in (("startup_test.py", [str(module), str(startup_fixture)]),
+                            ("smoke_test.py", [str(module)]),
                             ("identity_test.py", [str(module), str(preserved)]),
                             ("rust_broker_test.py", [str(module), str(probe)])):
         subprocess.run([sys.executable, str(root / "isolated_run.py"),
