@@ -390,14 +390,12 @@ fn save_audio_capture_with_registry_value(
         return CommandResult::failure(validation_error());
     };
     let caption = normalize_optional_caption(input.caption);
-    let Ok(mut service) = service.lock() else {
-        return CommandResult::failure(internal_error());
+    let mut service = match lock_session_after_context_check(input.session_id, service, |session| {
+        refresh_selected_live_context(session, database, registry)
+    }) {
+        Ok(service) => service,
+        Err(error) => return CommandResult::failure(error),
     };
-    if let Err(error) =
-        refresh_selected_live_context(input.session_id, &mut service, database, registry)
-    {
-        return CommandResult::failure(error);
-    }
     match service.save_once(input.session_id, |session| {
         let crate::contract::ContextResolution::Resolved { candidate, .. } =
             &session.context_resolution
@@ -494,14 +492,12 @@ fn save_image_capture_with_registry_value(
         return CommandResult::failure(validation_error());
     };
     let caption = normalize_optional_caption(input.caption);
-    let Ok(mut service) = service.lock() else {
-        return CommandResult::failure(internal_error());
+    let mut service = match lock_session_after_context_check(input.session_id, service, |session| {
+        refresh_selected_live_context(session, database, registry)
+    }) {
+        Ok(service) => service,
+        Err(error) => return CommandResult::failure(error),
     };
-    if let Err(error) =
-        refresh_selected_live_context(input.session_id, &mut service, database, registry)
-    {
-        return CommandResult::failure(error);
-    }
     match service.save_once(input.session_id, |session| {
         let crate::contract::ContextResolution::Resolved { candidate, .. } =
             &session.context_resolution
@@ -947,23 +943,46 @@ pub(crate) fn save_text_capture(
     )
 }
 
-fn refresh_selected_live_context(
+/// Provider/Git/lookup work runs against an immutable snapshot, not under the
+/// session mutex. Reacquire authority only if its private context epoch survived.
+/// The returned guard then owns the existing serialized save_once boundary.
+fn lock_session_after_context_check(
     session_id: crate::contract::CaptureSessionId,
-    service: &mut CaptureSessionService,
-    database: &Mutex<Database>,
-    registry: &Mutex<ContextSourceRegistry>,
-) -> Result<(), crate::error::AppError> {
-    if service
-        .active_session()
-        .is_none_or(|session| session.session_id != session_id)
+    service: &Mutex<CaptureSessionService>,
+    check: impl FnOnce(&CaptureSession) -> Result<Option<ContextResolution>, AppError>,
+) -> Result<std::sync::MutexGuard<'_, CaptureSessionService>, AppError> {
+    let (snapshot, revision) = {
+        let service = service.lock().map_err(|_| internal_error())?;
+        let snapshot = service
+            .active_session()
+            .filter(|session| session.session_id == session_id)
+            .ok_or_else(stale_session_error)?;
+        (snapshot, service.context_revision())
+    };
+    let resolution = check(&snapshot)?;
+    let mut service = service.lock().map_err(|_| internal_error())?;
+    if service.active_session().map(|session| session.session_id) != Some(session_id)
+        || service.context_revision() != revision
     {
         return Err(stale_session_error());
     }
-    if let Some(session) = service.active_session()
-        && let ContextResolution::Resolved {
-            selection: Some(ContextSelection::LiveSource { source_id }),
-            ..
-        } = session.context_resolution
+    if let Some(resolution) = resolution {
+        service
+            .set_context_resolution(session_id, resolution)
+            .map_err(|_| stale_session_error())?;
+    }
+    Ok(service)
+}
+
+fn refresh_selected_live_context(
+    session: &CaptureSession,
+    database: &Mutex<Database>,
+    registry: &Mutex<ContextSourceRegistry>,
+) -> Result<Option<ContextResolution>, crate::error::AppError> {
+    if let ContextResolution::Resolved {
+        selection: Some(ContextSelection::LiveSource { source_id }),
+        ..
+    } = session.context_resolution
     {
         let refreshed = {
             let Ok(mut registry) = registry.lock() else {
@@ -998,25 +1017,17 @@ fn refresh_selected_live_context(
                 Err(_) => return Err(storage_unavailable_error()),
             }
         };
-        if service
-            .set_context_resolution(
-                session_id,
-                ContextResolution::Resolved {
-                    candidate: ContextCandidate {
-                        context,
-                        branch_name: refreshed.3,
-                        provider: refreshed.4,
-                        requires_confirmation: false,
-                    },
-                    selection: Some(ContextSelection::LiveSource { source_id }),
-                },
-            )
-            .is_err()
-        {
-            return Err(stale_session_error());
-        }
+        return Ok(Some(ContextResolution::Resolved {
+            candidate: ContextCandidate {
+                context,
+                branch_name: refreshed.3,
+                provider: refreshed.4,
+                requires_confirmation: false,
+            },
+            selection: Some(ContextSelection::LiveSource { source_id }),
+        }));
     }
-    Ok(())
+    Ok(None)
 }
 
 fn save_text_capture_with_registry_value(
@@ -1035,14 +1046,12 @@ fn save_text_capture_with_registry_value(
         return CommandResult::failure(empty_capture_error());
     }
 
-    let Ok(mut service) = service.lock() else {
-        return CommandResult::failure(internal_error());
+    let mut service = match lock_session_after_context_check(input.session_id, service, |session| {
+        refresh_selected_live_context(session, database, registry)
+    }) {
+        Ok(service) => service,
+        Err(error) => return CommandResult::failure(error),
     };
-    if let Err(error) =
-        refresh_selected_live_context(input.session_id, &mut service, database, registry)
-    {
-        return CommandResult::failure(error);
-    }
     match service.save_once(input.session_id, |session| {
         let (context_id, branch_name) = match &session.context_resolution {
             ContextResolution::Resolved { candidate, .. } => {
@@ -1336,6 +1345,97 @@ mod tests {
     };
 
     struct FakeClipboard(Result<ClipboardImage, ClipboardError>);
+
+    #[test]
+    fn context_preflight_releases_session_and_refuses_a_concurrent_correction() {
+        let service = Mutex::new(CaptureSessionService::default());
+        let active = service.lock().unwrap().get_or_prepare();
+        let result = super::lock_session_after_context_check(active.session_id, &service, |_| {
+            let mut current = service.try_lock().expect("preflight held the session lock");
+            current
+                .apply_user_context_resolution(
+                    active.session_id,
+                    ContextResolution::Ambiguous {
+                        candidate: (),
+                        selection: (),
+                    },
+                )
+                .unwrap();
+            Ok(Some(ContextResolution::Required {
+                candidate: (),
+                selection: (),
+            }))
+        });
+        assert!(matches!(result, Err(error) if error.code == ErrorCode::StaleSession));
+        assert!(matches!(
+            service
+                .lock()
+                .unwrap()
+                .active_session()
+                .unwrap()
+                .context_resolution,
+            ContextResolution::Ambiguous { .. }
+        ));
+    }
+
+    #[test]
+    fn context_preflight_rejects_away_and_back_and_does_not_run_for_stale_sessions() {
+        let service = Mutex::new(CaptureSessionService::default());
+        let active = service.lock().unwrap().get_or_prepare();
+        let result = super::lock_session_after_context_check(active.session_id, &service, |_| {
+            let mut current = service.try_lock().unwrap();
+            current
+                .set_context_resolution(
+                    active.session_id,
+                    ContextResolution::Ambiguous {
+                        candidate: (),
+                        selection: (),
+                    },
+                )
+                .unwrap();
+            current
+                .set_context_resolution(active.session_id, active.context_resolution.clone())
+                .unwrap();
+            Ok(None)
+        });
+        assert!(matches!(result, Err(error) if error.code == ErrorCode::StaleSession));
+        let result =
+            super::lock_session_after_context_check(CaptureSessionId::new(), &service, |_| {
+                panic!("stale session reached provider I/O")
+            });
+        assert!(matches!(result, Err(error) if error.code == ErrorCode::StaleSession));
+    }
+
+    #[test]
+    fn context_preflight_refuses_replaced_session_but_preserves_media_only_changes() {
+        let service = Mutex::new(CaptureSessionService::default());
+        let active = service.lock().unwrap().get_or_prepare();
+        let guard = super::lock_session_after_context_check(active.session_id, &service, |_| {
+            service
+                .try_lock()
+                .unwrap()
+                .start_recording(active.session_id)
+                .unwrap();
+            Ok(None)
+        })
+        .unwrap();
+        assert!(matches!(
+            guard.active_session().unwrap().recording_state,
+            RecordingState::Recording { .. }
+        ));
+        drop(guard);
+        let result = super::lock_session_after_context_check(active.session_id, &service, |_| {
+            let mut service = service.try_lock().unwrap();
+            service.cancel(active.session_id).unwrap();
+            service.get_or_prepare();
+            Ok(None)
+        });
+        assert!(matches!(result, Err(error) if error.code == ErrorCode::StaleSession));
+        assert_ne!(
+            service.lock().unwrap().active_session().unwrap().session_id,
+            active.session_id
+        );
+    }
 
     impl ClipboardImagePlatform for FakeClipboard {
         fn read_image(&mut self) -> Result<ClipboardImage, ClipboardError> {
