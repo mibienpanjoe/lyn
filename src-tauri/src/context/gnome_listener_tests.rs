@@ -70,6 +70,110 @@ fn never_unlinks_an_occupied_file_or_existing_listener() {
 }
 
 #[test]
+fn abrupt_listener_exit_fixture() {
+    let Some(runtime) = std::env::var_os("LYN_GNOME_LISTENER_CRASH_RUNTIME") else {
+        return;
+    };
+    let runtime = PathBuf::from(runtime);
+    assert!(
+        runtime
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("lyn-native-")
+    );
+    // A broken parent must not leave this private test process behind.
+    unsafe { libc::alarm(5) };
+    let (_listener, _stop) = NativeListener::bind(&runtime).unwrap();
+    use std::os::unix::fs::OpenOptionsExt;
+    let _ready = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(runtime.join("ready"))
+        .unwrap();
+    loop {
+        thread::park();
+    }
+}
+
+#[test]
+fn killed_owner_leaves_a_stale_socket_that_cannot_be_unlinked_on_bind() {
+    use std::{
+        os::unix::process::ExitStatusExt,
+        process::{Command, Stdio},
+    };
+    let directory = private_runtime();
+    let path = directory.path().join(SOCKET_NAME);
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "context::gnome_listener::tests::abrupt_listener_exit_fixture",
+            "--test-threads=1",
+        ])
+        .env("LYN_GNOME_LISTENER_CRASH_RUNTIME", directory.path())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, child.id(), 0) } as i32;
+    assert!(
+        raw >= 0,
+        "pidfd support is required, never use a numeric-PID fallback"
+    );
+    let pin = unsafe { OwnedFd::from_raw_fd(raw) };
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !directory.path().join("ready").exists() {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "private listener fixture exited before readiness"
+        );
+        if Instant::now() >= deadline {
+            unsafe {
+                libc::syscall(
+                    libc::SYS_pidfd_send_signal,
+                    pin.as_raw_fd(),
+                    libc::SIGKILL,
+                    std::ptr::null::<libc::siginfo_t>(),
+                    0,
+                )
+            };
+            let _ = child.wait();
+            panic!("private listener fixture did not become ready");
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let before = fs::symlink_metadata(&path).unwrap();
+    assert_eq!(
+        unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                pin.as_raw_fd(),
+                libc::SIGKILL,
+                std::ptr::null::<libc::siginfo_t>(),
+                0,
+            )
+        },
+        0
+    );
+    let status = child.wait().unwrap();
+    assert_eq!(status.signal(), Some(libc::SIGKILL));
+    assert_eq!(
+        UnixStream::connect(&path).unwrap_err().kind(),
+        io::ErrorKind::ConnectionRefused
+    );
+    assert!(
+        matches!(NativeListener::bind(directory.path()), Err(error) if error.kind() == io::ErrorKind::AddrInUse)
+    );
+    let after = fs::symlink_metadata(&path).unwrap();
+    assert!(after.file_type().is_socket());
+    assert_eq!(
+        (after.dev(), after.ino(), after.mode(), after.uid()),
+        (before.dev(), before.ino(), before.mode(), before.uid())
+    );
+}
+
+#[test]
 fn preserves_a_replacement_path_during_shutdown() {
     let directory = private_runtime();
     let path = directory.path().join(SOCKET_NAME);
