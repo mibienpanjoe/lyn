@@ -132,6 +132,8 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 `pnpm provider:gnome:desktop:test --stale-reconnect` opens a draft, disconnects only the admitted private native channel and requires a real fresh handshake. It checks the old context cannot save, the draft stays visible and SQLite stays empty, then cancels and saves a fresh capture through the reconnected channel. It does not restart GNOME or bypass peer admission.
 
+`pnpm provider:gnome:desktop:test --closed-source` closes the original GNOME window while its Lyn draft remains open, with another private GNOME window still alive. Saving must refuse the closed source without substituting the survivor or losing the draft. Only an explicit new capture from the surviving window may save.
+
 Requires the Rust toolchain above, Linux with pidfd support, GTK3/VTE development headers, GCC/pkg-config, Xvfb with X-Resource 1.2/xauth, GNOME Terminal, xdotool/xprop, Python with pidfd APIs and GI GTK3, and htop. Developers can set `LYN_GNOME_SDK_ROOT` to a local directory with packages extracted beneath `root/`; the test never installs system packages or modifies terminal profiles outside its temporary environment.
 
 ## Documentation

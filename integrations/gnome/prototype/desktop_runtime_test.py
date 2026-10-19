@@ -31,7 +31,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -240,7 +240,10 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         if not late_app:
             wait_for(lambda: named(app.pid, "All captures"), "Real Library not accessible", 15)
             library_window = wait_for(lambda: visible_windows(app.pid), "Owned Library window not mapped")[0]
-        projects = repositories(root, ("alpha", "beta") if concurrent or warm else ("alpha",))
+        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source else ("alpha",))
+        if closed_source:
+            environment["GSETTINGS_BACKEND"] = "keyfile"
+            command("gsettings", "set", "org.gnome.Terminal.Legacy.Settings", "confirm-close", "false")
         if warm == "tabs":
             # Only this fixture's private XDG profile may create a tab; never
             # start an interactive shell or read the user's startup files.
@@ -307,6 +310,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             frame = json.loads(payload)
             producer_state["datagramsRead"] = producer_state.get("datagramsRead", 0) + 1
             if frame["kind"] == "snapshot":
+                producer_state["allSources"] = frame["sources"]
                 producer_state["sources"] = [
                     {"windowMatches": source["windowId"] == int(window),
                      "active": source["active"],
@@ -434,7 +438,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                               "nativeReplyChanged": True, "savedCount": 0, "draftPreserved": True,
                               "screenshot": save_screenshot(painted, "gnome-race-")}), flush=True)
             return
-        if stale_reconnect:
+        if stale_reconnect or closed_source:
             project = projects[0]
             window = windows[project.name]
             command("xdotool", "windowactivate", "--sync", window)
@@ -445,22 +449,45 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             wait_for(lambda: named(app.pid, "Capture text") and
                      named(app.pid, "Context alpha, branch gnome-alpha. Change context"), "Original native context absent")
             assert command("xdotool", "getwindowpid", command("xdotool", "getactivewindow")) == str(app.pid)
-            body = "synthetic-reconnect-preserved-draft-ENDOFNOTE"
+            failure = "closed" if closed_source else "reconnect"
+            body = f"synthetic-{failure}-preserved-draft-ENDOFNOTE"
             command("xdotool", "type", "--clearmodifiers", "--delay", "0", body)
             wait_for(lambda: contains(app.pid, body), "Draft absent before disconnect")
-            lifecycle.sendall(b'R')
-            lifecycle.settimeout(4)
-            generation_reply = bytearray()
-            while len(generation_reply) < 33:
-                part = lifecycle.recv(33 - len(generation_reply))
-                assert part, "Lifecycle control closed without reconnect evidence"
-                generation_reply.extend(part)
-            assert generation_reply[:1] == b'G' and generation_reply[1:17] != generation_reply[17:33]
-            assert server.poll() is None, "Reconnect restarted GNOME instead of its channel"
-            readiness_after_us = time.monotonic_ns() // 1000
-            wait_for(producer_ready, "Native source absent after reconnect")
-            for field in ("sourceId", "ptyNumber", "foregroundPgid", "registeredAtUs", "revision"):
-                assert producer_state["selectedSource"][field] == original[field], field
+            if closed_source:
+                window_path = command("xprop", "-id", window, "_GTK_WINDOW_OBJECT_PATH")
+                object_path = re.search(r'= "([^"]+)"', window_path).group(1)
+                description = command("gdbus", "call", "--session", "--dest", app_id,
+                                      "--object-path", object_path, "--method", "org.gtk.Actions.Describe", "close")
+                assert "'s'" in description, f"GNOME close action must take a string: {description}"
+                command("gdbus", "call", "--session", "--dest", app_id, "--object-path", object_path,
+                        "--method", "org.gtk.Actions.Activate", "close", "[<'window'>]", "{}")
+                wait_for(lambda: window not in visible_windows(server.pid, "gnome-terminal"),
+                         "Requested GNOME window did not close")
+                def closed_source_removed():
+                    for _ in range(32):
+                        read_producer_observation()
+                        sources = producer_state.get("allSources", [])
+                        if (len(sources) == 1 and sources[0]["sourceId"] != original["sourceId"]
+                                and sources[0]["windowId"] == int(windows[projects[1].name])):
+                            return True
+                    return False
+                wait_for(closed_source_removed, "Closed source retained or surviving source missing")
+                assert server.poll() is None, "Closing one source killed the surviving GNOME server"
+            else:
+                lifecycle.sendall(b'R')
+                lifecycle.settimeout(4)
+                generation_reply = bytearray()
+                while len(generation_reply) < 33:
+                    part = lifecycle.recv(33 - len(generation_reply))
+                    assert part, "Lifecycle control closed without reconnect evidence"
+                    generation_reply.extend(part)
+                assert generation_reply[:1] == b'G' and generation_reply[1:17] != generation_reply[17:33]
+                assert server.poll() is None, "Reconnect restarted GNOME instead of its channel"
+                readiness_after_us = time.monotonic_ns() // 1000
+                wait_for(producer_ready, "Native source absent after reconnect")
+                for field in ("sourceId", "ptyNumber", "foregroundPgid", "registeredAtUs", "revision"):
+                    assert producer_state["selectedSource"][field] == original[field], field
+            assert command("xdotool", "getwindowpid", command("xdotool", "getactivewindow")) == str(app.pid)
             command("xdotool", "key", "Return")
             back = wait_for(lambda: named(app.pid, "Back to note"), "Old lease save did not open chooser")
             wait_for(lambda: named(app.pid, "Context source stale. Choose another context"),
@@ -484,10 +511,12 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                     return False
                 return current if region_has_contrast(current, region) else False
             painted = wait_for(preserved_draft_pixels, "Preserved reconnect draft not painted")
-            print(json.dumps({"check": "native_reconnect_stale_draft", "generationChanged": True,
-                              "sameNativeSource": True, "oldLeaseRefused": True, "savedCount": 0,
+            print(json.dumps({"check": "native_stale_source_draft", "failure": failure,
+                              "generationChanged": stale_reconnect, "sourceClosed": closed_source,
+                              "sameNativeSource": not closed_source,
+                              "oldLeaseRefused": True, "savedCount": 0,
                               "draftPreserved": True,
-                              "screenshot": save_screenshot(painted, "gnome-reconnect-draft-")}), flush=True)
+                              "screenshot": save_screenshot(painted, f"gnome-{failure}-draft-")}), flush=True)
             assert named(app.pid, "Cancel").do_action(0)
             def cancel_focus_restored():
                 # Openbox may briefly unset the active-window property while
@@ -496,13 +525,18 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 property_value = command("xprop", "-root", "_NET_ACTIVE_WINDOW")
                 active = re.fullmatch(r"_NET_ACTIVE_WINDOW\(WINDOW\): window id # (0x[0-9a-fA-F]+)", property_value)
                 return active is not None and int(active[1], 16) == int(window)
-            wait_for(cancel_focus_restored, "Cancel did not return focus")
+            if closed_source:
+                wait_for(lambda: named(app.pid, "Capture text") is None, "Cancel did not hide popup")
+            else:
+                wait_for(cancel_focus_restored, "Cancel did not return focus")
         bodies = []
         detached = False
         original_source = None
         capture_projects = [projects[index % 2] for index in range(alternations + 1)] if warm else projects
         if restart_app:
             capture_projects = [projects[0], projects[0]]
+        if closed_source:
+            capture_projects = [projects[1]]
         for project in capture_projects:
             if restart_app and len(bodies) == 1:
                 previous_app = app.pid
@@ -666,6 +700,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                           "appStartedAfterGnome": late_app,
                           "appRestarted": restart_app,
                           "staleReconnect": stale_reconnect,
+                          "closedSource": closed_source,
                           "savedOnceInExpectedProjectBranch": True, "libraryRendered": True,
                           "concurrentStart": concurrent, "nativeReadinessWait": not concurrent,
                           "warmMode": warm, "alternations": len(bodies) - 1 if warm else 0,
@@ -701,7 +736,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "stale-reconnect"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "stale-reconnect", "closed-source"):
         mode.add_argument(f"--{name}", action="store_true")
     parser.add_argument("--alternations", type=int, default=4)
     arguments = parser.parse_args()
@@ -714,4 +749,4 @@ if __name__ == "__main__":
         alternations=arguments.alternations, relocate=arguments.relocate_tab,
         race="switch" if arguments.race_switch else "aba" if arguments.race_aba else None,
         late_app=arguments.late_app, restart_app=arguments.restart_app,
-        stale_reconnect=arguments.stale_reconnect)
+        stale_reconnect=arguments.stale_reconnect, closed_source=arguments.closed_source)
