@@ -15,9 +15,12 @@ root = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--desktop", action="store_true")
 parser.add_argument("--startup-pairs", type=int, default=1)
+parser.add_argument("--warm-alternations", type=int, default=0)
 arguments = parser.parse_args()
 if not 1 <= arguments.startup_pairs <= 20 or (not arguments.desktop and arguments.startup_pairs != 1):
     parser.error("--startup-pairs requires --desktop and a value from 1 to 20")
+if not 0 <= arguments.warm_alternations <= 100 or (not arguments.desktop and arguments.warm_alternations):
+    parser.error("--warm-alternations requires --desktop and a value from 0 to 100")
 desktop = arguments.desktop
 if desktop:
     subprocess.run([sys.executable, str(root / "desktop_accessibility_test.py")], check=True)
@@ -74,14 +77,18 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                         "-fPIC", "-fstack-protector-strong", "-shared", str(root / source),
                         *extra_sources, "-o", str(output), *flags], check=True)
     print("Native prototype SHA256:", hashlib.sha256(module.read_bytes()).hexdigest(), flush=True)
-    cases = (("desktop_runtime_test.py", [str(module), str(probe), str(sdk) if sdk else "-", "--probe"]),
-             ("desktop_runtime_test.py", [str(module), str(probe), str(sdk) if sdk else "-"])) + tuple(
-             ("desktop_runtime_test.py", [str(module), str(probe), str(sdk) if sdk else "-", "--concurrent-start"])
-             for _ in range(arguments.startup_pairs)) if desktop else (
-                            ("startup_test.py", [str(module), str(startup_fixture)]),
-                            ("smoke_test.py", [str(module)]),
-                            ("identity_test.py", [str(module), str(preserved)]),
-                            ("rust_broker_test.py", [str(module), str(probe)]))
+    if desktop:
+        fixture_args = [str(module), str(probe), str(sdk) if sdk else "-"]
+        modes = [["--probe"], []] + [["--concurrent-start"] for _ in range(arguments.startup_pairs)]
+        if arguments.warm_alternations:
+            modes.extend([f"--warm-{mode}", f"--alternations={arguments.warm_alternations}"]
+                         for mode in ("windows", "tabs"))
+        cases = [("desktop_runtime_test.py", [*fixture_args, *mode]) for mode in modes]
+    else:
+        cases = (("startup_test.py", [str(module), str(startup_fixture)]),
+                 ("smoke_test.py", [str(module)]),
+                 ("identity_test.py", [str(module), str(preserved)]),
+                 ("rust_broker_test.py", [str(module), str(probe)]))
     for test, arguments in cases:
         subprocess.run([sys.executable, str(root / "isolated_run.py"),
                         str(sdk) if sdk else "-", str(root / test), *arguments], check=True)

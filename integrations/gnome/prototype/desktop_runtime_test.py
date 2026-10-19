@@ -1,9 +1,12 @@
 """Real Lyn webviews/shortcut on test-owned X11, bus, WM and XDG directories."""
 
+import argparse
 import json
 import os
 from pathlib import Path
+import re
 import select
+import shlex
 import socket
 import sqlite3
 import struct
@@ -28,7 +31,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -199,12 +202,21 @@ def run(module, executable, sdk, probe=False, concurrent=False):
             return
         wait_for(lambda: named(app.pid, "All captures"), "Real Library not accessible", 15)
         library_window = wait_for(lambda: visible_windows(app.pid), "Owned Library window not mapped")[0]
-        projects = repositories(root, ("alpha", "beta") if concurrent else ("alpha",))
+        projects = repositories(root, ("alpha", "beta") if concurrent or warm else ("alpha",))
+        if warm == "tabs":
+            # Only this fixture's private XDG profile may create a tab; never
+            # start an interactive shell or read the user's startup files.
+            environment["GSETTINGS_BACKEND"] = "keyfile"
+            profile_id = command("gsettings", "get", "org.gnome.Terminal.ProfilesList", "default").strip("'")
+            profile = f"org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:{profile_id}/"
+            fixture_command = shlex.join(["/usr/bin/env", "-C", str(projects[1]), "/usr/bin/sleep", "60"])
+            for key, value in (("use-custom-command", "true"), ("custom-command", fixture_command)):
+                command("gsettings", "set", profile, key, value)
         diagnostic_path = root / "runtime/desktop-native.sock"
         diagnostic = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         diagnostic.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
         diagnostic.bind(str(diagnostic_path))
-        diagnostic.settimeout(.25)
+        diagnostic.setblocking(False)
         app_id = "org.lyn.NativeDesktop"
         server = start(["/usr/libexec/gnome-terminal-server", f"--app-id={app_id}"],
                        env=dict(environment, GTK3_MODULES=str(module), LYN_GNOME_TEST_STREAM=str(endpoint),
@@ -213,18 +225,19 @@ def run(module, executable, sdk, probe=False, concurrent=False):
         subprocess.run(["gdbus", "wait", "--session", "--timeout", "5", app_id],
                        env=environment, check=True, timeout=6)
         client = "/usr/bin/gnome-terminal.real" if Path("/usr/bin/gnome-terminal.real").exists() else "gnome-terminal"
+        window_projects = projects[:1] if warm == "tabs" else projects
         launches = [start([client, f"--app-id={app_id}", "--window", f"--role=lyn-desktop-{project.name}",
-                           f"--working-directory={project}", "--", "/usr/bin/sleep", "45"])
-                    for project in projects]
+                           f"--working-directory={project}", "--", "/usr/bin/sleep", "60" if warm else "45"])
+                    for project in window_projects]
         for launch in launches:
             assert launch.wait(timeout=5) == 0, "Concurrent terminal creation failed"
 
         def project_windows():
             windows = visible_windows(server.pid, "gnome-terminal")
-            if len(windows) != len(projects):
+            if len(windows) != len(window_projects):
                 return None
             found = {}
-            for project in projects:
+            for project in window_projects:
                 matching = [window for window in windows
                             if command("xprop", "-id", window, "WM_WINDOW_ROLE").endswith(
                                 f'"lyn-desktop-{project.name}"')]
@@ -234,28 +247,69 @@ def run(module, executable, sdk, probe=False, concurrent=False):
             return found
 
         windows = wait_for(project_windows, "GNOME windows not ready")
-        def producer_ready():
+        if warm == "tabs":
+            window = windows[projects[0].name]
+            command("xdotool", "windowactivate", "--sync", window)
+            window_path = command("xprop", "-id", window, "_GTK_WINDOW_OBJECT_PATH")
+            object_path = re.search(r'= "([^"]+)"', window_path).group(1)
+            command("gdbus", "call", "--session", "--dest", app_id,
+                    "--object-path", object_path, "--method", "org.gtk.Actions.Activate",
+                    "new-terminal", "[<('tab', 'current')>]", "{}")
+            windows[projects[1].name] = window
+        producer_state = {}
+        def read_producer_observation():
             try:
                 payload, ancillary, flags, _ = diagnostic.recvmsg(8192, socket.CMSG_SPACE(12))
-            except socket.timeout:
+            except BlockingIOError:
                 return False
             assert not flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC)
             credentials = [struct.unpack("3i", data) for level, kind, data in ancillary
                            if level == socket.SOL_SOCKET and kind == socket.SCM_CREDENTIALS]
             assert credentials == [(server.pid, os.getuid(), os.getgid())]
             frame = json.loads(payload)
+            producer_state["datagramsRead"] = producer_state.get("datagramsRead", 0) + 1
+            if frame["kind"] == "snapshot":
+                producer_state["sources"] = [
+                    {"windowMatches": source["windowId"] == int(window),
+                     "active": source["active"],
+                     "fresh": source["observedAtUs"] >= readiness_after_us,
+                     "observationLagMs": round((readiness_after_us - source["observedAtUs"]) / 1000, 2),
+                     "directoryMatches": Path(f'/proc/{source["foregroundPgid"]}/cwd').resolve() == project.resolve()}
+                    for source in frame["sources"]]
             return frame["kind"] == "snapshot" and any(source["windowId"] == int(window) and
-                source["active"] for source in frame["sources"])
+                source["active"] and source["observedAtUs"] >= readiness_after_us and
+                Path(f'/proc/{source["foregroundPgid"]}/cwd').resolve() == project.resolve()
+                for source in frame["sources"])
+        def producer_ready():
+            # Diagnostics arrive at 40 Hz, while wait_for polls at 20 Hz.
+            # Drain a bounded batch instead of accumulating old observations
+            # across captures. Every packet retains its uid/PID/size checks.
+            for _ in range(32):
+                if read_producer_observation():
+                    return True
+            return False
         database = Path(environment["XDG_DATA_HOME"]) / "com.mibienpanjoe.lyn/lyn.db"
         bodies = []
-        for project in projects:
+        capture_projects = [projects[index % 2] for index in range(alternations + 1)] if warm else projects
+        for project in capture_projects:
+            capture_started = time.monotonic()
             window = windows[project.name]
             command("xdotool", "windowactivate", "--sync", window)
             wait_for(lambda: int(command("xdotool", "getactivewindow")) == int(window), "GNOME not foreground")
+            readiness_after_us = time.monotonic_ns() // 1000
+            if warm == "tabs":
+                command("xdotool", "key", "--clearmodifiers", f"alt+{projects.index(project) + 1}")
             # GN05 establishes explicit readiness; concurrent-start acceptance
             # invokes as soon as the owned window is mapped and foreground.
             if not concurrent:
-                wait_for(producer_ready, "Native prototype did not register its window")
+                try:
+                    wait_for(producer_ready, "Native prototype did not register its window")
+                except AssertionError:
+                    print(json.dumps({"check": "native_readiness_refused", "mode": warm,
+                                      "project": project.name, "completedCaptures": len(bodies),
+                                      "serverExit": server.poll(),
+                                      **producer_state}), flush=True)
+                    raise
             command("xdotool", "key", "--clearmodifiers", "ctrl+shift+space")
             wait_for(lambda: named(app.pid, "Capture text"), "Real capture popup not accessible")
             context_label = f"Context {project.name}, branch gnome-{project.name}"
@@ -263,7 +317,8 @@ def run(module, executable, sdk, probe=False, concurrent=False):
                                  for node in nodes(app.pid)), f"Native context not rendered: {project.name}")
             capture_window = command("xdotool", "getactivewindow")
             assert command("xdotool", "getwindowpid", capture_window) == str(app.pid), "Input target is not the owned Lyn process"
-            body = "synthetic-native-desktop-acceptance" + (f"-{project.name}" if concurrent else "")
+            body = (f"synthetic-{warm}-{len(bodies):02d}-{project.name}" if warm else
+                    "synthetic-native-desktop-acceptance" + (f"-{project.name}" if concurrent else ""))
             bodies.append(body)
             command("xdotool", "type", "--clearmodifiers", "--delay", "0", body)
             wait_for(lambda: contains(app.pid, body), "Typed text absent from real popup")
@@ -276,11 +331,18 @@ def run(module, executable, sdk, probe=False, concurrent=False):
                     return count == len(bodies) and rows == [(body, f"gnome-{project.name}", str(project.resolve()))]
             wait_for(saved, f"Real popup did not durably save once: {project.name}")
             wait_for(lambda: int(command("xdotool", "getactivewindow")) == int(window), "Focus not restored to GNOME")
+            if warm:
+                print(json.dumps({"check": "warm_capture", "mode": warm, "index": len(bodies) - 1,
+                                  "project": project.name,
+                                  "elapsedMs": round((time.monotonic() - capture_started) * 1000, 2)}), flush=True)
         command("xdotool", "windowactivate", "--sync", library_window)
         before_navigation = pixels()
         library = named(app.pid, "All captures")
         assert library.do_action(0)
-        wait_for(lambda: all(contains(app.pid, body) for body in bodies), "Saved capture absent from rendered Library")
+        # Every save was checked in SQLite. Library pages contain at most 50
+        # rows and scroll to the newest; inspect the last five painted rows.
+        visible_bodies = bodies[-5:]
+        wait_for(lambda: all(contains(app.pid, body) for body in visible_bodies), "Saved capture absent from rendered Library")
         assert named(app.pid, "Capture text") is None, "Hidden popup must not prove Library rendering"
         paint_state = {}
         def library_painted():
@@ -288,7 +350,7 @@ def run(module, executable, sdk, probe=False, concurrent=False):
                        if node.get_state_set().contains(Atspi.StateType.SHOWING)]
             heading = page_heading(visible, "All captures")
             rows = [next((node for node in visible if body in node.get_name()
-                          and "Component" in node.get_interfaces()), None) for body in bodies]
+                          and "Component" in node.get_interfaces()), None) for body in visible_bodies]
             paint_state.update(heading=bool(heading), row=all(rows),
                                empty=any(node.get_name() == "Nothing captured yet" for node in visible),
                                titleRole=(str(heading.get_role()) if heading else None))
@@ -332,7 +394,8 @@ def run(module, executable, sdk, probe=False, concurrent=False):
         print(json.dumps({"check": "real_gnome_desktop_capture", "nativeContextRendered": True,
                           "savedOnceInExpectedProjectBranch": True, "libraryRendered": True,
                           "concurrentStart": concurrent, "nativeReadinessWait": not concurrent,
-                          "capturedProjects": [project.name for project in projects],
+                          "warmMode": warm, "alternations": len(bodies) - 1 if warm else 0,
+                          "capturedProjects": [project.name for project in capture_projects],
                           "focusRestored": True, "screenshot": screenshot}), flush=True)
     finally:
         for process in reversed(children):
@@ -350,7 +413,19 @@ def run(module, executable, sdk, probe=False, concurrent=False):
 
 
 if __name__ == "__main__":
-    assert sys.argv[4:] in ([], ["--probe"], ["--concurrent-start"]), "Unknown desktop fixture arguments"
-    run(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).resolve(strict=True),
-        None if sys.argv[3] == "-" else Path(sys.argv[3]).resolve(strict=True),
-        probe=sys.argv[4:] == ["--probe"], concurrent=sys.argv[4:] == ["--concurrent-start"])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("module", type=Path)
+    parser.add_argument("executable", type=Path)
+    parser.add_argument("sdk")
+    mode = parser.add_mutually_exclusive_group()
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs"):
+        mode.add_argument(f"--{name}", action="store_true")
+    parser.add_argument("--alternations", type=int, default=4)
+    arguments = parser.parse_args()
+    if not 1 <= arguments.alternations <= 100:
+        parser.error("--alternations must be from 1 to 100")
+    run(arguments.module.resolve(strict=True), arguments.executable.resolve(strict=True),
+        None if arguments.sdk == "-" else Path(arguments.sdk).resolve(strict=True),
+        probe=arguments.probe, concurrent=arguments.concurrent_start,
+        warm="windows" if arguments.warm_windows else "tabs" if arguments.warm_tabs else None,
+        alternations=arguments.alternations)
