@@ -122,6 +122,8 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 `pnpm provider:gnome:desktop:test --warm-alternations=100` adds a continuous series on the same two windows, then the same two tabs with distinct project directories. Each series saves an initial note followed by 100 alternating captures, checks every SQLite result and focus return, and inspects the latest five Library rows. Tab creation uses a synthetic command in the fixture's private settings, never the user's shell profiles. The per-fixture 60-second limit still applies.
 
+`pnpm provider:gnome:desktop:test --tab-relocation` adds five captures across two tabs, detaches one into a new window and verifies source/PTY/process continuity, changed window/topology and captures from both resulting windows.
+
 Requires the Rust toolchain above, Linux with pidfd support, GTK3/VTE development headers, GCC/pkg-config, Xvfb with X-Resource 1.2/xauth, GNOME Terminal, xdotool/xprop, Python with pidfd APIs and GI GTK3, and htop. Developers can set `LYN_GNOME_SDK_ROOT` to a local directory with packages extracted beneath `root/`; the test never installs system packages or modifies terminal profiles outside its temporary environment.
 
 ## Documentation

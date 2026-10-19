@@ -31,7 +31,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -276,10 +276,14 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                      "observationLagMs": round((readiness_after_us - source["observedAtUs"]) / 1000, 2),
                      "directoryMatches": Path(f'/proc/{source["foregroundPgid"]}/cwd').resolve() == project.resolve()}
                     for source in frame["sources"]]
-            return frame["kind"] == "snapshot" and any(source["windowId"] == int(window) and
+            matching = [source for source in frame.get("sources", []) if source["windowId"] == int(window) and
                 source["active"] and source["observedAtUs"] >= readiness_after_us and
                 Path(f'/proc/{source["foregroundPgid"]}/cwd').resolve() == project.resolve()
-                for source in frame["sources"])
+                ] if frame["kind"] == "snapshot" else []
+            if len(matching) != 1:
+                return False
+            producer_state["selectedSource"] = matching[0]
+            return True
         def producer_ready():
             # Diagnostics arrive at 40 Hz, while wait_for polls at 20 Hz.
             # Drain a bounded batch instead of accumulating old observations
@@ -290,6 +294,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             return False
         database = Path(environment["XDG_DATA_HOME"]) / "com.mibienpanjoe.lyn/lyn.db"
         bodies = []
+        detached = False
+        original_source = None
         capture_projects = [projects[index % 2] for index in range(alternations + 1)] if warm else projects
         for project in capture_projects:
             capture_started = time.monotonic()
@@ -297,7 +303,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             command("xdotool", "windowactivate", "--sync", window)
             wait_for(lambda: int(command("xdotool", "getactivewindow")) == int(window), "GNOME not foreground")
             readiness_after_us = time.monotonic_ns() // 1000
-            if warm == "tabs":
+            if warm == "tabs" and not detached:
                 command("xdotool", "key", "--clearmodifiers", f"alt+{projects.index(project) + 1}")
             # GN05 establishes explicit readiness; concurrent-start acceptance
             # invokes as soon as the owned window is mapped and foreground.
@@ -310,6 +316,31 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                                       "serverExit": server.poll(),
                                       **producer_state}), flush=True)
                     raise
+            if relocate and not bodies:
+                original_source = producer_state["selectedSource"].copy()
+            if relocate and len(bodies) == 2:
+                before_move = producer_state["selectedSource"].copy()
+                before_windows = set(visible_windows(server.pid, "gnome-terminal"))
+                command("gdbus", "call", "--session", "--dest", app_id,
+                        "--object-path", object_path, "--method", "org.gtk.Actions.Activate",
+                        "tab-detach", "[]", "{}")
+                def detached_window():
+                    current = set(visible_windows(server.pid, "gnome-terminal"))
+                    added = current - before_windows
+                    return next(iter(added)) if len(added) == 1 and before_windows <= current else None
+                window = wait_for(detached_window, "Detached tab did not create one owned window")
+                windows[project.name] = window
+                command("xdotool", "windowactivate", "--sync", window)
+                wait_for(lambda: int(command("xdotool", "getactivewindow")) == int(window), "Detached GNOME not foreground")
+                readiness_after_us = time.monotonic_ns() // 1000
+                wait_for(producer_ready, "Detached source not observed in new window")
+                moved = producer_state["selectedSource"]
+                for field in ("sourceId", "ptyNumber", "foregroundPgid", "registeredAtUs"):
+                    assert moved[field] == original_source[field], (field, moved, original_source)
+                assert moved["windowId"] != original_source["windowId"]
+                assert moved["revision"] > before_move["revision"]
+                assert moved["changedAtUs"] > before_move["changedAtUs"]
+                detached = True
             command("xdotool", "key", "--clearmodifiers", "ctrl+shift+space")
             wait_for(lambda: named(app.pid, "Capture text"), "Real capture popup not accessible")
             context_label = f"Context {project.name}, branch gnome-{project.name}"
@@ -335,6 +366,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 print(json.dumps({"check": "warm_capture", "mode": warm, "index": len(bodies) - 1,
                                   "project": project.name,
                                   "elapsedMs": round((time.monotonic() - capture_started) * 1000, 2)}), flush=True)
+        assert not relocate or detached, "Requested tab relocation was not exercised"
         command("xdotool", "windowactivate", "--sync", library_window)
         before_navigation = pixels()
         library = named(app.pid, "All captures")
@@ -395,6 +427,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                           "savedOnceInExpectedProjectBranch": True, "libraryRendered": True,
                           "concurrentStart": concurrent, "nativeReadinessWait": not concurrent,
                           "warmMode": warm, "alternations": len(bodies) - 1 if warm else 0,
+                          "tabRelocated": detached,
                           "capturedProjects": [project.name for project in capture_projects],
                           "focusRestored": True, "screenshot": screenshot}), flush=True)
     finally:
@@ -418,7 +451,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab"):
         mode.add_argument(f"--{name}", action="store_true")
     parser.add_argument("--alternations", type=int, default=4)
     arguments = parser.parse_args()
@@ -427,5 +460,5 @@ if __name__ == "__main__":
     run(arguments.module.resolve(strict=True), arguments.executable.resolve(strict=True),
         None if arguments.sdk == "-" else Path(arguments.sdk).resolve(strict=True),
         probe=arguments.probe, concurrent=arguments.concurrent_start,
-        warm="windows" if arguments.warm_windows else "tabs" if arguments.warm_tabs else None,
-        alternations=arguments.alternations)
+        warm="windows" if arguments.warm_windows else "tabs" if arguments.warm_tabs or arguments.relocate_tab else None,
+        alternations=arguments.alternations, relocate=arguments.relocate_tab)
