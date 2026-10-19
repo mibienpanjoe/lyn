@@ -19,6 +19,7 @@ from fixtures import repositories
 from desktop_isolation import require_owned_display
 from desktop_pixels import region_changed, region_has_contrast
 from desktop_accessibility import page_heading, html_alert
+from cwd_fixture import change_cwd
 
 
 def wait_for(check, message, timeout=12):
@@ -31,7 +32,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -243,7 +244,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         if not late_app:
             wait_for(lambda: named(app.pid, "All captures"), "Real Library not accessible", 15)
             library_window = wait_for(lambda: visible_windows(app.pid), "Owned Library window not mapped")[0]
-        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source else ("alpha",))
+        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source or cwd_change else ("alpha",))
         if closed_source:
             environment["GSETTINGS_BACKEND"] = "keyfile"
             command("gsettings", "set", "org.gnome.Terminal.Legacy.Settings", "confirm-close", "false")
@@ -269,9 +270,11 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         subprocess.run(["gdbus", "wait", "--session", "--timeout", "5", app_id],
                        env=environment, check=True, timeout=6)
         client = "/usr/bin/gnome-terminal.real" if Path("/usr/bin/gnome-terminal.real").exists() else "gnome-terminal"
-        window_projects = projects[:1] if warm == "tabs" else projects
+        window_projects = projects[:1] if warm == "tabs" or cwd_change else projects
+        terminal_command = (["/usr/bin/python3", str(Path(__file__).with_name("cwd_fixture.py")), str(projects[1])]
+                            if cwd_change else ["/usr/bin/sleep", "60" if warm else "45"])
         launches = [start([client, f"--app-id={app_id}", "--window", f"--role=lyn-desktop-{project.name}",
-                           f"--working-directory={project}", "--", "/usr/bin/sleep", "60" if warm else "45"])
+                           f"--working-directory={project}", "--", *terminal_command])
                     for project in window_projects]
         for launch in launches:
             assert launch.wait(timeout=5) == 0, "Concurrent terminal creation failed"
@@ -441,7 +444,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                               "nativeReplyChanged": True, "savedCount": 0, "draftPreserved": True,
                               "screenshot": save_screenshot(painted, "gnome-race-")}), flush=True)
             return
-        if stale_reconnect or closed_source or stale_selection:
+        if stale_reconnect or closed_source or stale_selection or cwd_change:
             project = projects[0]
             window = windows[project.name]
             command("xdotool", "windowactivate", "--sync", window)
@@ -452,11 +455,11 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             wait_for(lambda: named(app.pid, "Capture text") and
                      named(app.pid, "Context alpha, branch gnome-alpha. Change context"), "Original native context absent")
             assert command("xdotool", "getwindowpid", command("xdotool", "getactivewindow")) == str(app.pid)
-            failure = "closed" if closed_source else "selection" if stale_selection else "reconnect"
+            failure = "closed" if closed_source else "selection" if stale_selection else "cwd" if cwd_change else "reconnect"
             body = f"synthetic-{failure}-preserved-draft-ENDOFNOTE"
             command("xdotool", "type", "--clearmodifiers", "--delay", "0", body)
             wait_for(lambda: contains(app.pid, body), "Draft absent before disconnect")
-            if stale_selection:
+            if stale_selection or cwd_change:
                 assert named(app.pid, "Context alpha, branch gnome-alpha. Change context").do_action(0)
                 def original_live_choice():
                     candidates = [node for node in nodes(app.pid)
@@ -484,6 +487,18 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                     return False
                 wait_for(closed_source_removed, "Closed source retained or surviving source missing")
                 assert server.poll() is None, "Closing one source killed the surviving GNOME server"
+            elif cwd_change:
+                assert server.poll() is None
+                tty_device = os.stat(f'/dev/pts/{original["ptyNumber"]}').st_rdev
+                assert tty_device > 0
+                change_cwd(original["foregroundPgid"], server.pid, projects[0], projects[1], tty_device)
+                project = projects[1]
+                readiness_after_us = time.monotonic_ns() // 1000
+                wait_for(producer_ready, "Same native process did not report the new fixture cwd")
+                for field in ("sourceId", "windowId", "ptyNumber", "foregroundPgid", "registeredAtUs", "changedAtUs", "revision"):
+                    assert producer_state["selectedSource"][field] == original[field], field
+                assert server.poll() is None
+                windows[project.name] = window
             else:
                 lifecycle.sendall(b'R')
                 lifecycle.settimeout(4)
@@ -499,7 +514,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 for field in ("sourceId", "ptyNumber", "foregroundPgid", "registeredAtUs", "revision"):
                     assert producer_state["selectedSource"][field] == original[field], field
             assert command("xdotool", "getwindowpid", command("xdotool", "getactivewindow")) == str(app.pid)
-            if stale_selection:
+            if stale_selection or cwd_change:
                 assert choice.do_action(0), "Original chooser action could not be dispatched"
                 wait_for(lambda: named(app.pid, "Context source stale. Choose another context"),
                          "Authoritative stale selection was not reported")
@@ -536,7 +551,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                     raise
                 print(json.dumps({"check": "native_stale_selection_error", "staleIndicator": True,
                                   "alertInteriorHasContrast": True,
-                                  "screenshot": save_screenshot(painted_error, "gnome-selection-refusal-")}), flush=True)
+                                  "screenshot": save_screenshot(painted_error, f"gnome-{failure}-selection-refusal-")}), flush=True)
             else:
                 command("xdotool", "key", "Return")
             back = wait_for(lambda: named(app.pid, "Back to note"), "Old lease refusal did not keep chooser open")
@@ -544,6 +559,12 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                      "Old lease was not explicitly marked stale")
             assert back.do_action(0)
             wait_for(lambda: named(app.pid, "Capture text") and contains(app.pid, body), "Reconnect lost draft")
+            if cwd_change:
+                assert named(app.pid, "Back to note") is None, "Chooser did not close after stale selection"
+                assert named(app.pid, "Save").do_action(0)
+                back = wait_for(lambda: named(app.pid, "Back to note"), "Old cwd save did not refuse after selection")
+                assert back.do_action(0)
+                wait_for(lambda: named(app.pid, "Capture text") and contains(app.pid, body), "Old cwd save lost draft")
             with sqlite3.connect(database) as db:
                 assert db.execute("SELECT COUNT(*) FROM captures").fetchone()[0] == 0
             def preserved_draft_pixels():
@@ -563,7 +584,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             painted = wait_for(preserved_draft_pixels, "Preserved reconnect draft not painted")
             print(json.dumps({"check": "native_stale_source_draft", "failure": failure,
                               "generationChanged": stale_reconnect or stale_selection, "sourceClosed": closed_source,
-                              "operation": "select" if stale_selection else "save",
+                              "cwdChanged": cwd_change,
+                              "operation": "select+save" if cwd_change else "select" if stale_selection else "save",
                               "sameNativeSource": not closed_source,
                               "oldLeaseRefused": True, "savedCount": 0,
                               "draftPreserved": True,
@@ -586,7 +608,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         capture_projects = [projects[index % 2] for index in range(alternations + 1)] if warm else projects
         if restart_app:
             capture_projects = [projects[0], projects[0]]
-        if closed_source:
+        if closed_source or cwd_change:
             capture_projects = [projects[1]]
         for project in capture_projects:
             if restart_app and len(bodies) == 1:
@@ -753,6 +775,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                           "staleReconnect": stale_reconnect,
                           "closedSource": closed_source,
                           "staleSelection": stale_selection,
+                          "cwdChanged": cwd_change,
                           "savedOnceInExpectedProjectBranch": True, "libraryRendered": True,
                           "concurrentStart": concurrent, "nativeReadinessWait": not concurrent,
                           "warmMode": warm, "alternations": len(bodies) - 1 if warm else 0,
@@ -788,7 +811,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "stale-reconnect", "closed-source", "stale-selection"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "stale-reconnect", "closed-source", "stale-selection", "cwd-change"):
         mode.add_argument(f"--{name}", action="store_true")
     parser.add_argument("--alternations", type=int, default=4)
     arguments = parser.parse_args()
@@ -802,4 +825,4 @@ if __name__ == "__main__":
         race="switch" if arguments.race_switch else "aba" if arguments.race_aba else None,
         late_app=arguments.late_app, restart_app=arguments.restart_app,
         stale_reconnect=arguments.stale_reconnect, closed_source=arguments.closed_source,
-        stale_selection=arguments.stale_selection)
+        stale_selection=arguments.stale_selection, cwd_change=arguments.cwd_change)
