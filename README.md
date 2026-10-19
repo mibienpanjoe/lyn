@@ -128,6 +128,8 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 `pnpm provider:gnome:desktop:test --late-app` starts Lyn only after its private GNOME window is mapped and reporting native metadata, with no broker endpoint present. It checks the same server/source survives app startup, then exercises popup, exact save, painted Library and focus return. This is not app-restart or installed-package acceptance.
 
+`pnpm provider:gnome:desktop:test --restart-app` saves before and after a clean Tauri exit/relaunch, keeping the same private GNOME server and SQLite database. It requires endpoint cleanup, unchanged terminal identity, both exact notes painted in the Library and focus return. Crash recovery and stale-draft refusal remain separate checks.
+
 Requires the Rust toolchain above, Linux with pidfd support, GTK3/VTE development headers, GCC/pkg-config, Xvfb with X-Resource 1.2/xauth, GNOME Terminal, xdotool/xprop, Python with pidfd APIs and GI GTK3, and htop. Developers can set `LYN_GNOME_SDK_ROOT` to a local directory with packages extracted beneath `root/`; the test never installs system packages or modifies terminal profiles outside its temporary environment.
 
 ## Documentation

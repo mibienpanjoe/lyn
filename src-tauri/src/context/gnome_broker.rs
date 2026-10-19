@@ -170,7 +170,7 @@ impl Shared {
 pub(crate) struct NativeBroker {
     shared: Arc<Shared>,
     stop: NativeListenerStop,
-    worker: Option<JoinHandle<()>>,
+    worker: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl NativeBroker {
@@ -210,8 +210,24 @@ impl NativeBroker {
         Ok(Self {
             shared,
             stop,
-            worker: Some(worker),
+            worker: Mutex::new(Some(worker)),
         })
+    }
+
+    /// Tauri exits the process without dropping all managed Arc owners. Retire
+    /// this lifetime explicitly before exit, even while leases retain an Arc.
+    /// Concurrent/repeated callers wait for the same worker to finish; this
+    /// lifecycle mutex is never used by admission or capture queries.
+    pub(crate) fn shutdown(&self) {
+        self.shared.stopping.store(true, Ordering::Release);
+        let _ = self.stop.stop();
+        let mut worker = self
+            .worker
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(worker) = worker.take() {
+            let _ = worker.join();
+        }
     }
 
     /// Resolve the owner from the local X server, then revalidate it after the
@@ -430,11 +446,7 @@ impl NativeBroker {
 
 impl Drop for NativeBroker {
     fn drop(&mut self) {
-        self.shared.stopping.store(true, Ordering::Release);
-        let _ = self.stop.stop();
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        self.shutdown();
     }
 }
 

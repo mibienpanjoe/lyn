@@ -70,6 +70,25 @@ fn private_xdg_root(paths: &[PathBuf; 4]) -> Option<PathBuf> {
         .then(|| root.to_path_buf())
 }
 
+fn parent_control_stream(runtime: &std::path::Path, name: &str) -> UnixStream {
+    let path = runtime.join(name);
+    let metadata = fs::symlink_metadata(&path).unwrap();
+    assert!(metadata.file_type().is_socket());
+    assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+    assert_eq!(metadata.mode() & 0o777, 0o600);
+    let stream = UnixStream::connect(path).unwrap();
+    let peer = crate::context::unix_broker::peer_credentials(&stream).unwrap();
+    assert_eq!(peer.uid, unsafe { libc::geteuid() });
+    assert_eq!(peer.pid, unsafe { libc::getppid() });
+    stream
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    stream
+}
+
 #[test]
 fn desktop_fixture_requires_one_private_owned_xdg_root() {
     let directory = tempfile::Builder::new()
@@ -114,27 +133,13 @@ fn real_gnome_desktop_entry() {
     let root = private_xdg_root(&paths)
         .expect("desktop fixture must run on isolated_run.py's private XDG root");
     if std::env::var_os("LYN_GNOME_UI_QUERY_GATE").as_deref() == Some(std::ffi::OsStr::new("1")) {
-        let path = paths[0].join("native-query-gate.sock");
-        let metadata = fs::symlink_metadata(&path).unwrap();
-        assert!(metadata.file_type().is_socket());
-        assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
-        assert_eq!(metadata.mode() & 0o777, 0o600);
-        let stream = UnixStream::connect(path).unwrap();
-        let peer = crate::context::unix_broker::peer_credentials(&stream).unwrap();
-        assert_eq!(peer.uid, unsafe { libc::geteuid() });
-        assert_eq!(peer.pid, unsafe { libc::getppid() });
-        stream
-            .set_read_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
-        stream
-            .set_write_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
+        let stream = parent_control_stream(&paths[0], "native-query-gate.sock");
         assert!(QUERY_GATE.set(Mutex::new(stream)).is_ok());
     }
-    let helper_root = root.join("fixture-helper-root");
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&helper_root)
+    let helper_root = tempfile::Builder::new()
+        .prefix("fixture-helper-")
+        .permissions(fs::Permissions::from_mode(0o700))
+        .tempdir_in(root)
         .unwrap();
     let port: u16 = std::env::var("LYN_GNOME_UI_PORT").unwrap().parse().unwrap();
     assert_ne!(port, 0);
@@ -142,8 +147,24 @@ fn real_gnome_desktop_entry() {
     // Tauri 2.11.5 Context::config_mut / Builder::any_thread, checked against
     // the pinned crate's source; this localhost URL exists only in cfg(test).
     context.config_mut().build.dev_url = Some(format!("http://127.0.0.1:{port}").parse().unwrap());
-    super::desktop_builder(Some(helper_root))
+    let app = super::desktop_builder(Some(helper_root.path().to_path_buf()))
         .any_thread()
-        .run(context)
+        .build(context)
         .unwrap();
+    if std::env::var_os("LYN_GNOME_UI_RESTART").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        let mut stream = parent_control_stream(&paths[0], "desktop-lifecycle.sock");
+        let handle = app.handle().clone();
+        std::thread::spawn(move || {
+            // The enclosing fixture owns a 60-second lifetime. No commands,
+            // source IDs or filesystem paths can enter through this socket.
+            stream
+                .set_read_timeout(Some(Duration::from_secs(45)))
+                .unwrap();
+            let mut request = [0];
+            if stream.read_exact(&mut request).is_ok() && request == [b'X'] {
+                handle.exit(0);
+            }
+        });
+    }
+    app.run(super::desktop_runtime_event);
 }

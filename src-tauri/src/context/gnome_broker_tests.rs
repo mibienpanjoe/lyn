@@ -99,6 +99,30 @@ fn idle_broker_drop_joins_and_releases_the_endpoint() {
 }
 
 #[test]
+fn explicit_shutdown_releases_endpoint_with_retained_owners_and_cannot_remove_replacement() {
+    let runtime = runtime();
+    let broker = Arc::new(NativeBroker::start(runtime.path()).unwrap());
+    let retained_lease_owner = broker.clone();
+    let path = runtime.path().join("lyn-gnome-v1.sock");
+    assert!(path.exists());
+    broker.shutdown();
+    assert!(!path.exists());
+    assert_eq!(
+        retained_lease_owner.query(std::process::id(), 77, monotonic_us().unwrap()),
+        Err(BrokerError::Unavailable)
+    );
+    let replacement = NativeBroker::start(runtime.path()).unwrap();
+    // Repeated shutdown and delayed Arc destruction must never unlink the
+    // replacement endpoint, even if its inode number happens to be recycled.
+    retained_lease_owner.shutdown();
+    drop(broker);
+    drop(retained_lease_owner);
+    assert!(path.exists());
+    drop(replacement);
+    assert!(!path.exists());
+}
+
+#[test]
 fn ordinary_same_user_client_is_not_admitted_by_production_broker() {
     let runtime = runtime();
     let broker = NativeBroker::start(runtime.path()).unwrap();

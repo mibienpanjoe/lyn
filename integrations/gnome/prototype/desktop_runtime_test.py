@@ -31,7 +31,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -74,6 +74,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
     diagnostic = None
     gate_listener = None
     query_gate = None
+    lifecycle_listener = None
+    lifecycle = None
 
     def start(command, env=environment, **kwargs):
         process = subprocess.Popen(command, env=env, **kwargs)
@@ -188,12 +190,30 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             os.chmod(root / "runtime/native-query-gate.sock", 0o600)
             gate_listener.listen(1)
             gate_listener.settimeout(3)
+        if restart_app:
+            lifecycle_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            lifecycle_listener.bind(str(root / "runtime/desktop-lifecycle.sock"))
+            os.chmod(root / "runtime/desktop-lifecycle.sock", 0o600)
+            lifecycle_listener.listen(1)
+            lifecycle_listener.settimeout(15)
+
         def start_app():
             return start([str(executable), "--exact", "desktop_tests::real_gnome_desktop_entry",
                           "--nocapture", "--test-threads=1"],
                          env=dict(environment, LYN_GNOME_UI_FIXTURE="1", LYN_GNOME_UI_PORT=str(port),
-                                  LYN_GNOME_UI_QUERY_GATE="1" if race else "0"))
+                                  LYN_GNOME_UI_QUERY_GATE="1" if race else "0",
+                                  LYN_GNOME_UI_RESTART="1" if restart_app else "0"))
+
+        def lifecycle_connection():
+            connection, _ = lifecycle_listener.accept()
+            assert struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)) == (
+                app.pid, os.getuid(), os.getgid())
+            connection.settimeout(1)
+            return connection
+
         app = None if late_app else start_app()
+        if restart_app:
+            lifecycle = lifecycle_connection()
         if race:
             query_gate, _ = gate_listener.accept()
             assert struct.unpack("3i", query_gate.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)) == (
@@ -418,7 +438,29 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         detached = False
         original_source = None
         capture_projects = [projects[index % 2] for index in range(alternations + 1)] if warm else projects
+        if restart_app:
+            capture_projects = [projects[0], projects[0]]
         for project in capture_projects:
+            if restart_app and len(bodies) == 1:
+                previous_app = app.pid
+                previous_socket = endpoint.stat().st_ino
+                original_source = producer_state["selectedSource"].copy()
+                lifecycle.sendall(b'X')
+                assert app.wait(timeout=5) == 0, "Lyn did not exit cleanly"
+                lifecycle.close()
+                lifecycle = None
+                assert not endpoint.exists(), "Clean app exit left its native broker socket behind"
+                assert server.poll() is None, "App exit terminated the private GNOME server"
+                app = start_app()
+                lifecycle = lifecycle_connection()
+                assert app.pid != previous_app
+                wait_for(lambda: endpoint.exists() and app.poll() is None, "Restarted Lyn endpoint not ready", 15)
+                wait_for(lambda: named(app.pid, "All captures"), "Restarted Library not accessible", 15)
+                library_window = wait_for(lambda: visible_windows(app.pid), "Restarted Library not mapped")[0]
+                # Absence between lifetimes is mandatory; inode numbers alone
+                # are not lifetime identities and may legitimately be reused.
+                print(json.dumps({"check": "app_restarted", "oldSocketInode": previous_socket,
+                                  "newSocketInode": endpoint.stat().st_ino}), flush=True)
             capture_started = time.monotonic()
             window = windows[project.name]
             command("xdotool", "windowactivate", "--sync", window)
@@ -437,6 +479,9 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                                       "serverExit": server.poll(),
                                       **producer_state}), flush=True)
                     raise
+            if restart_app and len(bodies) == 1:
+                for field in ("sourceId", "ptyNumber", "foregroundPgid", "registeredAtUs"):
+                    assert producer_state["selectedSource"][field] == original_source[field], field
             if relocate and not bodies:
                 original_source = producer_state["selectedSource"].copy()
             if relocate and len(bodies) == 2:
@@ -470,6 +515,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             capture_window = command("xdotool", "getactivewindow")
             assert command("xdotool", "getwindowpid", capture_window) == str(app.pid), "Input target is not the owned Lyn process"
             body = (f"synthetic-{warm}-{len(bodies):02d}-{project.name}" if warm else
+                    f"synthetic-restart-{len(bodies)}" if restart_app else
                     "synthetic-native-desktop-acceptance" + (f"-{project.name}" if concurrent else ""))
             bodies.append(body)
             command("xdotool", "type", "--clearmodifiers", "--delay", "0", body)
@@ -488,8 +534,17 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                                   "project": project.name,
                                   "elapsedMs": round((time.monotonic() - capture_started) * 1000, 2)}), flush=True)
         assert not relocate or detached, "Requested tab relocation was not exercised"
-        command("xdotool", "windowactivate", "--sync", library_window)
-        before_navigation = pixels()
+        if restart_app:
+            # Restart loads the first saved row into Recent. It may already be
+            # painted identically before switching to All captures. Establish
+            # an actually obscured baseline, not an unchanged old-row failure.
+            command("xdotool", "windowminimize", "--sync", library_window)
+            wait_for(lambda: library_window not in visible_windows(app.pid), "Library did not minimize")
+            before_navigation = pixels()
+            command("xdotool", "windowactivate", "--sync", library_window)
+        else:
+            command("xdotool", "windowactivate", "--sync", library_window)
+            before_navigation = pixels()
         library = named(app.pid, "All captures")
         assert library.do_action(0)
         # Every save was checked in SQLite. Library pages contain at most 50
@@ -546,6 +601,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         screenshot = save_screenshot(painted, "gnome-desktop-")
         print(json.dumps({"check": "real_gnome_desktop_capture", "nativeContextRendered": True,
                           "appStartedAfterGnome": late_app,
+                          "appRestarted": restart_app,
                           "savedOnceInExpectedProjectBranch": True, "libraryRendered": True,
                           "concurrentStart": concurrent, "nativeReadinessWait": not concurrent,
                           "warmMode": warm, "alternations": len(bodies) - 1 if warm else 0,
@@ -569,6 +625,10 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             query_gate.close()
         if gate_listener:
             gate_listener.close()
+        if lifecycle:
+            lifecycle.close()
+        if lifecycle_listener:
+            lifecycle_listener.close()
 
 
 if __name__ == "__main__":
@@ -577,7 +637,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app"):
         mode.add_argument(f"--{name}", action="store_true")
     parser.add_argument("--alternations", type=int, default=4)
     arguments = parser.parse_args()
@@ -589,4 +649,4 @@ if __name__ == "__main__":
         warm="windows" if arguments.warm_windows else "tabs" if arguments.warm_tabs or arguments.relocate_tab or arguments.race_switch or arguments.race_aba else None,
         alternations=arguments.alternations, relocate=arguments.relocate_tab,
         race="switch" if arguments.race_switch else "aba" if arguments.race_aba else None,
-        late_app=arguments.late_app)
+        late_app=arguments.late_app, restart_app=arguments.restart_app)

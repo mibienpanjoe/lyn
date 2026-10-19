@@ -26,8 +26,20 @@ mod storage;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     desktop_builder(None)
-        .run(tauri::generate_context!())
-        .expect("failed to run Lyn");
+        .build(tauri::generate_context!())
+        .expect("failed to build Lyn")
+        .run(desktop_runtime_event);
+}
+
+fn desktop_runtime_event(_app: &tauri::AppHandle, event: tauri::RunEvent) {
+    if matches!(event, tauri::RunEvent::Exit) {
+        #[cfg(target_os = "linux")]
+        if let Some(broker) =
+            _app.try_state::<std::sync::Arc<context::gnome_broker::NativeBroker>>()
+        {
+            broker.shutdown();
+        }
+    }
 }
 
 // The private override is used only by the cfg(test) desktop fixture. The
