@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "native_channel.h"
+#include "native_discovery.h"
 #include <glib-unix.h>
 #include <errno.h>
 #include <string.h>
@@ -7,11 +8,12 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-/* One module connection, all state owned by the GTK main loop. Production
- * endpoint discovery remains separate from this bounded connection lifecycle. */
+/* One module connection, all state owned by the GTK main loop. A discovery
+ * record is an address hint only, not connected/admitted provider evidence. */
 static int channel = -1;
 static guint reader, writer, timer, retry_source;
 static gchar *configured_endpoint;
+static gchar *configured_runtime;
 static guint retry_delay_ms = 100;
 static uint8_t incoming[LYN_FRAME_BYTES], outgoing[LYN_FRAME_BYTES], generation[16];
 static size_t received, written;
@@ -20,6 +22,11 @@ static gboolean ready;
 static LynNativeQuery on_query;
 
 static void schedule_retry(void);
+
+static bool configured(void)
+{
+    return configured_endpoint || configured_runtime;
+}
 
 static void stop(void)
 {
@@ -109,7 +116,13 @@ static gboolean check_deadlines(gpointer data)
 static bool connect_once(void)
 {
     struct sockaddr_un address = {.sun_family = AF_UNIX};
-    memcpy(address.sun_path, configured_endpoint, strlen(configured_endpoint)+1);
+    const char *endpoint = configured_endpoint;
+    char discovered[LYN_NATIVE_ENDPOINT_BYTES];
+    if (configured_runtime) {
+        if (!lyn_native_discover(configured_runtime, discovered)) return false;
+        endpoint = discovered;
+    }
+    memcpy(address.sun_path, endpoint, strlen(endpoint)+1);
     int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     // Local connect must complete immediately; a saturated listener is unavailable.
     if (fd < 0) return false;
@@ -138,32 +151,44 @@ static gboolean reconnect(gpointer data)
 {
     (void)data;
     retry_source = 0;
-    if (configured_endpoint && channel < 0 && !connect_once())
+    if (configured() && channel < 0 && !connect_once())
         schedule_retry();
     return G_SOURCE_REMOVE;
 }
 
 static void schedule_retry(void)
 {
-    if (!configured_endpoint || retry_source || channel >= 0) return;
+    if (!configured() || retry_source || channel >= 0) return;
     retry_source = g_timeout_add(retry_delay_ms, reconnect, NULL);
     retry_delay_ms = MIN(retry_delay_ms * 2, 2000u);
 }
 
-bool lyn_native_start(const char *endpoint, LynNativeQuery query)
+static bool configure(const char *endpoint, LynNativeQuery query, bool discovery)
 {
-    if (configured_endpoint || !query || !endpoint || endpoint[0] != '/'
+    if (configured() || !query || !endpoint || endpoint[0] != '/'
         || strlen(endpoint) >= sizeof(((struct sockaddr_un *)0)->sun_path)) return false;
-    configured_endpoint = g_strdup(endpoint);
+    if (discovery) configured_runtime = g_strdup(endpoint);
+    else configured_endpoint = g_strdup(endpoint);
     on_query = query;
     retry_delay_ms = 100;
     if (!connect_once()) schedule_retry();
     return true;
 }
 
+bool lyn_native_start(const char *endpoint, LynNativeQuery query)
+{
+    return configure(endpoint, query, false);
+}
+
+bool lyn_native_start_discovered(const char *runtime, LynNativeQuery query)
+{
+    return configure(runtime, query, true);
+}
+
 void lyn_native_stop(void)
 {
     g_clear_pointer(&configured_endpoint, g_free);
+    g_clear_pointer(&configured_runtime, g_free);
     if (retry_source) g_source_remove(retry_source);
     retry_source = 0;
     stop();

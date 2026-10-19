@@ -96,6 +96,7 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     startup_fixture = destination / "gnome-terminal-server"
     lifecycle_test = destination / "channel-lifecycle-test"
     discovery_library = destination / "libnative-discovery-test.so"
+    discovery_channel_test = destination / "discovery-channel-test"
     subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-fPIC", "-fstack-protector-strong", "-shared",
                     str(root.parent / "native_discovery.c"),
@@ -103,9 +104,15 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     subprocess.run([sys.executable, str(root / "native_discovery_test.py"),
                     str(discovery_library)], check=True, timeout=5)
     subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                    "-fstack-protector-strong", str(root / "discovery_channel_test.c"),
+                    str(root.parent / "native_channel.c"), str(root.parent / "wire.c"),
+                    str(root.parent / "native_discovery.c"),
+                    "-o", str(discovery_channel_test), *flags], check=True)
+    subprocess.run([str(discovery_channel_test), str(destination)], check=True, timeout=5)
+    subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-fstack-protector-strong", str(root / "channel_lifecycle_test.c"),
                     str(root.parent / "native_channel.c"), str(root.parent / "wire.c"),
-                    "-o", str(lifecycle_test), *flags], check=True)
+                    str(root.parent / "native_discovery.c"), "-o", str(lifecycle_test), *flags], check=True)
     subprocess.run([str(lifecycle_test), str(destination)], check=True, timeout=3)
     subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-fstack-protector-strong", str(root / "startup_fixture.c"),
@@ -116,7 +123,7 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     subprocess.run([str(wire_test), str(root.parent / "wire_vectors.txt"),
                     str(root.parent / "wire_rejects.txt")], check=True)
     for source, output in (("module.c", module), ("preserved_module.c", preserved)):
-        extra_sources = [str(root.parent / file) for file in ("wire.c", "native_channel.c")] \
+        extra_sources = [str(root.parent / file) for file in ("wire.c", "native_channel.c", "native_discovery.c")] \
             if source == "module.c" else []
         subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                         "-fPIC", "-fstack-protector-strong", "-shared", str(root / source),

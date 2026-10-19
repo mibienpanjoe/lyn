@@ -51,6 +51,12 @@ int main(int argc, char **argv)
         lyn_native_stop();
         lyn_native_stop();
         assert(descriptors() == baseline);
+        assert(lyn_native_start_discovered(argv[1], query));
+        assert(!lyn_native_start(endpoint, query));
+        assert(descriptors() == baseline);
+        lyn_native_stop();
+        lyn_native_stop();
+        assert(descriptors() == baseline);
     }
     int listener = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     assert(listener >= 0);
@@ -65,6 +71,6 @@ int main(int argc, char **argv)
     assert(unlink(endpoint) == 0);
     g_free(endpoint);
     assert(descriptors() == baseline);
-    g_print("PASS: 100 configured/stopped channel lifecycles retain no FD; stop cancels reconnect\n");
+    g_print("PASS: 100 explicit and 100 discovery lifecycles retain no FD; stop cancels reconnect\n");
     return 0;
 }

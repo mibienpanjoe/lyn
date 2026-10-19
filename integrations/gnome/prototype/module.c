@@ -235,6 +235,14 @@ static gboolean connect_when_dispatching(gpointer data)
     return G_SOURCE_REMOVE;
 }
 
+static gboolean discover_when_dispatching(gpointer data)
+{
+    /* Same initial idle boundary: filesystem discovery precedes the unchanged
+     * handshake deadline and the channel owns its own copied runtime. */
+    (void)lyn_native_start_discovered((const gchar *)data, answer_query);
+    return G_SOURCE_REMOVE;
+}
+
 G_MODULE_EXPORT void gtk_module_init(gint *argc, gchar ***argv)
 {
     (void)argc;
@@ -265,7 +273,11 @@ G_MODULE_EXPORT void gtk_module_init(gint *argc, gchar ***argv)
         publish(frame, (size_t)length);
     g_timeout_add(25, snapshot, NULL);
     const gchar *stream = g_getenv("LYN_GNOME_TEST_STREAM");
-    if (stream)
+    const gchar *discovery = g_getenv("LYN_GNOME_TEST_DISCOVERY");
+    if (stream && !discovery)
         g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, connect_when_dispatching,
                         g_strdup(stream), g_free);
+    else if (discovery && !stream)
+        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, discover_when_dispatching,
+                        g_strdup(discovery), g_free);
 }

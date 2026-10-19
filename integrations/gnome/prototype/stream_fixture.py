@@ -8,8 +8,8 @@ import time
 
 
 class NativeStream:
-    def __init__(self, directory):
-        self.path = str(Path(directory) / "native.sock")
+    def __init__(self, directory, socket_name="native.sock"):
+        self.path = str(Path(directory) / socket_name)
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.listener.bind(self.path)
         self.listener.listen(1)
