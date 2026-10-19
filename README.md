@@ -116,7 +116,7 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 ### Native GNOME prototype (development only)
 
-`pnpm provider:gnome:test` compiles an experimental GTK3/VTE module and the current Rust test harness. It tests real GNOME Terminal windows, tabs, TUI identity, and native module-to-Rust broker exchanges on private Xvfb/D-Bus. It does not install anything or enable native automatic context in Lyn yet.
+`pnpm provider:gnome:test` compiles an experimental GTK3/VTE module and the current Rust test harness. It tests real GNOME Terminal windows, tabs, TUI identity, and native module-to-Rust broker exchanges on private Xvfb/D-Bus, including late broker startup and reconnection with a fresh generation. Channel start/stop tests check FD release and cancellation of retry. It does not install anything or enable native automatic context in your daily terminal.
 
 `pnpm provider:gnome:desktop:test` exercises the real Tauri popup, global shortcut, native context, SQLite save, rendered Library and focus return in the same isolated environment. It additionally requires Openbox and system Python GI AT-SPI/GDK. Both native test commands use `/usr/bin/python3` so a Conda environment cannot replace the GI-enabled interpreter. Alongside the explicit-readiness scenario, it creates two windows concurrently and captures once from each without waiting for native readiness. Use `pnpm provider:gnome:desktop:test --startup-pairs=20` for twenty independent startup pairs; each fixture keeps its private 60-second lifetime. Reconnect and installed-package acceptance remain separate checks. Screenshots are kept under local, ignored `tasks/`.
 

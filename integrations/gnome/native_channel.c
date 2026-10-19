@@ -7,15 +7,19 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-/* One module connection, all state owned by the GTK main loop. Reconnect and
- * production endpoint discovery are not enabled by the prototype harness. */
+/* One module connection, all state owned by the GTK main loop. Production
+ * endpoint discovery remains separate from this bounded connection lifecycle. */
 static int channel = -1;
-static guint reader, writer, timer;
+static guint reader, writer, timer, retry_source;
+static gchar *configured_endpoint;
+static guint retry_delay_ms = 100;
 static uint8_t incoming[LYN_FRAME_BYTES], outgoing[LYN_FRAME_BYTES], generation[16];
 static size_t received, written;
 static gint64 started_at, partial_at, queued_at;
 static gboolean ready;
 static LynNativeQuery on_query;
+
+static void schedule_retry(void);
 
 static void stop(void)
 {
@@ -25,7 +29,12 @@ static void stop(void)
     reader = writer = timer = 0;
     if (channel >= 0) close(channel);
     channel = -1;
+    received = written = 0;
+    ready = FALSE;
     memset(generation, 0, sizeof(generation));
+    memset(incoming, 0, sizeof(incoming));
+    memset(outgoing, 0, sizeof(outgoing));
+    schedule_retry();
 }
 
 static gboolean write_frame(gint fd, GIOCondition condition, gpointer data)
@@ -73,6 +82,7 @@ static gboolean read_frame(gint fd, GIOCondition condition, gpointer data)
         reply.kind = LYN_READY;
         memcpy(reply.generation, generation, 16);
         ready = TRUE;
+        retry_delay_ms = 100;
     } else if (ready && frame.kind == LYN_QUERY && !memcmp(generation, frame.generation, 16)) {
         reply = frame;
         reply.kind = LYN_REPLY;
@@ -96,12 +106,10 @@ static gboolean check_deadlines(gpointer data)
     return G_SOURCE_CONTINUE;
 }
 
-bool lyn_native_connect(const char *endpoint, LynNativeQuery query)
+static bool connect_once(void)
 {
     struct sockaddr_un address = {.sun_family = AF_UNIX};
-    if (channel >= 0 || !query || !endpoint || !*endpoint || strlen(endpoint) >= sizeof(address.sun_path))
-        return false;
-    memcpy(address.sun_path, endpoint, strlen(endpoint)+1);
+    memcpy(address.sun_path, configured_endpoint, strlen(configured_endpoint)+1);
     int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     // Local connect must complete immediately; a saturated listener is unavailable.
     if (fd < 0) return false;
@@ -116,7 +124,6 @@ bool lyn_native_connect(const char *endpoint, LynNativeQuery query)
     channel = fd;
     received = 0;
     ready = FALSE;
-    on_query = query;
     started_at = g_get_monotonic_time();
     // Writable watch exists only while a frame is pending, not an idle busy loop.
     // https://docs.gtk.org/glib-unix/func.fd_add.html
@@ -125,4 +132,41 @@ bool lyn_native_connect(const char *endpoint, LynNativeQuery query)
     LynFrame hello = {.kind = LYN_HELLO};
     if (!reader || !timer || !queue(&hello)) { stop(); return false; }
     return true;
+}
+
+static gboolean reconnect(gpointer data)
+{
+    (void)data;
+    retry_source = 0;
+    if (configured_endpoint && channel < 0 && !connect_once())
+        schedule_retry();
+    return G_SOURCE_REMOVE;
+}
+
+static void schedule_retry(void)
+{
+    if (!configured_endpoint || retry_source || channel >= 0) return;
+    retry_source = g_timeout_add(retry_delay_ms, reconnect, NULL);
+    retry_delay_ms = MIN(retry_delay_ms * 2, 2000u);
+}
+
+bool lyn_native_start(const char *endpoint, LynNativeQuery query)
+{
+    if (configured_endpoint || !query || !endpoint || endpoint[0] != '/'
+        || strlen(endpoint) >= sizeof(((struct sockaddr_un *)0)->sun_path)) return false;
+    configured_endpoint = g_strdup(endpoint);
+    on_query = query;
+    retry_delay_ms = 100;
+    if (!connect_once()) schedule_retry();
+    return true;
+}
+
+void lyn_native_stop(void)
+{
+    g_clear_pointer(&configured_endpoint, g_free);
+    if (retry_source) g_source_remove(retry_source);
+    retry_source = 0;
+    stop();
+    on_query = NULL;
+    retry_delay_ms = 100;
 }

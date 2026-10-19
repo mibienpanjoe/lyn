@@ -4,5 +4,9 @@
 
 /* Query callback executes on the GTK main loop; no terminal stream access. */
 typedef void (*LynNativeQuery)(const LynFrame *query, LynFrame *reply);
-bool lyn_native_connect(const char *endpoint, LynNativeQuery query);
+/* GTK main context only. Copies an absolute endpoint; true means configured,
+ * not connected/admitted. Retries connections, never queries or captures. */
+bool lyn_native_start(const char *endpoint, LynNativeQuery query);
+/* Cancels watches/retry and frees the copied endpoint; safe when stopped. */
+void lyn_native_stop(void);
 #endif

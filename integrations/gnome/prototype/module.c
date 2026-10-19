@@ -231,7 +231,7 @@ static gboolean connect_when_dispatching(gpointer data)
 {
     /* Start protocol deadlines only once GTK can dispatch channel I/O.
      * Initialization work before the main loop is not peer response latency. */
-    (void)lyn_native_connect((const gchar *)data, answer_query);
+    (void)lyn_native_start((const gchar *)data, answer_query);
     return G_SOURCE_REMOVE;
 }
 

@@ -68,6 +68,12 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     preserved = destination / "libexisting-gtk-module.so"
     wire_test = destination / "wire-test"
     startup_fixture = destination / "gnome-terminal-server"
+    lifecycle_test = destination / "channel-lifecycle-test"
+    subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                    "-fstack-protector-strong", str(root / "channel_lifecycle_test.c"),
+                    str(root.parent / "native_channel.c"), str(root.parent / "wire.c"),
+                    "-o", str(lifecycle_test), *flags], check=True)
+    subprocess.run([str(lifecycle_test), str(destination)], check=True, timeout=3)
     subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-fstack-protector-strong", str(root / "startup_fixture.c"),
                     "-o", str(startup_fixture), *flags], check=True)
@@ -96,6 +102,7 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
         cases = [("desktop_runtime_test.py", [*fixture_args, *mode]) for mode in modes]
     else:
         cases = (("startup_test.py", [str(module), str(startup_fixture)]),
+                 ("reconnect_test.py", [str(module), str(probe)]),
                  ("smoke_test.py", [str(module)]),
                  ("identity_test.py", [str(module), str(preserved)]),
                  ("rust_broker_test.py", [str(module), str(probe)]))
