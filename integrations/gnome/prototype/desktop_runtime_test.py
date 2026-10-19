@@ -31,7 +31,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -190,7 +190,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             os.chmod(root / "runtime/native-query-gate.sock", 0o600)
             gate_listener.listen(1)
             gate_listener.settimeout(3)
-        if restart_app:
+        if restart_app or stale_reconnect:
             lifecycle_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             lifecycle_listener.bind(str(root / "runtime/desktop-lifecycle.sock"))
             os.chmod(root / "runtime/desktop-lifecycle.sock", 0o600)
@@ -202,7 +202,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                           "--nocapture", "--test-threads=1"],
                          env=dict(environment, LYN_GNOME_UI_FIXTURE="1", LYN_GNOME_UI_PORT=str(port),
                                   LYN_GNOME_UI_QUERY_GATE="1" if race else "0",
-                                  LYN_GNOME_UI_RESTART="1" if restart_app else "0"))
+                                  LYN_GNOME_UI_RESTART="1" if restart_app or stale_reconnect else "0"))
 
         def lifecycle_connection():
             connection, _ = lifecycle_listener.accept()
@@ -212,7 +212,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             return connection
 
         app = None if late_app else start_app()
-        if restart_app:
+        if restart_app or stale_reconnect:
             lifecycle = lifecycle_connection()
         if race:
             query_gate, _ = gate_listener.accept()
@@ -434,6 +434,69 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                               "nativeReplyChanged": True, "savedCount": 0, "draftPreserved": True,
                               "screenshot": save_screenshot(painted, "gnome-race-")}), flush=True)
             return
+        if stale_reconnect:
+            project = projects[0]
+            window = windows[project.name]
+            command("xdotool", "windowactivate", "--sync", window)
+            readiness_after_us = time.monotonic_ns() // 1000
+            wait_for(producer_ready, "Native source not ready before disconnect")
+            original = producer_state["selectedSource"].copy()
+            command("xdotool", "key", "--delay", "0", "--clearmodifiers", "ctrl+shift+space")
+            wait_for(lambda: named(app.pid, "Capture text") and
+                     named(app.pid, "Context alpha, branch gnome-alpha. Change context"), "Original native context absent")
+            assert command("xdotool", "getwindowpid", command("xdotool", "getactivewindow")) == str(app.pid)
+            body = "synthetic-reconnect-preserved-draft-ENDOFNOTE"
+            command("xdotool", "type", "--clearmodifiers", "--delay", "0", body)
+            wait_for(lambda: contains(app.pid, body), "Draft absent before disconnect")
+            lifecycle.sendall(b'R')
+            lifecycle.settimeout(4)
+            generation_reply = bytearray()
+            while len(generation_reply) < 33:
+                part = lifecycle.recv(33 - len(generation_reply))
+                assert part, "Lifecycle control closed without reconnect evidence"
+                generation_reply.extend(part)
+            assert generation_reply[:1] == b'G' and generation_reply[1:17] != generation_reply[17:33]
+            assert server.poll() is None, "Reconnect restarted GNOME instead of its channel"
+            readiness_after_us = time.monotonic_ns() // 1000
+            wait_for(producer_ready, "Native source absent after reconnect")
+            for field in ("sourceId", "ptyNumber", "foregroundPgid", "registeredAtUs", "revision"):
+                assert producer_state["selectedSource"][field] == original[field], field
+            command("xdotool", "key", "Return")
+            back = wait_for(lambda: named(app.pid, "Back to note"), "Old lease save did not open chooser")
+            wait_for(lambda: named(app.pid, "Context source stale. Choose another context"),
+                     "Old lease was not explicitly marked stale")
+            assert back.do_action(0)
+            wait_for(lambda: named(app.pid, "Capture text") and contains(app.pid, body), "Reconnect lost draft")
+            with sqlite3.connect(database) as db:
+                assert db.execute("SELECT COUNT(*) FROM captures").fetchone()[0] == 0
+            def preserved_draft_pixels():
+                field = next((node for node in nodes(app.pid) if "Text" in node.get_interfaces()
+                              and node.get_attributes().get("id") == "capture-text"
+                              and node.get_text(0, -1) == body), None)
+                if field is None:
+                    return False
+                first = field.get_character_extents(len(body) - 6, Atspi.CoordType.SCREEN)
+                last = field.get_character_extents(len(body) - 1, Atspi.CoordType.SCREEN)
+                region = (first.x, first.y, last.x + last.width - first.x, first.height)
+                current = pixels()
+                x, y, width, height = region
+                if min(x, y) < 0 or min(width, height) <= 0 or x + width > current.get_width() or y + height > current.get_height():
+                    return False
+                return current if region_has_contrast(current, region) else False
+            painted = wait_for(preserved_draft_pixels, "Preserved reconnect draft not painted")
+            print(json.dumps({"check": "native_reconnect_stale_draft", "generationChanged": True,
+                              "sameNativeSource": True, "oldLeaseRefused": True, "savedCount": 0,
+                              "draftPreserved": True,
+                              "screenshot": save_screenshot(painted, "gnome-reconnect-draft-")}), flush=True)
+            assert named(app.pid, "Cancel").do_action(0)
+            def cancel_focus_restored():
+                # Openbox may briefly unset the active-window property while
+                # the popup hides. Absence is not success or a command failure;
+                # the original wait still requires the exact terminal XID.
+                property_value = command("xprop", "-root", "_NET_ACTIVE_WINDOW")
+                active = re.fullmatch(r"_NET_ACTIVE_WINDOW\(WINDOW\): window id # (0x[0-9a-fA-F]+)", property_value)
+                return active is not None and int(active[1], 16) == int(window)
+            wait_for(cancel_focus_restored, "Cancel did not return focus")
         bodies = []
         detached = False
         original_source = None
@@ -602,6 +665,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         print(json.dumps({"check": "real_gnome_desktop_capture", "nativeContextRendered": True,
                           "appStartedAfterGnome": late_app,
                           "appRestarted": restart_app,
+                          "staleReconnect": stale_reconnect,
                           "savedOnceInExpectedProjectBranch": True, "libraryRendered": True,
                           "concurrentStart": concurrent, "nativeReadinessWait": not concurrent,
                           "warmMode": warm, "alternations": len(bodies) - 1 if warm else 0,
@@ -637,7 +701,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "stale-reconnect"):
         mode.add_argument(f"--{name}", action="store_true")
     parser.add_argument("--alternations", type=int, default=4)
     arguments = parser.parse_args()
@@ -649,4 +713,5 @@ if __name__ == "__main__":
         warm="windows" if arguments.warm_windows else "tabs" if arguments.warm_tabs or arguments.relocate_tab or arguments.race_switch or arguments.race_aba else None,
         alternations=arguments.alternations, relocate=arguments.relocate_tab,
         race="switch" if arguments.race_switch else "aba" if arguments.race_aba else None,
-        late_app=arguments.late_app, restart_app=arguments.restart_app)
+        late_app=arguments.late_app, restart_app=arguments.restart_app,
+        stale_reconnect=arguments.stale_reconnect)

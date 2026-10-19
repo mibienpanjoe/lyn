@@ -439,6 +439,35 @@ impl NativeBroker {
     }
 
     #[cfg(test)]
+    pub(crate) fn reconnect_fixture_peer(&self) -> Option<(Uuid, Uuid)> {
+        // Fault injection only: retire exactly one real admitted channel. Its
+        // replacement must still pass the production peer/handshake boundary.
+        let (pid, slot) = {
+            let channels = self.shared.channels.lock().ok()?;
+            if channels.len() != 1 {
+                return None;
+            }
+            let (&pid, slot) = channels.iter().next()?;
+            (pid, slot.clone())
+        };
+        let original = slot.try_lock().ok()?.generation();
+        self.shared.remove(pid, &slot);
+        drop(slot);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            let current = self.shared.channels.lock().ok()?.get(&pid).cloned();
+            if let Some(current) = current
+                && let Ok(channel) = current.try_lock()
+                && channel.generation() != original
+            {
+                return Some((original, channel.generation()));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        None
+    }
+
+    #[cfg(test)]
     fn start_fixture(runtime: &Path) -> io::Result<Self> {
         Self::spawn(runtime, NativeChannel::connect_fixture)
     }

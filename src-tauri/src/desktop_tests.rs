@@ -160,9 +160,32 @@ fn real_gnome_desktop_entry() {
             stream
                 .set_read_timeout(Some(Duration::from_secs(45)))
                 .unwrap();
-            let mut request = [0];
-            if stream.read_exact(&mut request).is_ok() && request == [b'X'] {
-                handle.exit(0);
+            // At most one controlled reconnect followed by one clean exit.
+            let mut reconnected = false;
+            for _ in 0..2 {
+                let mut request = [0];
+                if stream.read_exact(&mut request).is_err() {
+                    break;
+                }
+                match request[0] {
+                    b'X' => {
+                        handle.exit(0);
+                        break;
+                    }
+                    b'R' if !reconnected => {
+                        reconnected = true;
+                        use tauri::Manager;
+                        let broker = handle
+                            .state::<std::sync::Arc<crate::context::gnome_broker::NativeBroker>>();
+                        let (old, new) = broker
+                            .reconnect_fixture_peer()
+                            .expect("real native reconnect required");
+                        stream.write_all(b"G").unwrap();
+                        stream.write_all(old.as_bytes()).unwrap();
+                        stream.write_all(new.as_bytes()).unwrap();
+                    }
+                    _ => break,
+                }
             }
         });
     }
