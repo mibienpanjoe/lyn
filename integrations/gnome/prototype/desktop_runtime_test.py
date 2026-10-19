@@ -20,6 +20,7 @@ from desktop_isolation import require_owned_display
 from desktop_pixels import region_changed, region_has_contrast
 from desktop_accessibility import page_heading, html_alert
 from cwd_fixture import change_cwd
+from foreground_fixture import ready as foreground_shape_ready
 
 
 def wait_for(check, message, timeout=12):
@@ -32,7 +33,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False, process_shape=None):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -245,7 +246,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         if not late_app:
             wait_for(lambda: named(app.pid, "All captures"), "Real Library not accessible", 15)
             library_window = wait_for(lambda: visible_windows(app.pid), "Owned Library window not mapped")[0]
-        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source or cwd_change or pty_reuse else ("alpha",))
+        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source or cwd_change or pty_reuse or process_shape else ("alpha",))
         if closed_source or pty_reuse:
             environment["GSETTINGS_BACKEND"] = "keyfile"
             command("gsettings", "set", "org.gnome.Terminal.Legacy.Settings", "confirm-close", "false")
@@ -271,9 +272,12 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         subprocess.run(["gdbus", "wait", "--session", "--timeout", "5", app_id],
                        env=environment, check=True, timeout=6)
         client = "/usr/bin/gnome-terminal.real" if Path("/usr/bin/gnome-terminal.real").exists() else "gnome-terminal"
-        window_projects = projects[:1] if warm == "tabs" or cwd_change else projects
+        window_projects = projects[:1] if warm == "tabs" or cwd_change or process_shape else projects
         terminal_command = (["/usr/bin/python3", str(Path(__file__).with_name("cwd_fixture.py")), str(projects[1])]
                             if cwd_change else ["/usr/bin/sleep", "60" if warm else "45"])
+        if process_shape:
+            terminal_command = ["/usr/bin/python3", str(Path(__file__).with_name("foreground_fixture.py")),
+                                process_shape, str(projects[1])]
         launches = [start([client, f"--app-id={app_id}", "--window", f"--role=lyn-desktop-{project.name}",
                            f"--working-directory={project}", "--", *terminal_command])
                     for project in window_projects]
@@ -295,6 +299,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             return found
 
         windows = wait_for(project_windows, "GNOME windows not ready")
+        if process_shape == "child-tui":
+            windows[projects[1].name] = windows[projects[0].name]
         if warm == "tabs":
             window = windows[projects[0].name]
             command("xdotool", "windowactivate", "--sync", window)
@@ -657,6 +663,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             capture_projects = [projects[1]]
         if pty_reuse:
             capture_projects = [projects[0]]
+        if process_shape:
+            capture_projects = [projects[1] if process_shape == "child-tui" else projects[0]]
         for project in capture_projects:
             if restart_app and len(bodies) == 1:
                 previous_app = app.pid
@@ -699,6 +707,14 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             if restart_app and len(bodies) == 1:
                 for field in ("sourceId", "ptyNumber", "foregroundPgid", "registeredAtUs"):
                     assert producer_state["selectedSource"][field] == original_source[field], field
+            if process_shape:
+                def settled_shape():
+                    if not producer_ready():
+                        return None
+                    return foreground_shape_ready(process_shape, producer_state["selectedSource"], server.pid,
+                                                  projects[0], projects[1])
+                proof = wait_for(settled_shape, "Private foreground shell/TUI shape did not settle")
+                print(json.dumps({"check": "native_foreground_shape", **proof}), flush=True)
             if relocate and not bodies:
                 original_source = producer_state["selectedSource"].copy()
             if relocate and len(bodies) == 2:
@@ -824,6 +840,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                           "staleSelection": stale_selection,
                           "cwdChanged": cwd_change,
                           "ptyReused": pty_reuse,
+                          "processShape": process_shape,
                           "savedOnceInExpectedProjectBranch": True, "libraryRendered": True,
                           "concurrentStart": concurrent, "nativeReadinessWait": not concurrent,
                           "warmMode": warm, "alternations": len(bodies) - 1 if warm else 0,
@@ -863,6 +880,7 @@ if __name__ == "__main__":
     mode = parser.add_mutually_exclusive_group()
     for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "stale-reconnect", "closed-source", "stale-selection", "cwd-change", "pty-reuse"):
         mode.add_argument(f"--{name}", action="store_true")
+    mode.add_argument("--process-shape", choices=("shell", "exec-tui", "child-tui"))
     parser.add_argument("--alternations", type=int, default=4)
     arguments = parser.parse_args()
     if not 1 <= arguments.alternations <= 100:
@@ -876,4 +894,4 @@ if __name__ == "__main__":
         late_app=arguments.late_app, restart_app=arguments.restart_app,
         stale_reconnect=arguments.stale_reconnect, closed_source=arguments.closed_source,
         stale_selection=arguments.stale_selection, cwd_change=arguments.cwd_change,
-        pty_reuse=arguments.pty_reuse)
+        pty_reuse=arguments.pty_reuse, process_shape=arguments.process_shape)
