@@ -18,7 +18,7 @@ import time
 from fixtures import repositories
 from desktop_isolation import require_owned_display
 from desktop_pixels import region_changed, region_has_contrast
-from desktop_accessibility import page_heading
+from desktop_accessibility import page_heading, html_alert
 
 
 def wait_for(check, message, timeout=12):
@@ -31,7 +31,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -190,7 +190,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             os.chmod(root / "runtime/native-query-gate.sock", 0o600)
             gate_listener.listen(1)
             gate_listener.settimeout(3)
-        if restart_app or stale_reconnect:
+        if restart_app or stale_reconnect or stale_selection:
             lifecycle_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             lifecycle_listener.bind(str(root / "runtime/desktop-lifecycle.sock"))
             os.chmod(root / "runtime/desktop-lifecycle.sock", 0o600)
@@ -202,7 +202,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                           "--nocapture", "--test-threads=1"],
                          env=dict(environment, LYN_GNOME_UI_FIXTURE="1", LYN_GNOME_UI_PORT=str(port),
                                   LYN_GNOME_UI_QUERY_GATE="1" if race else "0",
-                                  LYN_GNOME_UI_RESTART="1" if restart_app or stale_reconnect else "0"))
+                                  LYN_GNOME_UI_RESTART="1" if restart_app or stale_reconnect or stale_selection else "0"))
 
         def lifecycle_connection():
             connection, _ = lifecycle_listener.accept()
@@ -212,7 +212,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             return connection
 
         app = None if late_app else start_app()
-        if restart_app or stale_reconnect:
+        if restart_app or stale_reconnect or stale_selection:
             lifecycle = lifecycle_connection()
         if race:
             query_gate, _ = gate_listener.accept()
@@ -226,8 +226,9 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             action = wait_for(lambda: named(app.pid, "Lyn probe action"), "Probe button not accessible", 15)
             heading = wait_for(lambda: named(app.pid, "Lyn probe heading"), "Probe heading not accessible")
             assert page_heading([heading], "Lyn probe heading") is heading, "Probe HTML heading attributes differ"
+            alert = wait_for(lambda: html_alert(nodes(app.pid), "probe-error"), "Probe HTML alert not accessible")
             observations = []
-            for node in (heading, action):
+            for node in (heading, action, alert):
                 observations.append({"name": node.get_name(), "role": int(node.get_role()),
                                      "roleName": node.get_role_name(), "attributes": node.get_attributes()})
             assert action.do_action(0)
@@ -235,6 +236,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             print(json.dumps({"check": "webkit_accessibility_probe", "nodes": observations,
                               "expectedHeadingRole": int(Atspi.Role.HEADING),
                               "headingRoleMatches": heading.get_role() == Atspi.Role.HEADING,
+                              "expectedAlertRole": int(Atspi.Role.ALERT),
+                              "alertRoleMatches": alert.get_role() == Atspi.Role.ALERT,
                               "expectedButtonRole": int(Atspi.Role.PUSH_BUTTON)}), flush=True)
             return
         if not late_app:
@@ -438,7 +441,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                               "nativeReplyChanged": True, "savedCount": 0, "draftPreserved": True,
                               "screenshot": save_screenshot(painted, "gnome-race-")}), flush=True)
             return
-        if stale_reconnect or closed_source:
+        if stale_reconnect or closed_source or stale_selection:
             project = projects[0]
             window = windows[project.name]
             command("xdotool", "windowactivate", "--sync", window)
@@ -449,10 +452,18 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             wait_for(lambda: named(app.pid, "Capture text") and
                      named(app.pid, "Context alpha, branch gnome-alpha. Change context"), "Original native context absent")
             assert command("xdotool", "getwindowpid", command("xdotool", "getactivewindow")) == str(app.pid)
-            failure = "closed" if closed_source else "reconnect"
+            failure = "closed" if closed_source else "selection" if stale_selection else "reconnect"
             body = f"synthetic-{failure}-preserved-draft-ENDOFNOTE"
             command("xdotool", "type", "--clearmodifiers", "--delay", "0", body)
             wait_for(lambda: contains(app.pid, body), "Draft absent before disconnect")
+            if stale_selection:
+                assert named(app.pid, "Context alpha, branch gnome-alpha. Change context").do_action(0)
+                def original_live_choice():
+                    candidates = [node for node in nodes(app.pid)
+                                  if node.get_name().startswith("Use live context alpha, branch gnome-alpha")]
+                    assert len(candidates) <= 1, "Ambiguous live-source choice in private popup"
+                    return candidates[0] if candidates else None
+                choice = wait_for(original_live_choice, "Original live-source choice absent before reconnect")
             if closed_source:
                 window_path = command("xprop", "-id", window, "_GTK_WINDOW_OBJECT_PATH")
                 object_path = re.search(r'= "([^"]+)"', window_path).group(1)
@@ -488,8 +499,47 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 for field in ("sourceId", "ptyNumber", "foregroundPgid", "registeredAtUs", "revision"):
                     assert producer_state["selectedSource"][field] == original[field], field
             assert command("xdotool", "getwindowpid", command("xdotool", "getactivewindow")) == str(app.pid)
-            command("xdotool", "key", "Return")
-            back = wait_for(lambda: named(app.pid, "Back to note"), "Old lease save did not open chooser")
+            if stale_selection:
+                assert choice.do_action(0), "Original chooser action could not be dispatched"
+                wait_for(lambda: named(app.pid, "Context source stale. Choose another context"),
+                         "Authoritative stale selection was not reported")
+                def painted_selection_error():
+                    # This WebKitGTK alert has an empty accessible name and no
+                    # Text interface despite its visibly painted error span.
+                    # Keep its exact HTML/role witness plus interior ink; the
+                    # saved screenshot still needs inspection for exact text.
+                    alert = html_alert(nodes(app.pid), "capture-error")
+                    if alert is None:
+                        return False
+                    rect = alert.get_extents(Atspi.CoordType.SCREEN)
+                    current = pixels()
+                    if (rect.x < 0 or rect.y < 0 or rect.width <= 24 or rect.height <= 16
+                            or rect.x + rect.width > current.get_width()
+                            or rect.y + rect.height > current.get_height()):
+                        return False
+                    region = (rect.x + 12, rect.y + 8, rect.width - 24, rect.height - 16)
+                    return current if region_has_contrast(current, region) else False
+                try:
+                    painted_error = wait_for(painted_selection_error, "Stale selection error was not painted")
+                except AssertionError:
+                    alerts = [{"name": node.get_name(), "attributes": node.get_attributes(),
+                               "role": int(node.get_role()), "roleName": node.get_role_name(),
+                               "interfaces": node.get_interfaces(),
+                               "rect": tuple(getattr(node.get_extents(Atspi.CoordType.SCREEN), key)
+                                             for key in ("x", "y", "width", "height")),
+                               "text": node.get_text(0, -1) if "Text" in node.get_interfaces() else None}
+                              for node in nodes(app.pid) if node.get_role() == Atspi.Role.ALERT
+                              or node.get_attributes().get("id") == "capture-error"]
+                    print(json.dumps({"check": "stale_selection_refused", "alerts": alerts,
+                                      "staleIndicator": bool(named(app.pid, "Context source stale. Choose another context")),
+                                      "screenshot": save_screenshot(pixels(), "gnome-selection-failed-")}), flush=True)
+                    raise
+                print(json.dumps({"check": "native_stale_selection_error", "staleIndicator": True,
+                                  "alertInteriorHasContrast": True,
+                                  "screenshot": save_screenshot(painted_error, "gnome-selection-refusal-")}), flush=True)
+            else:
+                command("xdotool", "key", "Return")
+            back = wait_for(lambda: named(app.pid, "Back to note"), "Old lease refusal did not keep chooser open")
             wait_for(lambda: named(app.pid, "Context source stale. Choose another context"),
                      "Old lease was not explicitly marked stale")
             assert back.do_action(0)
@@ -512,7 +562,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 return current if region_has_contrast(current, region) else False
             painted = wait_for(preserved_draft_pixels, "Preserved reconnect draft not painted")
             print(json.dumps({"check": "native_stale_source_draft", "failure": failure,
-                              "generationChanged": stale_reconnect, "sourceClosed": closed_source,
+                              "generationChanged": stale_reconnect or stale_selection, "sourceClosed": closed_source,
+                              "operation": "select" if stale_selection else "save",
                               "sameNativeSource": not closed_source,
                               "oldLeaseRefused": True, "savedCount": 0,
                               "draftPreserved": True,
@@ -701,6 +752,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                           "appRestarted": restart_app,
                           "staleReconnect": stale_reconnect,
                           "closedSource": closed_source,
+                          "staleSelection": stale_selection,
                           "savedOnceInExpectedProjectBranch": True, "libraryRendered": True,
                           "concurrentStart": concurrent, "nativeReadinessWait": not concurrent,
                           "warmMode": warm, "alternations": len(bodies) - 1 if warm else 0,
@@ -736,7 +788,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "stale-reconnect", "closed-source"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "stale-reconnect", "closed-source", "stale-selection"):
         mode.add_argument(f"--{name}", action="store_true")
     parser.add_argument("--alternations", type=int, default=4)
     arguments = parser.parse_args()
@@ -749,4 +801,5 @@ if __name__ == "__main__":
         alternations=arguments.alternations, relocate=arguments.relocate_tab,
         race="switch" if arguments.race_switch else "aba" if arguments.race_aba else None,
         late_app=arguments.late_app, restart_app=arguments.restart_app,
-        stale_reconnect=arguments.stale_reconnect, closed_source=arguments.closed_source)
+        stale_reconnect=arguments.stale_reconnect, closed_source=arguments.closed_source,
+        stale_selection=arguments.stale_selection)

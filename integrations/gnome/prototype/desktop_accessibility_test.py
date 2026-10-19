@@ -2,7 +2,7 @@
 
 import unittest
 
-from desktop_accessibility import page_heading
+from desktop_accessibility import page_heading, html_alert
 
 
 class Node:
@@ -40,6 +40,24 @@ class PageHeadingTest(unittest.TestCase):
                            {"level": "2"}, {"toolkit": "GTK"}, {"tag": ""}):
             with self.subTest(attributes=attributes):
                 self.assertIsNone(page_heading([heading(**attributes)], "All captures"))
+
+
+class HtmlAlertTest(unittest.TestCase):
+    def alert(self, **overrides):
+        return Node("", **({"toolkit": "WebKitGTK", "tag": "div", "id": "capture-error",
+                            "computed-role": "alert"} | overrides))
+
+    def test_unnamed_exact_html_alert_is_selected(self):
+        alert = self.alert()
+        self.assertIs(html_alert([Node("stale", tag="span"), alert], "capture-error"), alert)
+
+    def test_duplicates_and_wrong_semantics_are_refused(self):
+        self.assertIsNone(html_alert([], "capture-error"))
+        self.assertIsNone(html_alert([self.alert(), self.alert()], "capture-error"))
+        for attributes in ({"tag": "button"}, {"computed-role": "button"},
+                           {"id": "unrelated"}, {"toolkit": "GTK"}):
+            with self.subTest(attributes=attributes):
+                self.assertIsNone(html_alert([self.alert(**attributes)], "capture-error"))
 
 
 if __name__ == "__main__":

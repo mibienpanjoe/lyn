@@ -12,3 +12,14 @@ def page_heading(nodes, title):
                 ("computed-role", "heading"), ("level", "1"))):
             candidates.append(node)
     return candidates[0] if len(candidates) == 1 else None
+
+
+def html_alert(nodes, element_id):
+    candidates = []
+    for node in nodes:
+        attributes = node.get_attributes()
+        if all(attributes.get(key) == value for key, value in (
+                ("toolkit", "WebKitGTK"), ("tag", "div"),
+                ("id", element_id), ("computed-role", "alert"))):
+            candidates.append(node)
+    return candidates[0] if len(candidates) == 1 else None
