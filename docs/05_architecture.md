@@ -706,8 +706,8 @@ Lyn installs a CPU-only whisper.cpp v1.9.2 engine and multilingual Whisper `base
 
 ### ADR-011 — Attested native GNOME topology instead of startup-focus inference
 
-**Status:** Accepted contract, 2026-10-18; production integration pending.
+**Status:** Accepted, 2026-10-18; backend integration exercised in isolation, installed activation/acceptance pending.
 
 Concurrent GNOME Terminal startup can bind different shell helpers to the same foreground window. Neither a delay, global recency nor a terminal-server PID proves an active tab. The native GTK3/VTE adapter must instead relate widgets to native windows and PTYs without reading terminal content, while Rust attests OS identities and derives cwd/Git. Its separate fixed-width metadata protocol avoids adding a C JSON parser or accepting paths/variable payloads. Connection generations and pre-invocation topology timing reject replay, newly registered sources and A→B→A races; unresolved evidence remains manual. Existing editor/browser rejection of native IDs and Capture Service authority remain unchanged.
 
-The owning [native protocol contract](gnome_native_protocol.md) defines framing, lifecycle, timing and shell/TUI policy. Production-policy attestation and native source/capture/Library backend integration are exercised in isolated real GNOME. The desktop popup/focus path, reversible module installation, lifecycle/reconnect reliability and packaged acceptance remain required. This ADR does not claim installed GNOME automatic context is repaired or broaden Windows/macOS/Wayland support.
+The owning [native protocol contract](gnome_native_protocol.md) defines framing, lifecycle, timing and shell/TUI policy, and distinguishes backend proof from desktop fixture coverage. Production-policy attestation and native source/capture/Library backend integration are exercised in isolated real GNOME. The reinforced desktop popup/focus run, reversible module installation, lifecycle/reconnect reliability and packaged acceptance remain required. This ADR does not claim installed GNOME automatic context is repaired or broaden Windows/macOS/Wayland support.
