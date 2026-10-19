@@ -95,6 +95,13 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     wire_test = destination / "wire-test"
     startup_fixture = destination / "gnome-terminal-server"
     lifecycle_test = destination / "channel-lifecycle-test"
+    discovery_library = destination / "libnative-discovery-test.so"
+    subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                    "-fPIC", "-fstack-protector-strong", "-shared",
+                    str(root.parent / "native_discovery.c"),
+                    "-o", str(discovery_library)], check=True)
+    subprocess.run([sys.executable, str(root / "native_discovery_test.py"),
+                    str(discovery_library)], check=True, timeout=5)
     subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-fstack-protector-strong", str(root / "channel_lifecycle_test.c"),
                     str(root.parent / "native_channel.c"), str(root.parent / "wire.c"),
