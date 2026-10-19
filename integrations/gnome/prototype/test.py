@@ -13,6 +13,8 @@ import tempfile
 root = Path(__file__).resolve().parent
 assert sys.argv[1:] in ([], ["--desktop"]), "Unknown native test arguments"
 desktop = sys.argv[1:] == ["--desktop"]
+if desktop:
+    subprocess.run([sys.executable, str(root / "desktop_pixels_test.py")], check=True)
 subprocess.run([sys.executable, str(root / "isolation_test.py")], check=True)
 subprocess.run([sys.executable, str(root / "desktop_isolation_test.py")], check=True)
 sdk_value = os.environ.get("LYN_GNOME_SDK_ROOT")

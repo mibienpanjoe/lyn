@@ -14,6 +14,7 @@ import time
 
 from fixtures import repositories
 from desktop_isolation import require_owned_display
+from desktop_pixels import region_changed
 
 
 def wait_for(check, message, timeout=12):
@@ -42,8 +43,20 @@ def run(module, executable, sdk):
     os.environ.pop("GTK_A11Y", None)
     import gi
     gi.require_version("Atspi", "2.0")
-    from gi.repository import Atspi, GLib
+    gi.require_version("Gdk", "3.0")
+    from gi.repository import Atspi, Gdk, GLib
     Atspi.set_timeout(1000, 1000)
+    initialized, _ = Gdk.init_check([])
+    assert initialized, "Owned Xvfb display is unavailable for screenshot"
+    display_root = Gdk.get_default_root_window()
+    assert display_root is not None
+
+    def pixels():
+        Gdk.Display.get_default().sync()
+        result = Gdk.pixbuf_get_from_window(display_root, 0, 0,
+                                            display_root.get_width(), display_root.get_height())
+        assert result is not None, "Could not sample the owned display"
+        return result
 
     children = []
     diagnostic = None
@@ -203,22 +216,51 @@ def run(module, executable, sdk):
         wait_for(saved, "Real popup did not durably save once")
         wait_for(lambda: int(command("xdotool", "getactivewindow")) == int(window), "Focus not restored to GNOME")
         command("xdotool", "windowactivate", "--sync", library_window)
+        before_navigation = pixels()
         library = named(app.pid, "All captures")
         assert library.do_action(0)
         wait_for(lambda: contains(app.pid, body), "Saved capture absent from rendered Library")
         assert named(app.pid, "Capture text") is None, "Hidden popup must not prove Library rendering"
-        gi.require_version("Gdk", "3.0")
-        from gi.repository import Gdk
-        initialized, _ = Gdk.init_check([])
-        assert initialized, "Owned Xvfb display is unavailable for screenshot"
+        paint_state = {}
+        def library_painted():
+            visible = [node for node in nodes(app.pid)
+                       if node.get_state_set().contains(Atspi.StateType.SHOWING)]
+            heading = next((node for node in visible if node.get_name() == "All captures"
+                            and node.get_role() == Atspi.Role.HEADING), None)
+            row = next((node for node in visible if body in node.get_name()
+                        and "Component" in node.get_interfaces()), None)
+            paint_state.update(heading=bool(heading), row=bool(row),
+                               empty=any(node.get_name() == "Nothing captured yet" for node in visible))
+            if not heading or not row or any(node.get_name() == "Nothing captured yet" for node in visible):
+                return False
+            current = pixels()
+            # WebKit can publish its accessibility tree before Xvfb has painted
+            # the new page. Require changed pixels at BOTH the heading and row,
+            # not an arbitrary delay or a cursor/focus change elsewhere.
+            for node in (heading, row):
+                rect = node.get_extents(Atspi.CoordType.SCREEN)
+                key = "heading" if node == heading else "row"
+                paint_state[key + "Rect"] = (rect.x, rect.y, rect.width, rect.height)
+                if (rect.x < 0 or rect.y < 0 or rect.width <= 0 or rect.height <= 0
+                        or rect.x + rect.width > current.get_width()
+                        or rect.y + rect.height > current.get_height()):
+                    return False
+                region = (rect.x, rect.y, rect.width, rect.height)
+                changed = region_changed(before_navigation, current, region)
+                paint_state[key + "PixelsChanged"] = changed
+                if not changed:
+                    return False
+            return current
+        try:
+            painted = wait_for(library_painted, "Library accessibility changed without a painted heading and capture")
+        except AssertionError:
+            print(json.dumps({"check": "library_paint_refused", **paint_state}), flush=True)
+            raise
         artifact_root = repo / "tasks"
         assert artifact_root.is_dir() and not artifact_root.is_symlink()
         descriptor, screenshot = tempfile.mkstemp(prefix="gnome-desktop-", suffix=".png", dir=artifact_root)
         os.close(descriptor)
-        display_root = Gdk.get_default_root_window()
-        assert display_root is not None
-        pixels = Gdk.pixbuf_get_from_window(display_root, 0, 0, display_root.get_width(), display_root.get_height())
-        assert pixels and pixels.savev(screenshot, "png", [], [])
+        assert painted.savev(screenshot, "png", [], [])
         print(json.dumps({"check": "real_gnome_desktop_capture", "nativeContextRendered": True,
                           "savedOnceInExpectedProjectBranch": True, "libraryRendered": True,
                           "focusRestored": True, "screenshot": screenshot}), flush=True)
