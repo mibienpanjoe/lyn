@@ -2,6 +2,7 @@
 
 use super::{
     gnome_channel::{ChannelError, NativeChannel},
+    gnome_endpoint::NativePublication,
     gnome_listener::{NativeListener, NativeListenerStop},
     gnome_protocol::Candidate,
 };
@@ -173,23 +174,67 @@ pub(crate) struct NativeBroker {
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
+struct BrokerEndpoint {
+    // Declaration order also protects thread-spawn failure/panic cleanup:
+    // remove the owned socket before removing the empty instance directory.
+    listener: NativeListener,
+    publication: Option<NativePublication>,
+}
+
 impl NativeBroker {
     pub(crate) fn start(runtime: &Path) -> io::Result<Self> {
         Self::spawn(runtime, NativeChannel::connect)
+    }
+
+    pub(crate) fn start_published(runtime: &Path) -> io::Result<Self> {
+        let publication = NativePublication::prepare(runtime)?;
+        let (listener, stop) = NativeListener::bind(publication.instance_path())?;
+        Self::spawn_endpoint(
+            BrokerEndpoint {
+                listener,
+                publication: Some(publication),
+            },
+            stop,
+            NativeChannel::connect,
+        )
     }
 
     fn spawn(
         runtime: &Path,
         connect: fn(UnixStream) -> Result<NativeChannel, ChannelError>,
     ) -> io::Result<Self> {
-        let (mut listener, stop) = NativeListener::bind(runtime)?;
+        let (listener, stop) = NativeListener::bind(runtime)?;
+        Self::spawn_endpoint(
+            BrokerEndpoint {
+                listener,
+                publication: None,
+            },
+            stop,
+            connect,
+        )
+    }
+
+    fn spawn_endpoint(
+        mut endpoint: BrokerEndpoint,
+        stop: NativeListenerStop,
+        connect: fn(UnixStream) -> Result<NativeChannel, ChannelError>,
+    ) -> io::Result<Self> {
         let shared = Arc::new(Shared::default());
         let state = shared.clone();
+        let (ready, started) = std::sync::mpsc::sync_channel(1);
         let worker = thread::Builder::new()
             .name("lyn-gnome-admission".into())
             .spawn(move || {
-                while !state.stopping.load(Ordering::Acquire) {
-                    let Ok(Some(stream)) = listener.accept() else {
+                // Publish only from the live worker after bind/listen. The
+                // caller receives either readiness or the publication error.
+                let result = match endpoint.publication.as_mut() {
+                    Some(publication) => publication.publish(&endpoint.listener),
+                    None => Ok(()),
+                };
+                let running = result.is_ok();
+                let acknowledged = ready.send(result).is_ok();
+                while running && acknowledged && !state.stopping.load(Ordering::Acquire) {
+                    let Ok(Some(stream)) = endpoint.listener.accept() else {
                         break;
                     };
                     // One handshake at a time, bounded by NativeChannel's 500ms
@@ -206,7 +251,16 @@ impl NativeBroker {
                 // Destruction closes sockets and pidfds: drop them only after
                 // the registry guard has been released, including accept errors.
                 drop(retired);
+                drop(endpoint);
             })?;
+        let startup = started
+            .recv()
+            .unwrap_or_else(|_| Err(io::Error::other("native worker exited before readiness")));
+        if let Err(error) = startup {
+            let _ = stop.stop();
+            let _ = worker.join();
+            return Err(error);
+        }
         Ok(Self {
             shared,
             stop,

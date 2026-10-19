@@ -61,6 +61,30 @@ fn receive(stream: &mut UnixStream) -> Frame {
     Frame::decode(&bytes).unwrap()
 }
 
+#[test]
+fn published_shutdown_releases_address_and_lock_even_with_retained_broker_owners() {
+    let runtime = runtime();
+    let broker = Arc::new(NativeBroker::start_published(runtime.path()).unwrap());
+    let retained = broker.clone();
+    let publication = runtime.path().join("lyn-gnome-v1.current");
+    let first = fs::read_to_string(&publication).unwrap();
+    let instance = runtime.path().join(first.trim_end_matches('\n'));
+    assert!(instance.join("lyn-gnome-v1.sock").exists());
+    assert!(NativeBroker::start_published(runtime.path()).is_err());
+    broker.shutdown();
+    assert!(!publication.exists());
+    assert!(!instance.exists());
+    let next = NativeBroker::start_published(runtime.path()).unwrap();
+    assert_ne!(fs::read_to_string(&publication).unwrap(), first);
+    retained.shutdown();
+    assert!(
+        publication.exists(),
+        "old shutdown must not revoke new publication"
+    );
+    next.shutdown();
+    assert!(!publication.exists());
+}
+
 fn client_handshake(stream: &mut UnixStream) -> uuid::Uuid {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))

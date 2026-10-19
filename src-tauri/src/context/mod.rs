@@ -9,6 +9,8 @@ pub(crate) mod gnome_capture;
 #[cfg(target_os = "linux")]
 pub(crate) mod gnome_channel;
 #[cfg(target_os = "linux")]
+pub(crate) mod gnome_endpoint;
+#[cfg(target_os = "linux")]
 pub(crate) mod gnome_listener;
 #[cfg(target_os = "linux")]
 pub(crate) mod gnome_peer;

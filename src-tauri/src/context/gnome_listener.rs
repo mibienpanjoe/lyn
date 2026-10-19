@@ -141,6 +141,10 @@ impl NativeListener {
         &self.endpoint.path
     }
 
+    pub(crate) fn owns_endpoint(&self, device: u64, inode: u64) -> bool {
+        self.endpoint.device == device && self.endpoint.inode == inode
+    }
+
     /// Run on the broker's worker, never the GTK/capture-session thread. Only
     /// accept readiness is observed here: no provider payload is read/admitted.
     pub(crate) fn accept(&mut self) -> io::Result<Option<UnixStream>> {
