@@ -1,5 +1,6 @@
 """Build and exercise the opt-in native prototype; install nothing."""
 
+import argparse
 import hashlib
 import json
 import os
@@ -11,8 +12,13 @@ import tempfile
 
 
 root = Path(__file__).resolve().parent
-assert sys.argv[1:] in ([], ["--desktop"]), "Unknown native test arguments"
-desktop = sys.argv[1:] == ["--desktop"]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--desktop", action="store_true")
+parser.add_argument("--startup-pairs", type=int, default=1)
+arguments = parser.parse_args()
+if not 1 <= arguments.startup_pairs <= 20 or (not arguments.desktop and arguments.startup_pairs != 1):
+    parser.error("--startup-pairs requires --desktop and a value from 1 to 20")
+desktop = arguments.desktop
 if desktop:
     subprocess.run([sys.executable, str(root / "desktop_accessibility_test.py")], check=True)
     subprocess.run([sys.executable, str(root / "desktop_pixels_test.py")], check=True)
@@ -69,7 +75,9 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                         *extra_sources, "-o", str(output), *flags], check=True)
     print("Native prototype SHA256:", hashlib.sha256(module.read_bytes()).hexdigest(), flush=True)
     cases = (("desktop_runtime_test.py", [str(module), str(probe), str(sdk) if sdk else "-", "--probe"]),
-             ("desktop_runtime_test.py", [str(module), str(probe), str(sdk) if sdk else "-"])) if desktop else (
+             ("desktop_runtime_test.py", [str(module), str(probe), str(sdk) if sdk else "-"])) + tuple(
+             ("desktop_runtime_test.py", [str(module), str(probe), str(sdk) if sdk else "-", "--concurrent-start"])
+             for _ in range(arguments.startup_pairs)) if desktop else (
                             ("startup_test.py", [str(module), str(startup_fixture)]),
                             ("smoke_test.py", [str(module)]),
                             ("identity_test.py", [str(module), str(preserved)]),
