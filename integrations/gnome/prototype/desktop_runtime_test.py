@@ -32,7 +32,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -77,6 +77,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
     query_gate = None
     lifecycle_listener = None
     lifecycle = None
+    retired_process_pin = None
 
     def start(command, env=environment, **kwargs):
         process = subprocess.Popen(command, env=env, **kwargs)
@@ -244,8 +245,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         if not late_app:
             wait_for(lambda: named(app.pid, "All captures"), "Real Library not accessible", 15)
             library_window = wait_for(lambda: visible_windows(app.pid), "Owned Library window not mapped")[0]
-        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source or cwd_change else ("alpha",))
-        if closed_source:
+        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source or cwd_change or pty_reuse else ("alpha",))
+        if closed_source or pty_reuse:
             environment["GSETTINGS_BACKEND"] = "keyfile"
             command("gsettings", "set", "org.gnome.Terminal.Legacy.Settings", "confirm-close", "false")
         if warm == "tabs":
@@ -444,7 +445,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                               "nativeReplyChanged": True, "savedCount": 0, "draftPreserved": True,
                               "screenshot": save_screenshot(painted, "gnome-race-")}), flush=True)
             return
-        if stale_reconnect or closed_source or stale_selection or cwd_change:
+        if stale_reconnect or closed_source or stale_selection or cwd_change or pty_reuse:
             project = projects[0]
             window = windows[project.name]
             command("xdotool", "windowactivate", "--sync", window)
@@ -454,8 +455,9 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             command("xdotool", "key", "--delay", "0", "--clearmodifiers", "ctrl+shift+space")
             wait_for(lambda: named(app.pid, "Capture text") and
                      named(app.pid, "Context alpha, branch gnome-alpha. Change context"), "Original native context absent")
-            assert command("xdotool", "getwindowpid", command("xdotool", "getactivewindow")) == str(app.pid)
-            failure = "closed" if closed_source else "selection" if stale_selection else "cwd" if cwd_change else "reconnect"
+            draft_window = command("xdotool", "getactivewindow")
+            assert command("xdotool", "getwindowpid", draft_window) == str(app.pid)
+            failure = "closed" if closed_source else "selection" if stale_selection else "cwd" if cwd_change else "pty-reuse" if pty_reuse else "reconnect"
             body = f"synthetic-{failure}-preserved-draft-ENDOFNOTE"
             command("xdotool", "type", "--clearmodifiers", "--delay", "0", body)
             wait_for(lambda: contains(app.pid, body), "Draft absent before disconnect")
@@ -467,7 +469,20 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                     assert len(candidates) <= 1, "Ambiguous live-source choice in private popup"
                     return candidates[0] if candidates else None
                 choice = wait_for(original_live_choice, "Original live-source choice absent before reconnect")
-            if closed_source:
+            if closed_source or pty_reuse:
+                if pty_reuse:
+                    old_pid = original["foregroundPgid"]
+                    retired_process_pin = os.pidfd_open(old_pid)
+                    retired = select.poll()
+                    retired.register(retired_process_pin, select.POLLIN)
+                    process = Path(f"/proc/{old_pid}")
+                    fields = (process / "stat").read_text().rsplit(")", 1)[1].split()
+                    assert process.stat().st_uid == os.getuid() and int(fields[1]) == server.pid
+                    assert int(fields[2]) == old_pid and int(fields[5]) == old_pid
+                    assert int(fields[4]) == os.stat(f'/dev/pts/{original["ptyNumber"]}').st_rdev
+                    assert (process / "exe").samefile("/usr/bin/sleep")
+                    assert (process / "cwd").resolve(strict=True) == projects[0]
+                    assert not retired.poll(0) and server.poll() is None
                 window_path = command("xprop", "-id", window, "_GTK_WINDOW_OBJECT_PATH")
                 object_path = re.search(r'= "([^"]+)"', window_path).group(1)
                 description = command("gdbus", "call", "--session", "--dest", app_id,
@@ -487,6 +502,35 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                     return False
                 wait_for(closed_source_removed, "Closed source retained or surviving source missing")
                 assert server.poll() is None, "Closing one source killed the surviving GNOME server"
+                if pty_reuse:
+                    def original_process_exited():
+                        events = retired.poll(0)
+                        assert all(not mask & (select.POLLERR | select.POLLNVAL) for _, mask in events)
+                        return any(mask & select.POLLIN for _, mask in events)
+                    wait_for(original_process_exited, "Original pinned process did not exit")
+                    replacement = start([client, f"--app-id={app_id}", "--window", "--role=lyn-desktop-alpha-reused",
+                                         f"--working-directory={projects[0]}", "--", "/usr/bin/sleep", "45"])
+                    assert replacement.wait(timeout=5) == 0
+                    def replacement_window():
+                        candidates = [candidate for candidate in visible_windows(server.pid, "gnome-terminal")
+                                      if command("xprop", "-id", candidate, "WM_WINDOW_ROLE").endswith(
+                                          '"lyn-desktop-alpha-reused"')]
+                        assert len(candidates) <= 1
+                        return candidates[0] if candidates else None
+                    window = wait_for(replacement_window, "Replacement GNOME window absent")
+                    readiness_after_us = time.monotonic_ns() // 1000
+                    wait_for(producer_ready, "Replacement native source not ready")
+                    current = producer_state["selectedSource"]
+                    assert current["ptyNumber"] == original["ptyNumber"], "Requested PTY number reuse did not occur"
+                    assert current["sourceId"] > original["sourceId"]
+                    assert current["registeredAtUs"] > original["registeredAtUs"] and original_process_exited()
+                    windows[projects[0].name] = window
+                    assert command("xdotool", "getwindowpid", draft_window) == str(app.pid)
+                    command("xdotool", "windowactivate", "--sync", draft_window)
+                    print(json.dumps({"check": "actual_native_pty_reuse", "ptyNumber": current["ptyNumber"],
+                                      "oldSourceId": original["sourceId"], "newSourceId": current["sourceId"],
+                                      "oldProcessExited": True,
+                                      "windowIdReused": current["windowId"] == original["windowId"]}), flush=True)
             elif cwd_change:
                 assert server.poll() is None
                 tty_device = os.stat(f'/dev/pts/{original["ptyNumber"]}').st_rdev
@@ -583,10 +627,11 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 return current if region_has_contrast(current, region) else False
             painted = wait_for(preserved_draft_pixels, "Preserved reconnect draft not painted")
             print(json.dumps({"check": "native_stale_source_draft", "failure": failure,
-                              "generationChanged": stale_reconnect or stale_selection, "sourceClosed": closed_source,
+                              "generationChanged": stale_reconnect or stale_selection, "sourceClosed": closed_source or pty_reuse,
+                              "ptyReused": pty_reuse,
                               "cwdChanged": cwd_change,
                               "operation": "select+save" if cwd_change else "select" if stale_selection else "save",
-                              "sameNativeSource": not closed_source,
+                              "sameNativeSource": not (closed_source or pty_reuse),
                               "oldLeaseRefused": True, "savedCount": 0,
                               "draftPreserved": True,
                               "screenshot": save_screenshot(painted, f"gnome-{failure}-draft-")}), flush=True)
@@ -598,7 +643,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 property_value = command("xprop", "-root", "_NET_ACTIVE_WINDOW")
                 active = re.fullmatch(r"_NET_ACTIVE_WINDOW\(WINDOW\): window id # (0x[0-9a-fA-F]+)", property_value)
                 return active is not None and int(active[1], 16) == int(window)
-            if closed_source:
+            if closed_source or pty_reuse:
                 wait_for(lambda: named(app.pid, "Capture text") is None, "Cancel did not hide popup")
             else:
                 wait_for(cancel_focus_restored, "Cancel did not return focus")
@@ -610,6 +655,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             capture_projects = [projects[0], projects[0]]
         if closed_source or cwd_change:
             capture_projects = [projects[1]]
+        if pty_reuse:
+            capture_projects = [projects[0]]
         for project in capture_projects:
             if restart_app and len(bodies) == 1:
                 previous_app = app.pid
@@ -776,6 +823,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                           "closedSource": closed_source,
                           "staleSelection": stale_selection,
                           "cwdChanged": cwd_change,
+                          "ptyReused": pty_reuse,
                           "savedOnceInExpectedProjectBranch": True, "libraryRendered": True,
                           "concurrentStart": concurrent, "nativeReadinessWait": not concurrent,
                           "warmMode": warm, "alternations": len(bodies) - 1 if warm else 0,
@@ -803,6 +851,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             lifecycle.close()
         if lifecycle_listener:
             lifecycle_listener.close()
+        if retired_process_pin is not None:
+            os.close(retired_process_pin)
 
 
 if __name__ == "__main__":
@@ -811,7 +861,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "stale-reconnect", "closed-source", "stale-selection", "cwd-change"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "stale-reconnect", "closed-source", "stale-selection", "cwd-change", "pty-reuse"):
         mode.add_argument(f"--{name}", action="store_true")
     parser.add_argument("--alternations", type=int, default=4)
     arguments = parser.parse_args()
@@ -825,4 +875,5 @@ if __name__ == "__main__":
         race="switch" if arguments.race_switch else "aba" if arguments.race_aba else None,
         late_app=arguments.late_app, restart_app=arguments.restart_app,
         stale_reconnect=arguments.stale_reconnect, closed_source=arguments.closed_source,
-        stale_selection=arguments.stale_selection, cwd_change=arguments.cwd_change)
+        stale_selection=arguments.stale_selection, cwd_change=arguments.cwd_change,
+        pty_reuse=arguments.pty_reuse)

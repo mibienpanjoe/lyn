@@ -24,6 +24,7 @@ parser.add_argument("--stale-reconnect", action="store_true")
 parser.add_argument("--closed-source", action="store_true")
 parser.add_argument("--stale-selection", action="store_true")
 parser.add_argument("--cwd-change", action="store_true")
+parser.add_argument("--pty-reuse", action="store_true")
 arguments = parser.parse_args()
 if not 1 <= arguments.startup_pairs <= 20 or (not arguments.desktop and arguments.startup_pairs != 1):
     parser.error("--startup-pairs requires --desktop and a value from 1 to 20")
@@ -45,6 +46,8 @@ if arguments.stale_selection and not arguments.desktop:
     parser.error("--stale-selection requires --desktop")
 if arguments.cwd_change and not arguments.desktop:
     parser.error("--cwd-change requires --desktop")
+if arguments.pty_reuse and not arguments.desktop:
+    parser.error("--pty-reuse requires --desktop")
 desktop = arguments.desktop
 if desktop:
     subprocess.run([sys.executable, str(root / "cwd_fixture_test.py")], check=True)
@@ -130,6 +133,8 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
             modes.append(["--stale-selection"])
         if arguments.cwd_change:
             modes.append(["--cwd-change"])
+        if arguments.pty_reuse:
+            modes.append(["--pty-reuse"])
         cases = [("desktop_runtime_test.py", [*fixture_args, *mode]) for mode in modes]
     else:
         cases = (("startup_test.py", [str(module), str(startup_fixture)]),

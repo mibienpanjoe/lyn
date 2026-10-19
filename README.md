@@ -138,6 +138,8 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 `pnpm provider:gnome:desktop:test --cwd-change` changes the synthetic foreground process from project alpha to beta while a draft is open, without replacing its process, PTY, native source or window. The old save must refuse with its draft intact; a fresh invocation after cancellation must save only in beta.
 
+`pnpm provider:gnome:desktop:test --pty-reuse` closes the original source and creates a replacement in the same project, requiring actual reuse of its PTY number. The old draft must remain stale with no save; only a fresh invocation may save from the replacement. This does not claim PID or XID number reuse.
+
 Requires the Rust toolchain above, Linux with pidfd support, GTK3/VTE development headers, GCC/pkg-config, Xvfb with X-Resource 1.2/xauth, GNOME Terminal, xdotool/xprop, Python with pidfd APIs and GI GTK3, and htop. Developers can set `LYN_GNOME_SDK_ROOT` to a local directory with packages extracted beneath `root/`; the test never installs system packages or modifies terminal profiles outside its temporary environment.
 
 ## Documentation
