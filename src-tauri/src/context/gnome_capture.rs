@@ -20,7 +20,12 @@ pub(crate) fn prepare(
     invocation: ProcessInvocation,
     database: &Mutex<Database>,
 ) -> Option<(ContextResolution, LiveContextSource)> {
-    let lease = NativeSourceLease::query(broker, window, invocation).ok()?;
+    #[cfg(test)]
+    crate::desktop_tests::before_native_query(window, invocation.monotonic_us());
+    let lease = NativeSourceLease::query(broker, window, invocation);
+    #[cfg(test)]
+    crate::desktop_tests::native_query_finished(lease.as_ref().err());
+    let lease = lease.ok()?;
     let source = LiveContextSource::from_native(lease)?;
     let identity = source.identity();
     let context = {

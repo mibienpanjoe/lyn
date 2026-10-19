@@ -17,7 +17,7 @@ import time
 
 from fixtures import repositories
 from desktop_isolation import require_owned_display
-from desktop_pixels import region_changed
+from desktop_pixels import region_changed, region_has_contrast
 from desktop_accessibility import page_heading
 
 
@@ -31,7 +31,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -72,6 +72,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
 
     children = []
     diagnostic = None
+    gate_listener = None
+    query_gate = None
 
     def start(command, env=environment, **kwargs):
         process = subprocess.Popen(command, env=env, **kwargs)
@@ -180,9 +182,21 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 vite_output += os.read(vite.stdout.fileno(), 8192).decode()
                 if (f"port {port}" if probe else f"127.0.0.1:{port}") in vite_output:
                     break
+        if race:
+            gate_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            gate_listener.bind(str(root / "runtime/native-query-gate.sock"))
+            os.chmod(root / "runtime/native-query-gate.sock", 0o600)
+            gate_listener.listen(1)
+            gate_listener.settimeout(3)
         app = start([str(executable), "--exact", "desktop_tests::real_gnome_desktop_entry",
                      "--nocapture", "--test-threads=1"],
-                    env=dict(environment, LYN_GNOME_UI_FIXTURE="1", LYN_GNOME_UI_PORT=str(port)))
+                    env=dict(environment, LYN_GNOME_UI_FIXTURE="1", LYN_GNOME_UI_PORT=str(port),
+                             LYN_GNOME_UI_QUERY_GATE="1" if race else "0"))
+        if race:
+            query_gate, _ = gate_listener.accept()
+            assert struct.unpack("3i", query_gate.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)) == (
+                app.pid, os.getuid(), os.getgid())
+            query_gate.settimeout(1)
         endpoint = Path(environment["XDG_RUNTIME_DIR"]) / "lyn-gnome-v1.sock"
         wait_for(lambda: endpoint.exists() and app.poll() is None, "Lyn native endpoint not ready", 15)
         if probe:
@@ -293,6 +307,92 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                     return True
             return False
         database = Path(environment["XDG_DATA_HOME"]) / "com.mibienpanjoe.lyn/lyn.db"
+        if race:
+            window = windows[projects[0].name]
+            project = projects[0]
+            command("xdotool", "windowactivate", "--sync", window)
+            command("gdbus", "call", "--session", "--dest", app_id, "--object-path", object_path,
+                    "--method", "org.gtk.Actions.SetState", "active-tab", "<int32 0>", "{}")
+            readiness_after_us = time.monotonic_ns() // 1000
+            wait_for(producer_ready, "Original alpha tab not ready for race")
+            original = producer_state["selectedSource"].copy()
+            command("xdotool", "key", "--delay", "0", "--clearmodifiers", "ctrl+shift+space")
+            def receive_gate(size):
+                result = bytearray()
+                while len(result) < size:
+                    part = query_gate.recv(size - len(result))
+                    assert part, "Fixture query gate closed"
+                    result.extend(part)
+                return bytes(result)
+            packet = receive_gate(13)
+            assert packet[0:1] == b'Q' and int.from_bytes(packet[1:5], "big") == int(window)
+            invoked_us = int.from_bytes(packet[5:], "big")
+            assert original["changedAtUs"] < invoked_us
+            for index in ([1, 0] if race == "aba" else [1]):
+                command("gdbus", "call", "--session", "--dest", app_id, "--object-path", object_path,
+                        "--method", "org.gtk.Actions.SetState", "active-tab", f"<int32 {index}>", "{}")
+                project = projects[index]
+                readiness_after_us = invoked_us
+                while not producer_ready():
+                    remaining = invoked_us / 1_000_000 + .100 - time.monotonic()
+                    assert remaining > 0, "Race setup consumed the native reply budget"
+                    select.select([diagnostic], [], [], remaining)
+            changed = producer_state["selectedSource"]
+            assert changed["changedAtUs"] >= invoked_us
+            assert (changed["sourceId"] == original["sourceId"]) == (race == "aba")
+            query_gate.sendall(b'R')
+            outcome = receive_gate(2)
+            assert outcome == b'O\x01', f"Expected topology refusal, not timeout or another error: {outcome!r}"
+            wait_for(lambda: named(app.pid, "Capture text"), "Race popup absent")
+            wait_for(lambda: named(app.pid, "Choose context"), "Race opportunistically resolved a context")
+            assert not any(node.get_name().startswith("Context alpha,") or
+                           node.get_name().startswith("Context beta,") for node in nodes(app.pid))
+            capture_window = command("xdotool", "getactivewindow")
+            assert command("xdotool", "getwindowpid", capture_window) == str(app.pid)
+            body = f"synthetic-race-{race}-preserved-draft-ENDOFNOTE"
+            command("xdotool", "type", "--clearmodifiers", "--delay", "0", body)
+            wait_for(lambda: contains(app.pid, body), "Race draft absent")
+            assert named(app.pid, "Back to note") is None, "Chooser was already open before the save attempt"
+            command("xdotool", "key", "Return")
+            back = wait_for(lambda: named(app.pid, "Back to note"), "Refused save did not open chooser")
+            assert back.do_action(0)
+            wait_for(lambda: named(app.pid, "Capture text") and contains(app.pid, body), "Refusal lost draft")
+            with sqlite3.connect(database) as db:
+                assert db.execute("SELECT COUNT(*) FROM captures").fetchone()[0] == 0
+            draft_paint_state = {}
+            def draft_painted():
+                field = next((node for node in nodes(app.pid) if "Text" in node.get_interfaces()
+                              and node.get_attributes().get("id") == "capture-text"
+                              and node.get_attributes().get("tag") == "textarea"
+                              and node.get_text(0, -1) == body), None)
+                draft_paint_state["fieldFound"] = field is not None
+                if field is None:
+                    return False
+                # The final marker lies past the initial placeholder. Empty or
+                # stale placeholder frames cannot supply ink in this rectangle.
+                first = field.get_character_extents(len(body) - 6, Atspi.CoordType.SCREEN)
+                last = field.get_character_extents(len(body) - 1, Atspi.CoordType.SCREEN)
+                region = (first.x, first.y, last.x + last.width - first.x, max(first.height, last.height))
+                draft_paint_state["region"] = region
+                current = pixels()
+                x, y, width, height = region
+                if x < 0 or y < 0 or width <= 0 or height <= 0 or x + width > current.get_width() or y + height > current.get_height():
+                    return False
+                return current if region_has_contrast(current, region) else False
+            try:
+                painted = wait_for(draft_painted, "Preserved draft marker was not painted")
+            except AssertionError:
+                candidates = [{"interfaces": node.get_interfaces(), "attributes": node.get_attributes()}
+                              for node in nodes(app.pid) if "Text" in node.get_interfaces()
+                              and node.get_text(0, -1) == body]
+                print(json.dumps({"check": "race_draft_paint_refused", **draft_paint_state,
+                                  "textCandidates": candidates,
+                                  "screenshot": save_screenshot(pixels(), "gnome-race-failed-")}), flush=True)
+                raise
+            print(json.dumps({"check": "native_invocation_race", "race": race,
+                              "nativeReplyChanged": True, "savedCount": 0, "draftPreserved": True,
+                              "screenshot": save_screenshot(painted, "gnome-race-")}), flush=True)
+            return
         bodies = []
         detached = False
         original_source = None
@@ -443,6 +543,10 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             print("Owned Openbox output:", wm_process.stdout.read()[:2048], flush=True)
         if diagnostic:
             diagnostic.close()
+        if query_gate:
+            query_gate.close()
+        if gate_listener:
+            gate_listener.close()
 
 
 if __name__ == "__main__":
@@ -451,7 +555,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba"):
         mode.add_argument(f"--{name}", action="store_true")
     parser.add_argument("--alternations", type=int, default=4)
     arguments = parser.parse_args()
@@ -460,5 +564,6 @@ if __name__ == "__main__":
     run(arguments.module.resolve(strict=True), arguments.executable.resolve(strict=True),
         None if arguments.sdk == "-" else Path(arguments.sdk).resolve(strict=True),
         probe=arguments.probe, concurrent=arguments.concurrent_start,
-        warm="windows" if arguments.warm_windows else "tabs" if arguments.warm_tabs or arguments.relocate_tab else None,
-        alternations=arguments.alternations, relocate=arguments.relocate_tab)
+        warm="windows" if arguments.warm_windows else "tabs" if arguments.warm_tabs or arguments.relocate_tab or arguments.race_switch or arguments.race_aba else None,
+        alternations=arguments.alternations, relocate=arguments.relocate_tab,
+        race="switch" if arguments.race_switch else "aba" if arguments.race_aba else None)

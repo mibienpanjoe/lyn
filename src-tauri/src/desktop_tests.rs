@@ -2,9 +2,49 @@
 
 use std::{
     fs,
-    os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt},
+    io::{Read, Write},
+    os::unix::{
+        fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt},
+        net::UnixStream,
+    },
     path::PathBuf,
+    sync::{Mutex, OnceLock},
+    time::Duration,
 };
+
+static QUERY_GATE: OnceLock<Mutex<UnixStream>> = OnceLock::new();
+
+/// Test-only scheduling barrier. It cannot choose a source or alter a deadline.
+pub(crate) fn before_native_query(window: u32, invoked_us: u64) {
+    let Some(gate) = QUERY_GATE.get() else { return };
+    let mut stream = gate.lock().unwrap();
+    let mut message = [0u8; 13];
+    message[0] = b'Q';
+    message[1..5].copy_from_slice(&window.to_be_bytes());
+    message[5..13].copy_from_slice(&invoked_us.to_be_bytes());
+    stream.write_all(&message).unwrap();
+    let mut release = [0];
+    stream.read_exact(&mut release).unwrap();
+    assert_eq!(release, [b'R'], "Invalid fixture query release");
+}
+
+pub(crate) fn native_query_finished(error: Option<&crate::context::gnome_broker::BrokerError>) {
+    use crate::context::{
+        gnome_broker::BrokerError,
+        gnome_channel::ChannelError,
+        gnome_protocol::{Outcome, ReplyReject},
+    };
+    let Some(gate) = QUERY_GATE.get() else { return };
+    let status = match error {
+        None => 0,
+        Some(BrokerError::Channel(ChannelError::Reply(
+            ReplyReject::Changed | ReplyReject::Unresolved(Outcome::Changed),
+        ))) => 1,
+        Some(BrokerError::Channel(ChannelError::Timeout)) => 2,
+        _ => 3,
+    };
+    gate.lock().unwrap().write_all(&[b'O', status]).unwrap();
+}
 
 fn private_xdg_root(paths: &[PathBuf; 4]) -> Option<PathBuf> {
     let root = paths[0].parent()?;
@@ -73,6 +113,24 @@ fn real_gnome_desktop_entry() {
     .map(|name| PathBuf::from(std::env::var_os(name).expect("private XDG required")));
     let root = private_xdg_root(&paths)
         .expect("desktop fixture must run on isolated_run.py's private XDG root");
+    if std::env::var_os("LYN_GNOME_UI_QUERY_GATE").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        let path = paths[0].join("native-query-gate.sock");
+        let metadata = fs::symlink_metadata(&path).unwrap();
+        assert!(metadata.file_type().is_socket());
+        assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+        assert_eq!(metadata.mode() & 0o777, 0o600);
+        let stream = UnixStream::connect(path).unwrap();
+        let peer = crate::context::unix_broker::peer_credentials(&stream).unwrap();
+        assert_eq!(peer.uid, unsafe { libc::geteuid() });
+        assert_eq!(peer.pid, unsafe { libc::getppid() });
+        stream
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        assert!(QUERY_GATE.set(Mutex::new(stream)).is_ok());
+    }
     let helper_root = root.join("fixture-helper-root");
     fs::DirBuilder::new()
         .mode(0o700)

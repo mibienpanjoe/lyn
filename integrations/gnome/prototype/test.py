@@ -17,6 +17,7 @@ parser.add_argument("--desktop", action="store_true")
 parser.add_argument("--startup-pairs", type=int, default=1)
 parser.add_argument("--warm-alternations", type=int, default=0)
 parser.add_argument("--tab-relocation", action="store_true")
+parser.add_argument("--invocation-races", action="store_true")
 arguments = parser.parse_args()
 if not 1 <= arguments.startup_pairs <= 20 or (not arguments.desktop and arguments.startup_pairs != 1):
     parser.error("--startup-pairs requires --desktop and a value from 1 to 20")
@@ -24,6 +25,8 @@ if not 0 <= arguments.warm_alternations <= 100 or (not arguments.desktop and arg
     parser.error("--warm-alternations requires --desktop and a value from 0 to 100")
 if arguments.tab_relocation and not arguments.desktop:
     parser.error("--tab-relocation requires --desktop")
+if arguments.invocation_races and not arguments.desktop:
+    parser.error("--invocation-races requires --desktop")
 desktop = arguments.desktop
 if desktop:
     subprocess.run([sys.executable, str(root / "desktop_accessibility_test.py")], check=True)
@@ -88,6 +91,8 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                          for mode in ("windows", "tabs"))
         if arguments.tab_relocation:
             modes.append(["--relocate-tab"])
+        if arguments.invocation_races:
+            modes.extend([["--race-switch"], ["--race-aba"]])
         cases = [("desktop_runtime_test.py", [*fixture_args, *mode]) for mode in modes]
     else:
         cases = (("startup_test.py", [str(module), str(startup_fixture)]),

@@ -6,10 +6,23 @@ import gi
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import GdkPixbuf
 
-from desktop_pixels import region_changed
+from desktop_pixels import region_changed, region_has_contrast
 
 
 class PaintedRegionTest(unittest.TestCase):
+    def test_flat_background_and_external_ink_do_not_establish_contrast(self):
+        before, after = self.pair()
+        after.new_subpixbuf(5, 1, 1, 1).fill(0x000000ff)
+        self.assertFalse(region_has_contrast(before, (1, 1, 2, 2)))
+        self.assertFalse(region_has_contrast(after, (1, 1, 2, 2)))
+
+    def test_local_ink_has_contrast_in_rgb_and_rgba(self):
+        for alpha in (False, True):
+            with self.subTest(alpha=alpha):
+                _, after = self.pair(alpha)
+                after.new_subpixbuf(2, 2, 1, 1).fill(0x000000ff)
+                self.assertTrue(region_has_contrast(after, (1, 1, 2, 2)))
+
     def pair(self, alpha=False):
         before = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, alpha, 8, 10, 8)
         before.fill(0xffffffff)
