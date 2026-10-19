@@ -31,7 +31,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -188,17 +188,20 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             os.chmod(root / "runtime/native-query-gate.sock", 0o600)
             gate_listener.listen(1)
             gate_listener.settimeout(3)
-        app = start([str(executable), "--exact", "desktop_tests::real_gnome_desktop_entry",
-                     "--nocapture", "--test-threads=1"],
-                    env=dict(environment, LYN_GNOME_UI_FIXTURE="1", LYN_GNOME_UI_PORT=str(port),
-                             LYN_GNOME_UI_QUERY_GATE="1" if race else "0"))
+        def start_app():
+            return start([str(executable), "--exact", "desktop_tests::real_gnome_desktop_entry",
+                          "--nocapture", "--test-threads=1"],
+                         env=dict(environment, LYN_GNOME_UI_FIXTURE="1", LYN_GNOME_UI_PORT=str(port),
+                                  LYN_GNOME_UI_QUERY_GATE="1" if race else "0"))
+        app = None if late_app else start_app()
         if race:
             query_gate, _ = gate_listener.accept()
             assert struct.unpack("3i", query_gate.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)) == (
                 app.pid, os.getuid(), os.getgid())
             query_gate.settimeout(1)
         endpoint = Path(environment["XDG_RUNTIME_DIR"]) / "lyn-gnome-v1.sock"
-        wait_for(lambda: endpoint.exists() and app.poll() is None, "Lyn native endpoint not ready", 15)
+        if not late_app:
+            wait_for(lambda: endpoint.exists() and app.poll() is None, "Lyn native endpoint not ready", 15)
         if probe:
             action = wait_for(lambda: named(app.pid, "Lyn probe action"), "Probe button not accessible", 15)
             heading = wait_for(lambda: named(app.pid, "Lyn probe heading"), "Probe heading not accessible")
@@ -214,8 +217,9 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                               "headingRoleMatches": heading.get_role() == Atspi.Role.HEADING,
                               "expectedButtonRole": int(Atspi.Role.PUSH_BUTTON)}), flush=True)
             return
-        wait_for(lambda: named(app.pid, "All captures"), "Real Library not accessible", 15)
-        library_window = wait_for(lambda: visible_windows(app.pid), "Owned Library window not mapped")[0]
+        if not late_app:
+            wait_for(lambda: named(app.pid, "All captures"), "Real Library not accessible", 15)
+            library_window = wait_for(lambda: visible_windows(app.pid), "Owned Library window not mapped")[0]
         projects = repositories(root, ("alpha", "beta") if concurrent or warm else ("alpha",))
         if warm == "tabs":
             # Only this fixture's private XDG profile may create a tab; never
@@ -306,6 +310,23 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 if read_producer_observation():
                     return True
             return False
+        if late_app:
+            project = projects[0]
+            window = windows[project.name]
+            command("xdotool", "windowactivate", "--sync", window)
+            readiness_after_us = time.monotonic_ns() // 1000
+            wait_for(producer_ready, "GNOME must be mapped and reporting before Lyn starts")
+            assert not endpoint.exists(), "Late-app fixture unexpectedly has a broker"
+            original_server = server.pid
+            original_source = producer_state["selectedSource"].copy()
+            app = start_app()
+            wait_for(lambda: endpoint.exists() and app.poll() is None, "Late Lyn endpoint not ready", 15)
+            wait_for(lambda: named(app.pid, "All captures"), "Late Lyn Library not accessible", 15)
+            library_window = wait_for(lambda: visible_windows(app.pid), "Late Library not mapped")[0]
+            assert server.pid == original_server and server.poll() is None
+            readiness_after_us = time.monotonic_ns() // 1000
+            wait_for(producer_ready, "Original GNOME source disappeared during late app startup")
+            assert producer_state["selectedSource"]["sourceId"] == original_source["sourceId"]
         database = Path(environment["XDG_DATA_HOME"]) / "com.mibienpanjoe.lyn/lyn.db"
         if race:
             window = windows[projects[0].name]
@@ -524,6 +545,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             raise
         screenshot = save_screenshot(painted, "gnome-desktop-")
         print(json.dumps({"check": "real_gnome_desktop_capture", "nativeContextRendered": True,
+                          "appStartedAfterGnome": late_app,
                           "savedOnceInExpectedProjectBranch": True, "libraryRendered": True,
                           "concurrentStart": concurrent, "nativeReadinessWait": not concurrent,
                           "warmMode": warm, "alternations": len(bodies) - 1 if warm else 0,
@@ -555,7 +577,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app"):
         mode.add_argument(f"--{name}", action="store_true")
     parser.add_argument("--alternations", type=int, default=4)
     arguments = parser.parse_args()
@@ -566,4 +588,5 @@ if __name__ == "__main__":
         probe=arguments.probe, concurrent=arguments.concurrent_start,
         warm="windows" if arguments.warm_windows else "tabs" if arguments.warm_tabs or arguments.relocate_tab or arguments.race_switch or arguments.race_aba else None,
         alternations=arguments.alternations, relocate=arguments.relocate_tab,
-        race="switch" if arguments.race_switch else "aba" if arguments.race_aba else None)
+        race="switch" if arguments.race_switch else "aba" if arguments.race_aba else None,
+        late_app=arguments.late_app)

@@ -126,6 +126,8 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 `pnpm provider:gnome:desktop:test --invocation-races` switches A→B and A→B→A after Rust freezes the real invocation. A private `cfg(test)` scheduling barrier preserves the original 120 ms reply deadline. Both cases must receive the native topology-change refusal, keep the draft visible and refuse saving without a context; a timeout does not count as success.
 
+`pnpm provider:gnome:desktop:test --late-app` starts Lyn only after its private GNOME window is mapped and reporting native metadata, with no broker endpoint present. It checks the same server/source survives app startup, then exercises popup, exact save, painted Library and focus return. This is not app-restart or installed-package acceptance.
+
 Requires the Rust toolchain above, Linux with pidfd support, GTK3/VTE development headers, GCC/pkg-config, Xvfb with X-Resource 1.2/xauth, GNOME Terminal, xdotool/xprop, Python with pidfd APIs and GI GTK3, and htop. Developers can set `LYN_GNOME_SDK_ROOT` to a local directory with packages extracted beneath `root/`; the test never installs system packages or modifies terminal profiles outside its temporary environment.
 
 ## Documentation
