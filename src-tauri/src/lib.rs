@@ -9,6 +9,8 @@ mod capture;
 mod commands;
 mod context;
 pub mod contract;
+#[cfg(all(test, target_os = "linux"))]
+mod desktop_tests;
 mod enrichment;
 pub mod error;
 pub mod integrations;
@@ -23,6 +25,14 @@ mod storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    desktop_builder(None)
+        .run(tauri::generate_context!())
+        .expect("failed to run Lyn");
+}
+
+// The private override is used only by the cfg(test) desktop fixture. The
+// production entry point always refreshes the user's normal helper location.
+fn desktop_builder(helper_root: Option<std::path::PathBuf>) -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default()
         .register_uri_scheme_protocol("lyn-media", |context, request| {
             let not_found = || {
@@ -93,7 +103,9 @@ pub fn run() {
         }
     });
     builder
-        .setup(|app| {
+        .setup(move |app| {
+            #[cfg(not(target_os = "linux"))]
+            let _ = &helper_root;
             let app_data_dir = app.path().app_data_dir()?;
             let speech_manager = intelligence::model::SpeechModelManager::new(&app_data_dir);
             let database_path = app_data_dir.join("lyn.db");
@@ -156,7 +168,9 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             {
                 if let Ok(current_exe) = std::env::current_exe() {
-                    let home = integrations::user_home_dir();
+                    let home = helper_root
+                        .clone()
+                        .unwrap_or_else(integrations::user_home_dir);
                     let _ = integrations::refresh_shell_helper(&home, &current_exe);
                     let _ = integrations::refresh_browser_host(&home, &current_exe);
                 }
@@ -212,8 +226,6 @@ pub fn run() {
             commands::model::cancel_speech_model_install,
             commands::model::remove_speech_model,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Lyn");
 }
 
 pub(crate) fn spawn_enrichment_worker(app: tauri::AppHandle) {

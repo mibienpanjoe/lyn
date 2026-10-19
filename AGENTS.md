@@ -49,6 +49,7 @@ Use Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, and the documented Tauri system pre
 - `pnpm provider:terminal:test` — run Rust broker, shell bootstrap, and Kitty watcher contract tests.
 - `pnpm provider:terminal:build` — build the standalone `lyn-context` binary for isolated helper debugging (not required for users; Lyn's own binary handles `watch --process`).
 - `pnpm provider:gnome:test` — compile and run the developer-only native GTK3/VTE prototype and real Rust broker harness on private Xvfb/D-Bus; requires Rust, Linux/Python pidfd support, GTK3/VTE development headers, GCC/pkg-config, Xvfb/xauth, GNOME Terminal, xdotool/xprop, Python GI GTK3, and htop. No module is installed. `LYN_GNOME_SDK_ROOT` may point to a local SDK directory containing extracted packages under `root/` instead of installing VTE headers/Xvfb system-wide.
+- `pnpm provider:gnome:desktop:test` — run the real Tauri shortcut/popup/native save/Library/focus fixture on private Xvfb/D-Bus/XDG with Openbox and a separate AT-SPI bus; additionally requires system Python GI AT-SPI/GDK. Both GNOME commands use `/usr/bin/python3`, not an active Conda interpreter. The SDK may also contain extracted Openbox and its libraries. Screenshots stay under ignored `tasks/`; the fixture's explicit prototype readiness is not cold first-invoke or installed-package acceptance.
 - `pnpm icons` — regenerate platform icons from the tracked SVG master.
 - `cargo fmt --check --manifest-path src-tauri/Cargo.toml` — check Rust formatting.
 - `cargo test --manifest-path src-tauri/Cargo.toml` — run Rust tests.

@@ -11,7 +11,10 @@ import tempfile
 
 
 root = Path(__file__).resolve().parent
+assert sys.argv[1:] in ([], ["--desktop"]), "Unknown native test arguments"
+desktop = sys.argv[1:] == ["--desktop"]
 subprocess.run([sys.executable, str(root / "isolation_test.py")], check=True)
+subprocess.run([sys.executable, str(root / "desktop_isolation_test.py")], check=True)
 sdk_value = os.environ.get("LYN_GNOME_SDK_ROOT")
 sdk = Path(sdk_value).resolve(strict=True) if sdk_value else None
 packages = ["gtk+-3.0", "gmodule-2.0"]
@@ -62,10 +65,12 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                         "-fPIC", "-fstack-protector-strong", "-shared", str(root / source),
                         *extra_sources, "-o", str(output), *flags], check=True)
     print("Native prototype SHA256:", hashlib.sha256(module.read_bytes()).hexdigest(), flush=True)
-    for test, arguments in (("startup_test.py", [str(module), str(startup_fixture)]),
+    cases = (("desktop_runtime_test.py", [str(module), str(probe), str(sdk) if sdk else "-"]),) if desktop else (
+                            ("startup_test.py", [str(module), str(startup_fixture)]),
                             ("smoke_test.py", [str(module)]),
                             ("identity_test.py", [str(module), str(preserved)]),
-                            ("rust_broker_test.py", [str(module), str(probe)])):
+                            ("rust_broker_test.py", [str(module), str(probe)]))
+    for test, arguments in cases:
         subprocess.run([sys.executable, str(root / "isolated_run.py"),
                         str(sdk) if sdk else "-", str(root / test), *arguments], check=True)
-    print("PASS: native prototype and real Rust broker passed isolated runtime checks; nothing installed")
+    print("PASS: requested native fixture checks passed; nothing installed")
