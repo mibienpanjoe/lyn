@@ -182,6 +182,7 @@ struct BrokerEndpoint {
 }
 
 impl NativeBroker {
+    #[cfg(test)]
     pub(crate) fn start(runtime: &Path) -> io::Result<Self> {
         Self::spawn(runtime, NativeChannel::connect)
     }
@@ -199,6 +200,7 @@ impl NativeBroker {
         )
     }
 
+    #[cfg(test)]
     fn spawn(
         runtime: &Path,
         connect: fn(UnixStream) -> Result<NativeChannel, ChannelError>,

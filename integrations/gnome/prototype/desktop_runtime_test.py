@@ -1,6 +1,7 @@
 """Real Lyn webviews/shortcut on test-owned X11, bus, WM and XDG directories."""
 
 import argparse
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -41,6 +42,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
     require_owned_display(sdk)
     repo = Path(__file__).resolve().parents[3]
     environment = dict(os.environ, LANG="C.UTF-8", GTK_MODULES="atk-bridge")
+    environment.pop("LYN_GNOME_TEST_STREAM", None)
+    environment.pop("LYN_GNOME_TEST_DISCOVERY", None)
     environment.pop("NO_AT_BRIDGE", None)
     environment.pop("GTK_A11Y", None)
     # AT-SPI must use this private session bus, never the user's desktop bus.
@@ -222,9 +225,25 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             assert struct.unpack("3i", query_gate.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)) == (
                 app.pid, os.getuid(), os.getgid())
             query_gate.settimeout(1)
-        endpoint = Path(environment["XDG_RUNTIME_DIR"]) / "lyn-gnome-v1.sock"
+        runtime = Path(environment["XDG_RUNTIME_DIR"])
+        publication = runtime / "lyn-gnome-v1.current"
+        # Reuse the actual bounded reader, not a second fixture interpretation
+        # of the address contract. Loading this build artifact does not call
+        # gtk_module_init or configure its native channel in the controller.
+        discovery_library = ctypes.CDLL(str(module))
+        discover = discovery_library.lyn_native_discover
+        discover.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+        discover.restype = ctypes.c_bool
+
+        def endpoint_ready():
+            address = ctypes.create_string_buffer(108)
+            if app is None or app.poll() is not None or not discover(os.fsencode(runtime), address):
+                return None
+            return Path(os.fsdecode(address.value))
+
+        endpoint = None
         if not late_app:
-            wait_for(lambda: endpoint.exists() and app.poll() is None, "Lyn native endpoint not ready", 15)
+            endpoint = wait_for(endpoint_ready, "Lyn native publication not ready", 15)
         if probe:
             action = wait_for(lambda: named(app.pid, "Lyn probe action"), "Probe button not accessible", 15)
             heading = wait_for(lambda: named(app.pid, "Lyn probe heading"), "Probe heading not accessible")
@@ -266,7 +285,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         diagnostic.setblocking(False)
         app_id = "org.lyn.NativeDesktop"
         server = start(["/usr/libexec/gnome-terminal-server", f"--app-id={app_id}"],
-                       env=dict(environment, GTK3_MODULES=str(module), LYN_GNOME_TEST_STREAM=str(endpoint),
+                       env=dict(environment, GTK3_MODULES=str(module), LYN_GNOME_TEST_DISCOVERY=str(runtime),
                                 LYN_GNOME_TEST_SOCKET=str(diagnostic_path)),
                        stdout=subprocess.DEVNULL)
         subprocess.run(["gdbus", "wait", "--session", "--timeout", "5", app_id],
@@ -353,11 +372,11 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             command("xdotool", "windowactivate", "--sync", window)
             readiness_after_us = time.monotonic_ns() // 1000
             wait_for(producer_ready, "GNOME must be mapped and reporting before Lyn starts")
-            assert not endpoint.exists(), "Late-app fixture unexpectedly has a broker"
+            assert not publication.exists(), "Late-app fixture unexpectedly has a broker publication"
             original_server = server.pid
             original_source = producer_state["selectedSource"].copy()
             app = start_app()
-            wait_for(lambda: endpoint.exists() and app.poll() is None, "Late Lyn endpoint not ready", 15)
+            endpoint = wait_for(endpoint_ready, "Late Lyn publication not ready", 15)
             wait_for(lambda: named(app.pid, "All captures"), "Late Lyn Library not accessible", 15)
             library_window = wait_for(lambda: visible_windows(app.pid), "Late Library not mapped")[0]
             assert server.pid == original_server and server.poll() is None
@@ -668,6 +687,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         for project in capture_projects:
             if restart_app and len(bodies) == 1:
                 previous_app = app.pid
+                previous_endpoint = endpoint
                 previous_socket = endpoint.stat().st_ino
                 original_source = producer_state["selectedSource"].copy()
                 lifecycle.sendall(b'X')
@@ -675,11 +695,13 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 lifecycle.close()
                 lifecycle = None
                 assert not endpoint.exists(), "Clean app exit left its native broker socket behind"
+                assert not publication.exists(), "Clean app exit left its publication behind"
                 assert server.poll() is None, "App exit terminated the private GNOME server"
                 app = start_app()
                 lifecycle = lifecycle_connection()
                 assert app.pid != previous_app
-                wait_for(lambda: endpoint.exists() and app.poll() is None, "Restarted Lyn endpoint not ready", 15)
+                endpoint = wait_for(endpoint_ready, "Restarted Lyn publication not ready", 15)
+                assert endpoint != previous_endpoint, "Restart reused a native instance address"
                 wait_for(lambda: named(app.pid, "All captures"), "Restarted Library not accessible", 15)
                 library_window = wait_for(lambda: visible_windows(app.pid), "Restarted Library not mapped")[0]
                 # Absence between lifetimes is mandatory; inode numbers alone

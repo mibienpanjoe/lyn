@@ -168,8 +168,9 @@ fn desktop_builder(helper_root: Option<std::path::PathBuf>) -> tauri::Builder<ta
             }
             #[cfg(target_os = "linux")]
             if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR")
-                && let Ok(broker) =
-                    context::gnome_broker::NativeBroker::start(std::path::Path::new(&runtime))
+                && let Ok(broker) = context::gnome_broker::NativeBroker::start_published(
+                    std::path::Path::new(&runtime),
+                )
             {
                 app.manage(std::sync::Arc::new(broker));
             }
