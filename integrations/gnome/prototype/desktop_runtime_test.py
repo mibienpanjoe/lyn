@@ -15,6 +15,7 @@ import time
 from fixtures import repositories
 from desktop_isolation import require_owned_display
 from desktop_pixels import region_changed
+from desktop_accessibility import page_heading
 
 
 def wait_for(check, message, timeout=12):
@@ -27,7 +28,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk):
+def run(module, executable, sdk, probe=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -57,6 +58,14 @@ def run(module, executable, sdk):
                                             display_root.get_width(), display_root.get_height())
         assert result is not None, "Could not sample the owned display"
         return result
+
+    def save_screenshot(pixbuf, prefix):
+        artifact_root = repo / "tasks"
+        assert artifact_root.is_dir() and not artifact_root.is_symlink()
+        descriptor, screenshot = tempfile.mkstemp(prefix=prefix, suffix=".png", dir=artifact_root)
+        os.close(descriptor)
+        assert pixbuf.savev(screenshot, "png", [], [])
+        return screenshot
 
     children = []
     diagnostic = None
@@ -105,7 +114,17 @@ def run(module, executable, sdk):
         return found
 
     def named(pid, name):
-        return next((node for node in nodes(pid) if node.get_name() == name), None)
+        try:
+            return next((node for node in nodes(pid) if node.get_name() == name), None)
+        except GLib.GError as error:
+            # WebKit may replace an accessible object during initial loading.
+            # Only that defunct-proxy error is a not-ready result; the existing
+            # wait deadline still applies, and an exited application must fail.
+            if (error.domain != "atspi_error"
+                    or error.message != "The application no longer exists"
+                    or app.poll() is not None):
+                raise
+            return None
 
     def contains(pid, fragment):
         for node in nodes(pid):
@@ -142,8 +161,12 @@ def run(module, executable, sdk):
         with socket.socket() as reserve:
             reserve.bind(("127.0.0.1", 0))
             port = reserve.getsockname()[1]
-        vite = start(["node", str(repo / "node_modules/vite/bin/vite.js"), "--host", "127.0.0.1",
-                      "--port", str(port), "--strictPort"], cwd=repo, stdout=subprocess.PIPE,
+        server_command = ([sys.executable, "-u", "-m", "http.server", str(port),
+                           "--bind", "127.0.0.1", "--directory",
+                           str(Path(__file__).with_name("a11y-probe"))] if probe else
+                          ["node", str(repo / "node_modules/vite/bin/vite.js"), "--host", "127.0.0.1",
+                           "--port", str(port), "--strictPort"])
+        vite = start(server_command, cwd=repo, stdout=subprocess.PIPE,
                      stderr=subprocess.STDOUT, text=True)
         deadline = time.monotonic() + 5
         vite_output = ""
@@ -152,13 +175,28 @@ def run(module, executable, sdk):
             assert time.monotonic() < deadline, "Owned Vite did not become ready"
             if select.select([vite.stdout], [], [], .2)[0]:
                 vite_output += os.read(vite.stdout.fileno(), 8192).decode()
-                if f"127.0.0.1:{port}" in vite_output:
+                if (f"port {port}" if probe else f"127.0.0.1:{port}") in vite_output:
                     break
         app = start([str(executable), "--exact", "desktop_tests::real_gnome_desktop_entry",
                      "--nocapture", "--test-threads=1"],
                     env=dict(environment, LYN_GNOME_UI_FIXTURE="1", LYN_GNOME_UI_PORT=str(port)))
         endpoint = Path(environment["XDG_RUNTIME_DIR"]) / "lyn-gnome-v1.sock"
         wait_for(lambda: endpoint.exists() and app.poll() is None, "Lyn native endpoint not ready", 15)
+        if probe:
+            action = wait_for(lambda: named(app.pid, "Lyn probe action"), "Probe button not accessible", 15)
+            heading = wait_for(lambda: named(app.pid, "Lyn probe heading"), "Probe heading not accessible")
+            assert page_heading([heading], "Lyn probe heading") is heading, "Probe HTML heading attributes differ"
+            observations = []
+            for node in (heading, action):
+                observations.append({"name": node.get_name(), "role": int(node.get_role()),
+                                     "roleName": node.get_role_name(), "attributes": node.get_attributes()})
+            assert action.do_action(0)
+            wait_for(lambda: contains(app.pid, "Lyn probe activated"), "Probe action did not update text")
+            print(json.dumps({"check": "webkit_accessibility_probe", "nodes": observations,
+                              "expectedHeadingRole": int(Atspi.Role.HEADING),
+                              "headingRoleMatches": heading.get_role() == Atspi.Role.HEADING,
+                              "expectedButtonRole": int(Atspi.Role.PUSH_BUTTON)}), flush=True)
+            return
         wait_for(lambda: named(app.pid, "All captures"), "Real Library not accessible", 15)
         library_window = wait_for(lambda: visible_windows(app.pid), "Owned Library window not mapped")[0]
         project = repositories(root, ("alpha",))[0]
@@ -225,12 +263,12 @@ def run(module, executable, sdk):
         def library_painted():
             visible = [node for node in nodes(app.pid)
                        if node.get_state_set().contains(Atspi.StateType.SHOWING)]
-            heading = next((node for node in visible if node.get_name() == "All captures"
-                            and node.get_role() == Atspi.Role.HEADING), None)
+            heading = page_heading(visible, "All captures")
             row = next((node for node in visible if body in node.get_name()
                         and "Component" in node.get_interfaces()), None)
             paint_state.update(heading=bool(heading), row=bool(row),
-                               empty=any(node.get_name() == "Nothing captured yet" for node in visible))
+                               empty=any(node.get_name() == "Nothing captured yet" for node in visible),
+                               titleRole=(str(heading.get_role()) if heading else None))
             if not heading or not row or any(node.get_name() == "Nothing captured yet" for node in visible):
                 return False
             current = pixels()
@@ -254,13 +292,20 @@ def run(module, executable, sdk):
         try:
             painted = wait_for(library_painted, "Library accessibility changed without a painted heading and capture")
         except AssertionError:
-            print(json.dumps({"check": "library_paint_refused", **paint_state}), flush=True)
+            candidates = []
+            for node in nodes(app.pid):
+                if (node.get_attributes().get("tag") == "h1"
+                        or node.get_name() == "All captures"):
+                    rect = node.get_extents(Atspi.CoordType.SCREEN)
+                    candidates.append({"name": node.get_name(), "role": str(node.get_role()),
+                                       "attributes": node.get_attributes(),
+                                       "showing": node.get_state_set().contains(Atspi.StateType.SHOWING),
+                                       "rect": (rect.x, rect.y, rect.width, rect.height)})
+            print(json.dumps({"check": "library_paint_refused", **paint_state,
+                              "titleCandidates": candidates,
+                              "screenshot": save_screenshot(pixels(), "gnome-desktop-failed-")}), flush=True)
             raise
-        artifact_root = repo / "tasks"
-        assert artifact_root.is_dir() and not artifact_root.is_symlink()
-        descriptor, screenshot = tempfile.mkstemp(prefix="gnome-desktop-", suffix=".png", dir=artifact_root)
-        os.close(descriptor)
-        assert painted.savev(screenshot, "png", [], [])
+        screenshot = save_screenshot(painted, "gnome-desktop-")
         print(json.dumps({"check": "real_gnome_desktop_capture", "nativeContextRendered": True,
                           "savedOnceInExpectedProjectBranch": True, "libraryRendered": True,
                           "focusRestored": True, "screenshot": screenshot}), flush=True)
@@ -280,5 +325,7 @@ def run(module, executable, sdk):
 
 
 if __name__ == "__main__":
+    assert sys.argv[4:] in ([], ["--probe"]), "Unknown desktop fixture arguments"
     run(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).resolve(strict=True),
-        None if sys.argv[3] == "-" else Path(sys.argv[3]).resolve(strict=True))
+        None if sys.argv[3] == "-" else Path(sys.argv[3]).resolve(strict=True),
+        probe=sys.argv[4:] == ["--probe"])
