@@ -11,10 +11,16 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from desktop_lifecycle import kill_owned_app, read_generation
+from desktop_lifecycle import kill_owned_app, read_generation, active_window_is
 
 
 class LifecycleTest(unittest.TestCase):
+    def test_focus_absence_or_other_window_never_counts_as_restored(self):
+        self.assertTrue(active_window_is("_NET_ACTIVE_WINDOW(WINDOW): window id # 0x2a", 42))
+        for value in ("_NET_ACTIVE_WINDOW:  not found.", "", "_NET_ACTIVE_WINDOW(WINDOW): window id # 0x2b",
+                      "_NET_ACTIVE_WINDOW(CARDINAL) = 42", "_NET_ACTIVE_WINDOW(WINDOW): window id # 0x2a, 0x2b"):
+            self.assertFalse(active_window_is(value, 42))
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="lyn-gnome-run-")
         self.addCleanup(self.directory.cleanup)

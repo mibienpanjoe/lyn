@@ -22,7 +22,7 @@ from desktop_pixels import region_changed, region_has_contrast
 from desktop_accessibility import page_heading, html_alert
 from cwd_fixture import change_cwd
 from foreground_fixture import ready as foreground_shape_ready
-from desktop_lifecycle import kill_owned_app, read_generation
+from desktop_lifecycle import kill_owned_app, read_generation, active_window_is
 
 
 def wait_for(check, message, timeout=12):
@@ -94,6 +94,9 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
 
     def command(*args):
         return subprocess.check_output(args, env=environment, text=True, timeout=3).strip()
+
+    def focus_is(window):
+        return active_window_is(command("xprop", "-root", "_NET_ACTIVE_WINDOW"), window)
 
     def visible_windows(pid, class_name=None):
         args = ["xdotool", "search", "--onlyvisible", "--pid", str(pid)]
@@ -669,9 +672,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 # Openbox may briefly unset the active-window property while
                 # the popup hides. Absence is not success or a command failure;
                 # the original wait still requires the exact terminal XID.
-                property_value = command("xprop", "-root", "_NET_ACTIVE_WINDOW")
-                active = re.fullmatch(r"_NET_ACTIVE_WINDOW\(WINDOW\): window id # (0x[0-9a-fA-F]+)", property_value)
-                return active is not None and int(active[1], 16) == int(window)
+                return focus_is(window)
             if closed_source or pty_reuse:
                 wait_for(lambda: named(app.pid, "Capture text") is None, "Cancel did not hide popup")
             else:
@@ -733,7 +734,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             capture_started = time.monotonic()
             window = windows[project.name]
             command("xdotool", "windowactivate", "--sync", window)
-            wait_for(lambda: int(command("xdotool", "getactivewindow")) == int(window), "GNOME not foreground")
+            wait_for(lambda: focus_is(window), "GNOME not foreground")
             readiness_after_us = time.monotonic_ns() // 1000
             if warm == "tabs" and not detached:
                 command("xdotool", "key", "--clearmodifiers", f"alt+{projects.index(project) + 1}")
@@ -795,7 +796,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 window = wait_for(detached_window, "Detached tab did not create one owned window")
                 windows[project.name] = window
                 command("xdotool", "windowactivate", "--sync", window)
-                wait_for(lambda: int(command("xdotool", "getactivewindow")) == int(window), "Detached GNOME not foreground")
+                wait_for(lambda: focus_is(window), "Detached GNOME not foreground")
                 readiness_after_us = time.monotonic_ns() // 1000
                 wait_for(producer_ready, "Detached source not observed in new window")
                 moved = producer_state["selectedSource"]
@@ -827,7 +828,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                     count = db.execute("SELECT COUNT(*) FROM captures").fetchone()[0]
                     return count == len(bodies) and rows == [(body, f"gnome-{project.name}", str(project.resolve()))]
             wait_for(saved, f"Real popup did not durably save once: {project.name}")
-            wait_for(lambda: int(command("xdotool", "getactivewindow")) == int(window), "Focus not restored to GNOME")
+            wait_for(lambda: focus_is(window), "Focus not restored to GNOME")
             if app_relaunch:
                 assert source_identity() == original_process_identity, "Original foreground kernel identity changed"
             if crash_app and len(bodies) == 2:

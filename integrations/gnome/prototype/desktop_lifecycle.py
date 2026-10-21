@@ -2,10 +2,17 @@
 
 import os
 from pathlib import Path
+import re
 import select
 import signal
 import stat
 import time
+
+
+def active_window_is(property_value, expected):
+    """An absent/changing property is not restored focus; require exact XID."""
+    active = re.fullmatch(r"_NET_ACTIVE_WINDOW\(WINDOW\): window id # (0x[0-9a-fA-F]+)", property_value)
+    return active is not None and int(active[1], 16) == int(expected)
 
 
 def read_generation(connection):
