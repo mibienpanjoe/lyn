@@ -132,6 +132,8 @@ The backend suite also saves synthetic PNG/WAV captures and checks media preserv
 
 `pnpm provider:gnome:desktop:test --late-app` starts Lyn only after its private GNOME window is mapped and reporting native metadata, with no broker endpoint present. It checks the same server/source survives app startup, then exercises popup, exact save, painted Library and focus return. This is not app-restart or installed-package acceptance.
 
+`pnpm provider:gnome:desktop:test --image-closed-source` pastes a synthetic image through the private desktop clipboard, invokes capture again, then closes the original terminal. It checks that the refused save preserves the image and caption, and that manual context correction saves the exact media and renders it in Library. It does not use your clipboard or microphone.
+
 `pnpm provider:gnome:desktop:test --restart-app` saves before and after a clean Tauri exit/relaunch, keeping the same private GNOME server and SQLite database. It requires endpoint cleanup, unchanged terminal identity, both exact notes painted in the Library and focus return. Crash recovery and stale-draft refusal remain separate checks.
 
 `pnpm provider:gnome:desktop:test --crash-app` kills only the verified, pidfd-pinned Lyn fixture process, then relaunches it with the same GNOME server and database. It requires the abandoned socket to remain untouched, a fresh endpoint/generation, the original foreground process still alive, exact saves on both sides, painted Library notes and focus return. It installs nothing and does not establish installed-package recovery.
