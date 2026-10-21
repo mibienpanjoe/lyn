@@ -1,5 +1,9 @@
 use std::{collections::BTreeMap, sync::Mutex, time::Instant};
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "capture_native_media_probe.rs"]
+pub(crate) mod native_media_probe;
+
 use tauri::State;
 
 use crate::{
