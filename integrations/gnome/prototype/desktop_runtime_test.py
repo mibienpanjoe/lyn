@@ -23,6 +23,7 @@ from desktop_accessibility import page_heading, html_alert
 from cwd_fixture import change_cwd
 from foreground_fixture import ready as foreground_shape_ready
 from desktop_lifecycle import kill_owned_app, read_generation, active_window_is
+from desktop_shell_exit import release_shell
 
 
 def wait_for(check, message, timeout=12):
@@ -35,7 +36,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False, process_shape=None, crash_app=False, xid_reuse=False, closed_tab=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False, process_shape=None, crash_app=False, xid_reuse=False, closed_tab=False, shell_exit=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -273,7 +274,13 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         if not late_app:
             wait_for(lambda: named(app.pid, "All captures"), "Real Library not accessible", 15)
             library_window = wait_for(lambda: visible_windows(app.pid), "Owned Library window not mapped")[0]
-        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source or cwd_change or pty_reuse or process_shape or closed_tab else ("alpha",))
+        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source or cwd_change or pty_reuse or process_shape or closed_tab or shell_exit else ("alpha",))
+        if shell_exit:
+            os.mkfifo(runtime / "shell-exit.fifo", 0o600)
+            environment["GSETTINGS_BACKEND"] = "keyfile"
+            profile_id = command("gsettings", "get", "org.gnome.Terminal.ProfilesList", "default").strip("'")
+            profile = f"org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:{profile_id}/"
+            command("gsettings", "set", profile, "exit-action", "'hold'")
         if closed_source or pty_reuse or closed_tab:
             environment["GSETTINGS_BACKEND"] = "keyfile"
             command("gsettings", "set", "org.gnome.Terminal.Legacy.Settings", "confirm-close", "false")
@@ -304,11 +311,12 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         window_projects = projects[:1] if warm == "tabs" or cwd_change or process_shape or closed_tab else projects
         terminal_command = (["/usr/bin/python3", str(Path(__file__).with_name("cwd_fixture.py")), str(projects[1])]
                             if cwd_change else ["/usr/bin/sleep", "60" if warm else "45"])
-        if process_shape:
+        if process_shape or shell_exit:
             terminal_command = ["/usr/bin/python3", str(Path(__file__).with_name("foreground_fixture.py")),
-                                process_shape, str(projects[1])]
+                                "exit-shell" if shell_exit else process_shape, str(projects[1])]
         launches = [start([client, f"--app-id={app_id}", "--window", f"--role=lyn-desktop-{project.name}",
-                           f"--working-directory={project}", "--", *terminal_command])
+                           f"--working-directory={project}", "--",
+                           *(["/usr/bin/sleep", "45"] if shell_exit and project == projects[1] else terminal_command)])
                     for project in window_projects]
         for launch in launches:
             assert launch.wait(timeout=5) == 0, "Concurrent terminal creation failed"
@@ -482,19 +490,22 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                               "nativeReplyChanged": True, "savedCount": 0, "draftPreserved": True,
                               "screenshot": save_screenshot(painted, "gnome-race-")}), flush=True)
             return
-        if stale_reconnect or closed_source or stale_selection or cwd_change or pty_reuse or xid_reuse or closed_tab:
+        if stale_reconnect or closed_source or stale_selection or cwd_change or pty_reuse or xid_reuse or closed_tab or shell_exit:
             project = projects[0]
             window = windows[project.name]
             command("xdotool", "windowactivate", "--sync", window)
             readiness_after_us = time.monotonic_ns() // 1000
             wait_for(producer_ready, "Native source not ready before disconnect")
             original = producer_state["selectedSource"].copy()
+            if shell_exit:
+                wait_for(lambda: foreground_shape_ready("exit-shell", original, server.pid, *projects),
+                         "Synthetic Bash did not become the original foreground session leader")
             command("xdotool", "key", "--delay", "0", "--clearmodifiers", "ctrl+shift+space")
             wait_for(lambda: named(app.pid, "Capture text") and
                      named(app.pid, "Context alpha, branch gnome-alpha. Change context"), "Original native context absent")
             draft_window = command("xdotool", "getactivewindow")
             assert command("xdotool", "getwindowpid", draft_window) == str(app.pid)
-            failure = "closed-tab" if closed_tab else "xid-reuse" if xid_reuse else "closed" if closed_source else "selection" if stale_selection else "cwd" if cwd_change else "pty-reuse" if pty_reuse else "reconnect"
+            failure = "shell-exit" if shell_exit else "closed-tab" if closed_tab else "xid-reuse" if xid_reuse else "closed" if closed_source else "selection" if stale_selection else "cwd" if cwd_change else "pty-reuse" if pty_reuse else "reconnect"
             body = f"synthetic-{failure}-preserved-draft-ENDOFNOTE"
             command("xdotool", "type", "--clearmodifiers", "--delay", "0", body)
             wait_for(lambda: contains(app.pid, body), "Draft absent before disconnect")
@@ -506,7 +517,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                     assert len(candidates) <= 1, "Ambiguous live-source choice in private popup"
                     return candidates[0] if candidates else None
                 choice = wait_for(original_live_choice, "Original live-source choice absent before reconnect")
-            if pty_reuse or xid_reuse or closed_tab:
+            if pty_reuse or xid_reuse or closed_tab or shell_exit:
                 old_pid = original["foregroundPgid"]
                 retired_process_pin = os.pidfd_open(old_pid)
                 retired = select.poll()
@@ -516,10 +527,33 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 assert process.stat().st_uid == os.getuid() and int(fields[1]) == server.pid
                 assert int(fields[2]) == old_pid and int(fields[5]) == old_pid
                 assert int(fields[4]) == os.stat(f'/dev/pts/{original["ptyNumber"]}').st_rdev
-                assert (process / "exe").samefile("/usr/bin/sleep")
+                assert (process / "exe").samefile("/bin/bash" if shell_exit else "/usr/bin/sleep")
                 assert (process / "cwd").resolve(strict=True) == projects[0]
                 assert not retired.poll(0) and server.poll() is None
-            if xid_reuse:
+            if shell_exit:
+                readiness_after_us = time.monotonic_ns() // 1000
+                release_shell(runtime)
+                events = retired.poll(1000)
+                assert any(mask & select.POLLIN for _, mask in events)
+                assert all(not mask & (select.POLLERR | select.POLLNVAL) for _, mask in events)
+                assert server.poll() is None and window in visible_windows(server.pid, "gnome-terminal")
+                def shell_source_removed():
+                    for _ in range(32):
+                        read_producer_observation()
+                        sources = producer_state.get("allSources", [])
+                        if (len(sources) == 1 and sources[0]["sourceId"] != original["sourceId"]
+                                and sources[0]["windowId"] == int(windows[projects[1].name])
+                                and sources[0]["observedAtUs"] >= readiness_after_us):
+                            return True
+                    return False
+                wait_for(shell_source_removed, "Exited shell retained a native candidate")
+                assert window in visible_windows(server.pid, "gnome-terminal")
+                wait_for(lambda: named(server.pid, "The child process exited normally with status 0."),
+                         "GNOME did not confirm the shell's normal zero-status exit")
+                print(json.dumps({"check": "native_shell_exited", "serverAndOriginalWindowAlive": True,
+                                  "originalBashPidfdExited": True, "normalExitStatus": 0,
+                                  "terminalInputRead": False}), flush=True)
+            elif xid_reuse:
                 old_server = server.pid
                 native_executable = Path("/usr/libexec/gnome-terminal-server")
                 assert native_executable.stat().st_uid == 0
@@ -715,12 +749,12 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             painted = wait_for(preserved_draft_pixels, "Preserved reconnect draft not painted")
             print(json.dumps({"check": "native_stale_source_draft", "failure": failure,
                               "generationChanged": None if xid_reuse else stale_reconnect or stale_selection,
-                              "sourceClosed": closed_source or pty_reuse or xid_reuse or closed_tab,
+                              "sourceClosed": closed_source or pty_reuse or xid_reuse or closed_tab or shell_exit,
                               "ptyReused": pty_reuse,
                               "xidReused": xid_reuse,
                               "cwdChanged": cwd_change,
                               "operation": "select+save" if cwd_change else "select" if stale_selection else "save",
-                              "sameNativeSource": not (closed_source or pty_reuse or xid_reuse or closed_tab),
+                              "sameNativeSource": not (closed_source or pty_reuse or xid_reuse or closed_tab or shell_exit),
                               "oldLeaseRefused": True, "savedCount": 0,
                               "draftPreserved": True,
                               "screenshot": save_screenshot(painted, f"gnome-{failure}-draft-")}), flush=True)
@@ -742,7 +776,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         capture_projects = [projects[index % 2] for index in range(alternations + 1)] if warm else projects
         if app_relaunch:
             capture_projects = [projects[0], projects[0]]
-        if closed_source or cwd_change or closed_tab:
+        if closed_source or cwd_change or closed_tab or shell_exit:
             capture_projects = [projects[1]]
         if pty_reuse:
             capture_projects = [projects[0]]
@@ -974,6 +1008,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                           "staleReconnect": stale_reconnect,
                           "closedSource": closed_source,
                           "closedTab": closed_tab,
+                          "shellExited": shell_exit,
                           "staleSelection": stale_selection,
                           "cwdChanged": cwd_change,
                           "ptyReused": pty_reuse,
@@ -1022,7 +1057,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "crash-app", "stale-reconnect", "closed-source", "closed-tab", "stale-selection", "cwd-change", "pty-reuse", "xid-reuse"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "crash-app", "stale-reconnect", "closed-source", "closed-tab", "shell-exit", "stale-selection", "cwd-change", "pty-reuse", "xid-reuse"):
         mode.add_argument(f"--{name}", action="store_true")
     mode.add_argument("--process-shape", choices=("shell", "exec-tui", "child-tui"))
     parser.add_argument("--alternations", type=int, default=4)
@@ -1039,4 +1074,4 @@ if __name__ == "__main__":
         stale_reconnect=arguments.stale_reconnect, closed_source=arguments.closed_source,
         stale_selection=arguments.stale_selection, cwd_change=arguments.cwd_change,
         pty_reuse=arguments.pty_reuse, process_shape=arguments.process_shape, xid_reuse=arguments.xid_reuse,
-        closed_tab=arguments.closed_tab)
+        closed_tab=arguments.closed_tab, shell_exit=arguments.shell_exit)

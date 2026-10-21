@@ -1,6 +1,6 @@
 # Native GNOME metadata protocol
 
-**Status:** Accepted implementation contract for Linux/X11. The developer-only GTK/VTE module answers v1 queries through the production-policy Rust broker in isolated real GNOME. Rust startup, invocation routing, native source preparation and selection/save revalidation are wired. The isolated desktop flow has exercised shortcut, popup, exact-project save, rendered Library and focus restoration, with its screenshot inspected. Configured channel reconnection is exercised against late/restarted real Rust brokers; full desktop lifecycle, module discovery/activation, installer, packaging and installed acceptance remain pending. This page does not expand current provider support.
+**Status:** Accepted implementation contract for Linux/X11. The developer-only GTK/VTE module answers v1 queries through the production-policy Rust broker in isolated real GNOME. Rust startup/publication, invocation routing, native source preparation and selection/save revalidation are wired. Isolated desktop checks cover shortcut, popup, exact-project save, painted Library and focus, plus late startup, clean/crash restart, reconnection, source/tab/shell exit and actual PTY/XID reuse. Their screenshots were inspected; numeric PID reuse is separately proved at the kernel peer boundary. Media/latency acceptance, resource/security audit, module activation, installer, packaging and installed acceptance remain outstanding. This page does not expand current provider support.
 
 ## Boundary and lifecycle
 
@@ -12,11 +12,11 @@ The Rust [native peer primitive](../src-tauri/src/context/gnome_peer.rs) impleme
 
 Handshake order is module `Hello` → Rust `Bind` → module `Ready`. Rust creates a fresh non-nil UUID generation for each authenticated connection; `Ready` must echo it before queries are permitted. Reconnection invalidates all pending requests and source identities of the previous generation. A module source ID is nonzero, monotonic within the server lifetime, and never reused there; Rust scopes it by server identity and connection generation. No live identity is persisted.
 
-The C [channel](../integrations/gnome/native_channel.c) uses nonblocking GLib FD watches, one 112-byte input and output frame, a 500 ms initial handshake limit and 120 ms partial-read/output limits. It checks the broker peer uid, closes on wrong generation/kind/framing, and refuses output backlog rather than blocking GTK. The prototype enables it only with a private harness endpoint; automatic production endpoint discovery/activation remain pending. These C-side checks do not replace Rust-side native peer/window/PTY attestation. Query traversal is capped at 2048 widgets and depth 32; reaching a limit returns unavailable, never a partial exact candidate.
+The C [channel](../integrations/gnome/native_channel.c) uses nonblocking GLib FD watches, one 112-byte input and output frame, a 500 ms initial handshake limit and 120 ms partial-read/output limits. It checks the broker peer uid, closes on wrong generation/kind/framing, and refuses output backlog rather than blocking GTK. The prototype opts into published-endpoint discovery only through its private harness configuration; ordinary module activation is not delivered. These C-side checks do not replace Rust-side native peer/window/PTY attestation. Query traversal is capped at 2048 widgets and depth 32; reaching a limit returns unavailable, never a partial exact candidate.
 
 `lyn_native_start` accepts one absolute endpoint and callback, owning its endpoint copy. Success means configured, not connected or admitted. Missing/disconnected endpoints schedule at most one GLib retry with 100 ms exponential backoff capped at 2 s; a valid Bind resets backoff. Every attempt repeats same-user peer validation and Hello/Bind/Ready with a fresh broker generation. Connection loss clears pending frame bytes and generation; queries and captures are never replayed. `lyn_native_stop` cancels retry and FD/deadline watches, closes the stream and frees configuration; repeated stop is safe. The initial attempt still runs from the existing GTK idle callback, preserving the pre-loop-delay boundary above.
 
-The lifecycle boundary test runs 100 configured/stopped cycles without FD growth and verifies that a listener created after stop receives no later connection. A separate real GNOME fixture dispatches mapped-terminal observations before the Rust broker exists, then starts the production-policy broker and saves a correct project capture. Restarting that broker keeps the real server/source but must change the connection generation before another verified save. These are channel/backend lifecycle checks; they do not establish full desktop restart acceptance, all resource/memory stability, discovery or installed support.
+The lifecycle boundary test runs 100 configured/stopped cycles without FD growth and verifies that a listener created after stop receives no later connection. A separate real GNOME fixture dispatches mapped-terminal observations before the Rust broker exists, then starts the production-policy broker and saves a correct project capture. Restarting that broker keeps the real server/source but must change the connection generation before another verified save. These channel/backend checks alone do not establish the separate desktop/recovery proofs below, general resource/memory stability or installed support.
 
 The module schedules its initial connection with a one-shot
 [`g_idle_add_full`](https://docs.gtk.org/glib/func.idle_add_full.html) callback,
@@ -101,6 +101,26 @@ invocation from beta may then save once to beta/gnome-beta, paint Library and
 restore focus. The reference screenshots were inspected. This uses private
 keyfile settings and GTK actions, not process signalling or terminal-stream
 access; shell exit and installed acceptance are separate cases.
+
+### Normal shell exit with a retained window
+
+`pnpm provider:gnome:desktop:test --shell-exit` starts a synthetic Bash with
+profiles disabled, a whitelisted environment and the existing 45-second alarm.
+Its fixed script waits on a private FIFO, never terminal input. The controller
+pins and verifies that foreground Bash's uid, executable, server parent,
+process group, controlling TTY and cwd before releasing one newline. FIFO I/O
+is nonblocking and descriptor-relative under pinned private mode-0700 fixture
+directories; wrong types, symlinks, public metadata, multiple links or changed
+inode identity refuse before writing to the opened object.
+
+Private keyfile settings retain the original GNOME window after child exit.
+The fixture requires POLLIN without poll errors on the old pidfd, GNOME's exact
+status-zero exit banner and removal of the exited source while the same server
+and window remain alive. The old draft must refuse saving, leave SQLite empty
+and stay painted intact. Cancellation must restore that held window; only a
+fresh invocation in the surviving beta window may save to beta/gnome-beta,
+render in Library and restore focus. The reference screenshots were inspected.
+No process signal, PTY stream, provider command or installed activation is used.
 
 ## Kernel PID reuse proof (developer opt-in)
 
