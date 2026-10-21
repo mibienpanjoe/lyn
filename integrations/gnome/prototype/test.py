@@ -43,7 +43,11 @@ parser.add_argument("--native-metrics", action="store_true",
                     help="measure private real GNOME CPU/RSS and test-build callback bodies")
 parser.add_argument("--reconnect-cycles", type=int,
                     help="repeat real GNOME/Rust broker reconnects (1 to 20, native mode only)")
+parser.add_argument("--reconnect-discovery", action="store_true",
+                    help="use fresh published broker endpoints for the reconnect series")
 arguments = parser.parse_args()
+if arguments.reconnect_discovery and arguments.desktop:
+    parser.error("--reconnect-discovery requires native mode")
 if arguments.reconnect_cycles is not None and (arguments.desktop or not 1 <= arguments.reconnect_cycles <= 20):
     parser.error("--reconnect-cycles requires native mode and a value from 1 to 20")
 if arguments.reconnect_cycles is None:
@@ -268,7 +272,8 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     else:
         cases = (("startup_test.py", [str(module), str(startup_fixture)]),
                  ("reconnect_test.py", [str(module), str(probe), str(arguments.reconnect_cycles),
-                                        str(sdk) if sdk else "-"]),
+                                        str(sdk) if sdk else "-",
+                                        "published" if arguments.reconnect_discovery else "fixed"]),
                  ("smoke_test.py", [str(module)]),
                  ("identity_test.py", [str(module), str(preserved)]),
                  ("rust_broker_test.py", [str(module), str(probe)]))

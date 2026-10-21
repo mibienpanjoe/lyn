@@ -10,13 +10,14 @@ import time
 
 
 class RustProbe:
-    def __init__(self, directory, executable):
+    def __init__(self, directory, executable, published=False):
         self.runtime = Path(directory) / "rust-runtime"
-        self.runtime.mkdir(mode=0o700)
+        self.runtime.mkdir(mode=0o700, exist_ok=published)
         self.path = str(self.runtime / "lyn-gnome-v1.sock")
         self.control = None
+        entry = "real_published_gnome_probe_entry" if published else "real_gnome_probe_entry"
         self.process = subprocess.Popen([
-            str(executable), "--exact", "context::gnome_broker::probe_tests::real_gnome_probe_entry",
+            str(executable), "--exact", "context::gnome_broker::probe_tests::" + entry,
             "--nocapture", "--test-threads=1"],
             env=dict(os.environ, LYN_GNOME_PROBE_RUNTIME=str(self.runtime)),
             stdout=subprocess.DEVNULL)

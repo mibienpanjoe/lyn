@@ -160,6 +160,10 @@ fn reply(broker: &Arc<NativeBroker>, control: Control) -> Value {
             "revision": evidence.candidate.revision,
         }),
         Err(error) => {
+            eprintln!(
+                "{}",
+                json!({"check": "native_probe_query_refused", "error": format!("{error:?}")})
+            );
             let status = match error {
                 BrokerError::Unavailable => "unavailable",
                 BrokerError::Busy => "busy",
@@ -275,13 +279,26 @@ fn capture_probe(broker: Arc<NativeBroker>, window: u32, directory: std::path::P
 
 #[test]
 fn real_gnome_probe_entry() {
+    run_real_gnome_probe(false);
+}
+
+#[test]
+fn real_published_gnome_probe_entry() {
+    run_real_gnome_probe(true);
+}
+
+fn run_real_gnome_probe(published: bool) {
     // A normal unit run does not claim runtime GNOME coverage. The dedicated
     // private-Xvfb runner invokes this entry with an isolated runtime directory.
     let Some(runtime) = std::env::var_os("LYN_GNOME_PROBE_RUNTIME") else {
         return;
     };
     let runtime = std::path::PathBuf::from(runtime);
-    let broker = Arc::new(NativeBroker::start(&runtime).unwrap());
+    let broker = Arc::new(if published {
+        NativeBroker::start_published(&runtime).unwrap()
+    } else {
+        NativeBroker::start(&runtime).unwrap()
+    });
     let path = runtime.join("probe.sock");
     let listener = UnixListener::bind(&path).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
@@ -316,7 +333,9 @@ fn real_gnome_probe_entry() {
     }
     drop(stream);
     drop(listener);
+    broker.shutdown();
     drop(broker);
     assert!(!runtime.join("lyn-gnome-v1.sock").exists());
+    assert!(!runtime.join("lyn-gnome-v1.current").exists());
     fs::remove_file(path).unwrap();
 }

@@ -6,6 +6,13 @@ import unittest
 
 
 class ReconnectControllerTest(unittest.TestCase):
+    def test_discovery_reconnect_is_native_only(self):
+        result = subprocess.run([sys.executable, str(Path(__file__).with_name("test.py")),
+                                 "--desktop", "--reconnect-discovery", "--startup-pairs=0"],
+                                capture_output=True, text=True, timeout=3)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--reconnect-discovery requires native mode", result.stderr)
+
     def test_explicit_default_count_is_also_native_only(self):
         result = subprocess.run([sys.executable, str(Path(__file__).with_name("test.py")),
                                  "--desktop", "--reconnect-cycles=1", "--startup-pairs=0"],
