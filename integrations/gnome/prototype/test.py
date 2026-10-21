@@ -38,6 +38,8 @@ parser.add_argument("--module-slow", action="store_true")
 parser.add_argument("--channel-cut", action="store_true")
 parser.add_argument("--native-safety", action="store_true",
                     help="add ASan/UBSan transport fixtures, not an instrumented GNOME server")
+parser.add_argument("--native-metrics", action="store_true",
+                    help="measure private real GNOME CPU/RSS and test-build callback bodies")
 arguments = parser.parse_args()
 if not 1 <= arguments.startup_pairs <= 20 or (not arguments.desktop and arguments.startup_pairs != 1):
     parser.error("--startup-pairs requires --desktop and a value from 1 to 20")
@@ -195,6 +197,21 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                         "-fPIC", "-fstack-protector-strong", "-shared", str(root / source),
                         *extra_sources, "-o", str(output), *flags], check=True)
     print("Native prototype SHA256:", hashlib.sha256(module.read_bytes()).hexdigest(), flush=True)
+    if arguments.native_metrics:
+        subprocess.run([sys.executable, str(root / "resource_controller_test.py")], check=True)
+        extra_sources = [str(root.parent / file) for file in ("wire.c", "native_channel.c", "native_discovery.c")]
+        metrics_test = destination / "module-metrics-test"
+        metrics_module = destination / "liblyn-gnome-metrics.so"
+        subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                        str(root / "module_metrics_test.c"), *extra_sources,
+                        "-o", str(metrics_test), *flags], check=True)
+        subprocess.run([str(metrics_test)], check=True, timeout=3)
+        subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                        "-DLYN_GNOME_TEST_METRICS", "-fPIC", "-fstack-protector-strong", "-shared",
+                        str(root / "module.c"), *extra_sources, "-o", str(metrics_module), *flags], check=True)
+        print("Metrics prototype SHA256:", hashlib.sha256(metrics_module.read_bytes()).hexdigest(), flush=True)
+        subprocess.run([sys.executable, str(root / "isolated_run.py"), str(sdk) if sdk else "-",
+                        str(root / "resource_test.py"), str(metrics_module), str(sdk) if sdk else "-"], check=True)
     if desktop:
         fixture_args = [str(module), str(probe), str(sdk) if sdk else "-"]
         modes = [["--probe"], []] + [["--concurrent-start"] for _ in range(arguments.startup_pairs)]

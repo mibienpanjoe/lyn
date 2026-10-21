@@ -19,6 +19,21 @@ static guint64 next_source;
 #define MAX_WIDGETS 2048
 #define MAX_DEPTH 32
 
+#ifdef LYN_GNOME_TEST_METRICS
+typedef struct { guint64 count, total_us, max_us; } CallbackMetrics;
+static CallbackMetrics query_metrics, snapshot_metrics;
+
+static gboolean record_metrics(CallbackMetrics *metrics, gint64 elapsed)
+{
+    if (elapsed < 0 || metrics->count == G_MAXUINT64
+        || (guint64)elapsed > G_MAXUINT64 - metrics->total_us) return FALSE;
+    metrics->count++;
+    metrics->total_us += (guint64)elapsed;
+    metrics->max_us = MAX(metrics->max_us, (guint64)elapsed);
+    return TRUE;
+}
+#endif
+
 typedef struct {
     guint64 id;
     guint64 revision;
@@ -192,6 +207,9 @@ static void lookup_widget(GtkWidget *widget, gpointer data)
 
 static void answer_query(const LynFrame *query, LynFrame *reply)
 {
+#ifdef LYN_GNOME_TEST_METRICS
+    gint64 metrics_start = g_get_monotonic_time();
+#endif
     NativeLookup lookup = {.query = query};
     GList *windows = gtk_window_list_toplevels();
     for (GList *item = windows; item; item = item->next) {
@@ -214,6 +232,9 @@ static void answer_query(const LynFrame *query, LynFrame *reply)
         reply->changed_us = lookup.source.changed_us;
         reply->revision = lookup.source.revision;
     }
+#ifdef LYN_GNOME_TEST_METRICS
+    (void)record_metrics(&query_metrics, g_get_monotonic_time() - metrics_start);
+#endif
 }
 
 static void publish(const char *frame, size_t length)
@@ -230,6 +251,9 @@ static void publish(const char *frame, size_t length)
 
 static gboolean snapshot(gpointer data)
 {
+#ifdef LYN_GNOME_TEST_METRICS
+    gint64 metrics_start = g_get_monotonic_time();
+#endif
     (void)data;
     GString *frame = g_string_new("{\"version\":0,\"kind\":\"snapshot\",\"sources\":[");
     Snapshot observation = {.frame = frame};
@@ -243,6 +267,23 @@ static gboolean snapshot(gpointer data)
         publish(frame->str, frame->len);
     }
     g_string_free(frame, TRUE);
+#ifdef LYN_GNOME_TEST_METRICS
+    (void)record_metrics(&snapshot_metrics, g_get_monotonic_time() - metrics_start);
+    /* Test-build-only telemetry. Record the normal callback body, excluding
+     * this recorder/report; CPU/RSS measurements include their overhead. */
+    if (snapshot_metrics.count % 40 == 0) {
+        char metrics_frame[512];
+        int length = snprintf(metrics_frame, sizeof(metrics_frame),
+            "{\"version\":0,\"kind\":\"metrics\",\"reportedAtUs\":%lld,\"snapshot\":{\"count\":%llu,\"totalUs\":%llu,\"maxUs\":%llu},"
+            "\"query\":{\"count\":%llu,\"totalUs\":%llu,\"maxUs\":%llu}}",
+            (long long)g_get_monotonic_time(),
+            (unsigned long long)snapshot_metrics.count, (unsigned long long)snapshot_metrics.total_us,
+            (unsigned long long)snapshot_metrics.max_us, (unsigned long long)query_metrics.count,
+            (unsigned long long)query_metrics.total_us, (unsigned long long)query_metrics.max_us);
+        if (length > 0 && (size_t)length < sizeof(metrics_frame))
+            publish(metrics_frame, (size_t)length);
+    }
+#endif
     return G_SOURCE_CONTINUE;
 }
 
