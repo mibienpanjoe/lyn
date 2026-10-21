@@ -85,6 +85,23 @@ On relaunch, the bounded C reader may initially return the abandoned address:
 it is an address hint, not readiness. The controller waits for a distinct address
 within its original readiness limit, never deleting a socket or retrying capture.
 
+### Single-tab closure proof
+
+`pnpm provider:gnome:desktop:test --closed-tab` creates two synthetic project
+tabs in one private GNOME window. With an attested alpha draft still open, its
+owning window's GTK close action closes only that tab. The controller retains
+the original foreground sleep pidfd after uid, executable, server-parent,
+process-group, controlling TTY and cwd checks. Actual POLLIN without poll errors
+must prove process exit; native snapshots must remove alpha and retain exactly
+one beta source with its own cwd in the same live server and window.
+
+The old save must refuse as stale, leave SQLite empty and keep the exact draft
+painted. Cancellation must restore the original surviving window. Only a fresh
+invocation from beta may then save once to beta/gnome-beta, paint Library and
+restore focus. The reference screenshots were inspected. This uses private
+keyfile settings and GTK actions, not process signalling or terminal-stream
+access; shell exit and installed acceptance are separate cases.
+
 ## Kernel PID reuse proof (developer opt-in)
 
 `pnpm provider:gnome:test --pid-reuse` adds a real numeric PID reuse case to the

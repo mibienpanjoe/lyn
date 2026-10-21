@@ -138,6 +138,8 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 `pnpm provider:gnome:desktop:test --closed-source` closes the original GNOME window while its Lyn draft remains open, with another private GNOME window still alive. Saving must refuse the closed source without substituting the survivor or losing the draft. Only an explicit new capture from the surviving window may save.
 
+`pnpm provider:gnome:desktop:test --closed-tab` closes only the original tab, keeping its server and window alive with a second project's tab. The old draft must refuse saving without losing text; after cancellation, a new capture must save only to the surviving tab's project and render in Library with focus restored.
+
 `pnpm provider:gnome:desktop:test --stale-selection` opens the context chooser before a real native reconnection, then clicks its original live-source choice afterward. It requires an explicit stale refusal, a visible error and preserved draft with no save, followed by a successful fresh capture after cancellation.
 
 `pnpm provider:gnome:desktop:test --cwd-change` changes the synthetic foreground process from project alpha to beta while a draft is open, without replacing its process, PTY, native source or window. The old save must refuse with its draft intact; a fresh invocation after cancellation must save only in beta.

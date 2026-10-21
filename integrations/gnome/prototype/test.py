@@ -24,6 +24,7 @@ parser.add_argument("--restart-app", action="store_true")
 parser.add_argument("--crash-app", action="store_true")
 parser.add_argument("--stale-reconnect", action="store_true")
 parser.add_argument("--closed-source", action="store_true")
+parser.add_argument("--closed-tab", action="store_true")
 parser.add_argument("--stale-selection", action="store_true")
 parser.add_argument("--cwd-change", action="store_true")
 parser.add_argument("--pty-reuse", action="store_true")
@@ -48,6 +49,8 @@ if arguments.stale_reconnect and not arguments.desktop:
     parser.error("--stale-reconnect requires --desktop")
 if arguments.closed_source and not arguments.desktop:
     parser.error("--closed-source requires --desktop")
+if arguments.closed_tab and not arguments.desktop:
+    parser.error("--closed-tab requires --desktop")
 if arguments.stale_selection and not arguments.desktop:
     parser.error("--stale-selection requires --desktop")
 if arguments.cwd_change and not arguments.desktop:
@@ -161,6 +164,8 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
             modes.append(["--stale-reconnect"])
         if arguments.closed_source:
             modes.append(["--closed-source"])
+        if arguments.closed_tab:
+            modes.append(["--closed-tab"])
         if arguments.stale_selection:
             modes.append(["--stale-selection"])
         if arguments.cwd_change:

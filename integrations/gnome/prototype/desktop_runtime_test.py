@@ -35,7 +35,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False, process_shape=None, crash_app=False, xid_reuse=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False, process_shape=None, crash_app=False, xid_reuse=False, closed_tab=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -273,11 +273,11 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         if not late_app:
             wait_for(lambda: named(app.pid, "All captures"), "Real Library not accessible", 15)
             library_window = wait_for(lambda: visible_windows(app.pid), "Owned Library window not mapped")[0]
-        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source or cwd_change or pty_reuse or process_shape else ("alpha",))
-        if closed_source or pty_reuse:
+        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source or cwd_change or pty_reuse or process_shape or closed_tab else ("alpha",))
+        if closed_source or pty_reuse or closed_tab:
             environment["GSETTINGS_BACKEND"] = "keyfile"
             command("gsettings", "set", "org.gnome.Terminal.Legacy.Settings", "confirm-close", "false")
-        if warm == "tabs":
+        if warm == "tabs" or closed_tab:
             # Only this fixture's private XDG profile may create a tab; never
             # start an interactive shell or read the user's startup files.
             environment["GSETTINGS_BACKEND"] = "keyfile"
@@ -301,7 +301,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         subprocess.run(["gdbus", "wait", "--session", "--timeout", "5", app_id],
                        env=environment, check=True, timeout=6)
         client = "/usr/bin/gnome-terminal.real" if Path("/usr/bin/gnome-terminal.real").exists() else "gnome-terminal"
-        window_projects = projects[:1] if warm == "tabs" or cwd_change or process_shape else projects
+        window_projects = projects[:1] if warm == "tabs" or cwd_change or process_shape or closed_tab else projects
         terminal_command = (["/usr/bin/python3", str(Path(__file__).with_name("cwd_fixture.py")), str(projects[1])]
                             if cwd_change else ["/usr/bin/sleep", "60" if warm else "45"])
         if process_shape:
@@ -330,7 +330,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         windows = wait_for(project_windows, "GNOME windows not ready")
         if process_shape == "child-tui":
             windows[projects[1].name] = windows[projects[0].name]
-        if warm == "tabs":
+        if warm == "tabs" or closed_tab:
             window = windows[projects[0].name]
             command("xdotool", "windowactivate", "--sync", window)
             window_path = command("xprop", "-id", window, "_GTK_WINDOW_OBJECT_PATH")
@@ -339,6 +339,8 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                     "--object-path", object_path, "--method", "org.gtk.Actions.Activate",
                     "new-terminal", "[<('tab', 'current')>]", "{}")
             windows[projects[1].name] = window
+            if closed_tab:
+                command("xdotool", "key", "--clearmodifiers", "ctrl+Page_Up")
         producer_state = {}
         def read_producer_observation():
             try:
@@ -480,7 +482,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                               "nativeReplyChanged": True, "savedCount": 0, "draftPreserved": True,
                               "screenshot": save_screenshot(painted, "gnome-race-")}), flush=True)
             return
-        if stale_reconnect or closed_source or stale_selection or cwd_change or pty_reuse or xid_reuse:
+        if stale_reconnect or closed_source or stale_selection or cwd_change or pty_reuse or xid_reuse or closed_tab:
             project = projects[0]
             window = windows[project.name]
             command("xdotool", "windowactivate", "--sync", window)
@@ -492,7 +494,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                      named(app.pid, "Context alpha, branch gnome-alpha. Change context"), "Original native context absent")
             draft_window = command("xdotool", "getactivewindow")
             assert command("xdotool", "getwindowpid", draft_window) == str(app.pid)
-            failure = "xid-reuse" if xid_reuse else "closed" if closed_source else "selection" if stale_selection else "cwd" if cwd_change else "pty-reuse" if pty_reuse else "reconnect"
+            failure = "closed-tab" if closed_tab else "xid-reuse" if xid_reuse else "closed" if closed_source else "selection" if stale_selection else "cwd" if cwd_change else "pty-reuse" if pty_reuse else "reconnect"
             body = f"synthetic-{failure}-preserved-draft-ENDOFNOTE"
             command("xdotool", "type", "--clearmodifiers", "--delay", "0", body)
             wait_for(lambda: contains(app.pid, body), "Draft absent before disconnect")
@@ -504,7 +506,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                     assert len(candidates) <= 1, "Ambiguous live-source choice in private popup"
                     return candidates[0] if candidates else None
                 choice = wait_for(original_live_choice, "Original live-source choice absent before reconnect")
-            if pty_reuse or xid_reuse:
+            if pty_reuse or xid_reuse or closed_tab:
                 old_pid = original["foregroundPgid"]
                 retired_process_pin = os.pidfd_open(old_pid)
                 retired = select.poll()
@@ -553,16 +555,19 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 print(json.dumps({"check": "actual_native_xid_reuse", "windowId": int(window),
                                   "oldServer": old_server, "newServer": server.pid,
                                   "oldProcessExited": True, "freshRegistration": True}), flush=True)
-            elif closed_source or pty_reuse:
+            elif closed_source or pty_reuse or closed_tab:
                 window_path = command("xprop", "-id", window, "_GTK_WINDOW_OBJECT_PATH")
                 object_path = re.search(r'= "([^"]+)"', window_path).group(1)
                 description = command("gdbus", "call", "--session", "--dest", app_id,
                                       "--object-path", object_path, "--method", "org.gtk.Actions.Describe", "close")
                 assert "'s'" in description, f"GNOME close action must take a string: {description}"
                 command("gdbus", "call", "--session", "--dest", app_id, "--object-path", object_path,
-                        "--method", "org.gtk.Actions.Activate", "close", "[<'window'>]", "{}")
-                wait_for(lambda: window not in visible_windows(server.pid, "gnome-terminal"),
-                         "Requested GNOME window did not close")
+                        "--method", "org.gtk.Actions.Activate", "close", "[<'tab'>]" if closed_tab else "[<'window'>]", "{}")
+                if closed_tab:
+                    assert window in visible_windows(server.pid, "gnome-terminal"), "Closing one tab destroyed its window"
+                else:
+                    wait_for(lambda: window not in visible_windows(server.pid, "gnome-terminal"),
+                             "Requested GNOME window did not close")
                 def closed_source_removed():
                     for _ in range(32):
                         read_producer_observation()
@@ -573,6 +578,17 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                     return False
                 wait_for(closed_source_removed, "Closed source retained or surviving source missing")
                 assert server.poll() is None, "Closing one source killed the surviving GNOME server"
+                if closed_tab:
+                    events = retired.poll(1000)
+                    assert any(mask & select.POLLIN for _, mask in events)
+                    assert all(not mask & (select.POLLERR | select.POLLNVAL) for _, mask in events)
+                    assert windows[projects[1].name] == window
+                    project = projects[1]
+                    readiness_after_us = time.monotonic_ns() // 1000
+                    wait_for(producer_ready, "Surviving tab did not report exact beta cwd in the original window")
+                    assert producer_state["selectedSource"]["sourceId"] != original["sourceId"]
+                    print(json.dumps({"check": "native_tab_closed", "sameServerAndWindow": True,
+                                      "originalProcessExited": True, "survivorProject": "beta"}), flush=True)
                 if pty_reuse:
                     def original_process_exited():
                         events = retired.poll(0)
@@ -699,12 +715,12 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             painted = wait_for(preserved_draft_pixels, "Preserved reconnect draft not painted")
             print(json.dumps({"check": "native_stale_source_draft", "failure": failure,
                               "generationChanged": None if xid_reuse else stale_reconnect or stale_selection,
-                              "sourceClosed": closed_source or pty_reuse or xid_reuse,
+                              "sourceClosed": closed_source or pty_reuse or xid_reuse or closed_tab,
                               "ptyReused": pty_reuse,
                               "xidReused": xid_reuse,
                               "cwdChanged": cwd_change,
                               "operation": "select+save" if cwd_change else "select" if stale_selection else "save",
-                              "sameNativeSource": not (closed_source or pty_reuse or xid_reuse),
+                              "sameNativeSource": not (closed_source or pty_reuse or xid_reuse or closed_tab),
                               "oldLeaseRefused": True, "savedCount": 0,
                               "draftPreserved": True,
                               "screenshot": save_screenshot(painted, f"gnome-{failure}-draft-")}), flush=True)
@@ -726,7 +742,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         capture_projects = [projects[index % 2] for index in range(alternations + 1)] if warm else projects
         if app_relaunch:
             capture_projects = [projects[0], projects[0]]
-        if closed_source or cwd_change:
+        if closed_source or cwd_change or closed_tab:
             capture_projects = [projects[1]]
         if pty_reuse:
             capture_projects = [projects[0]]
@@ -957,6 +973,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                           "appCrashedRelaunched": crash_app,
                           "staleReconnect": stale_reconnect,
                           "closedSource": closed_source,
+                          "closedTab": closed_tab,
                           "staleSelection": stale_selection,
                           "cwdChanged": cwd_change,
                           "ptyReused": pty_reuse,
@@ -1005,7 +1022,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "crash-app", "stale-reconnect", "closed-source", "stale-selection", "cwd-change", "pty-reuse", "xid-reuse"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "crash-app", "stale-reconnect", "closed-source", "closed-tab", "stale-selection", "cwd-change", "pty-reuse", "xid-reuse"):
         mode.add_argument(f"--{name}", action="store_true")
     mode.add_argument("--process-shape", choices=("shell", "exec-tui", "child-tui"))
     parser.add_argument("--alternations", type=int, default=4)
@@ -1021,4 +1038,5 @@ if __name__ == "__main__":
         late_app=arguments.late_app, restart_app=arguments.restart_app, crash_app=arguments.crash_app,
         stale_reconnect=arguments.stale_reconnect, closed_source=arguments.closed_source,
         stale_selection=arguments.stale_selection, cwd_change=arguments.cwd_change,
-        pty_reuse=arguments.pty_reuse, process_shape=arguments.process_shape, xid_reuse=arguments.xid_reuse)
+        pty_reuse=arguments.pty_reuse, process_shape=arguments.process_shape, xid_reuse=arguments.xid_reuse,
+        closed_tab=arguments.closed_tab)
