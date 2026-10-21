@@ -878,6 +878,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             else:
                 wait_for(cancel_focus_restored, "Cancel did not return focus")
         bodies = []
+        latency_samples = []
         detached = False
         original_source = None
         original_generation = None
@@ -1006,11 +1007,28 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 assert moved["revision"] > before_move["revision"]
                 assert moved["changedAtUs"] > before_move["changedAtUs"]
                 detached = True
-            command("xdotool", "key", "--clearmodifiers", "ctrl+shift+space")
-            wait_for(lambda: named(app.pid, "Capture text"), "Real capture popup not accessible")
             context_label = f"Context {project.name}, branch gnome-{project.name}"
-            wait_for(lambda: any(node.get_name().startswith(context_label)
-                                 for node in nodes(app.pid)), f"Native context not rendered: {project.name}")
+            if warm:
+                from desktop_latency import observe_ready
+
+                def focused_input():
+                    field = named(app.pid, "Capture text")
+                    return field and field.get_state_set().contains(Atspi.StateType.FOCUSED)
+
+                started = time.monotonic()
+                command("xdotool", "key", "--delay", "0", "--clearmodifiers", "ctrl+shift+space")
+                sample = observe_ready(focused_input,
+                                       lambda: any(node.get_name().startswith(context_label)
+                                                   for node in nodes(app.pid)), started=started)
+                latency_samples.append(sample)
+                print(json.dumps({"check": "native_readiness_latency", "mode": warm,
+                                  "index": len(bodies), "initialInvocation": not bodies,
+                                  "observationUpperBounds": True, "pollSleepMs": 5, **sample}), flush=True)
+            else:
+                command("xdotool", "key", "--clearmodifiers", "ctrl+shift+space")
+                wait_for(lambda: named(app.pid, "Capture text"), "Real capture popup not accessible")
+                wait_for(lambda: any(node.get_name().startswith(context_label)
+                                     for node in nodes(app.pid)), f"Native context not rendered: {project.name}")
             capture_window = command("xdotool", "getactivewindow")
             assert command("xdotool", "getwindowpid", capture_window) == str(app.pid), "Input target is not the owned Lyn process"
             body = (f"synthetic-{warm}-{len(bodies):02d}-{project.name}" if warm else
@@ -1044,6 +1062,19 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 print(json.dumps({"check": "warm_capture", "mode": warm, "index": len(bodies) - 1,
                                   "project": project.name,
                                   "elapsedMs": round((time.monotonic() - capture_started) * 1000, 2)}), flush=True)
+        if warm:
+            from desktop_latency import summarize
+            # Keep the first invocation separate; the requested alternations
+            # are the warm series, with no failed attempt discarded or retried.
+            assert len(latency_samples) == alternations + 1
+            distributions = {name: summarize([sample[name] for sample in latency_samples[1:]])
+                             for name in ("inputObservedMs", "contextObservedMs")}
+            print(json.dumps({"check": "native_readiness_distribution", "mode": warm,
+                              "initialInvocation": latency_samples[0], "observationUpperBounds": True,
+                              "pollSleepMs": 5, "failedAttempts": 0, **distributions}), flush=True)
+            if alternations == 100:
+                assert all(value["requiredSamples"] and value["within250ms"]
+                           for value in distributions.values()), "Observed readiness p95 upper bound exceeds 250 ms"
         assert not relocate or detached, "Requested tab relocation was not exercised"
         if app_relaunch:
             # Restart loads the first saved row into Recent. It may already be

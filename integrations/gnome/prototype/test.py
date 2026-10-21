@@ -81,6 +81,7 @@ if arguments.channel_cut and not arguments.desktop:
     parser.error("--channel-cut requires --desktop")
 desktop = arguments.desktop
 if desktop:
+    subprocess.run([sys.executable, str(root / "desktop_latency_test.py")], check=True)
     subprocess.run([sys.executable, str(root / "desktop_audio_test.py")], check=True)
     subprocess.run([sys.executable, str(root / "desktop_media_test.py")], check=True)
     subprocess.run([sys.executable, str(root / "desktop_shell_exit_test.py")], check=True)
