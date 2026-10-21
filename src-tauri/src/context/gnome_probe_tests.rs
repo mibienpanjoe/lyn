@@ -15,11 +15,39 @@ use std::{
 
 const MAX_CONTROL_BYTES: usize = 2048;
 
+#[test]
+fn media_probe_control_rejects_unknown_recipes_and_extra_authority() {
+    let valid = json!({"kind":"mediaCaptureProbe", "windowId":1,
+        "expectedDirectory":"/synthetic", "mediaKind":"image", "retireGeneration":false});
+    assert!(serde_json::from_value::<Control>(valid.clone()).is_ok());
+    for (field, value) in [
+        ("mediaKind", json!("video")),
+        ("retireGeneration", json!("command")),
+        ("serverPid", json!(123)),
+        ("caption", json!("arbitrary content")),
+    ] {
+        let mut refused = valid.clone();
+        refused[field] = value;
+        assert!(serde_json::from_value::<Control>(refused).is_err());
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 enum Control {
     #[serde(rename = "status")]
     Status,
+    #[serde(rename = "mediaCaptureProbe")]
+    MediaCaptureProbe {
+        #[serde(rename = "windowId")]
+        window_id: u32,
+        #[serde(rename = "expectedDirectory")]
+        expected_directory: std::path::PathBuf,
+        #[serde(rename = "mediaKind")]
+        media_kind: crate::contract::MediaKind,
+        #[serde(rename = "retireGeneration")]
+        retire_generation: bool,
+    },
     #[serde(rename = "captureProbe")]
     CaptureProbe {
         #[serde(rename = "windowId")]
@@ -61,6 +89,20 @@ enum Control {
 
 fn reply(broker: &Arc<NativeBroker>, control: Control) -> Value {
     let result = match control {
+        Control::MediaCaptureProbe {
+            window_id,
+            expected_directory,
+            media_kind,
+            retire_generation,
+        } => {
+            return crate::commands::capture::native_media_probe::run(
+                broker.clone(),
+                window_id,
+                expected_directory,
+                media_kind,
+                retire_generation,
+            );
+        }
         Control::CaptureProbe {
             window_id,
             expected_directory,

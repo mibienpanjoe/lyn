@@ -89,3 +89,15 @@ class RustProbe:
     def capture_probe(self, window, expected_directory):
         return self.request({"kind": "captureProbe", "windowId": window,
                              "expectedDirectory": str(expected_directory)})
+
+    def media_capture_probe(self, window, expected_directory, kind, retire_generation=False):
+        # The test-only recipe may wait up to 3s for a fresh authenticated
+        # generation. This controller timeout is not the native 120ms budget.
+        previous = self.control.gettimeout()
+        self.control.settimeout(5)
+        try:
+            return self.request({"kind": "mediaCaptureProbe", "windowId": window,
+                                 "expectedDirectory": str(expected_directory), "mediaKind": kind,
+                                 "retireGeneration": retire_generation})
+        finally:
+            self.control.settimeout(previous)

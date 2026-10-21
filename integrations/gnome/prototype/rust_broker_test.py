@@ -113,6 +113,19 @@ def run(module, executable):
             assert len(generations) == 1
             assert {Path(f'/proc/{source["foregroundPgid"]}/cwd').resolve() for source in sources} == set(projects)
             print("PASS: each native window/TUI saves once to its own project/branch, Library reads it and its source is released", flush=True)
+            for source in sources:
+                project = Path(f'/proc/{source["foregroundPgid"]}/cwd').resolve()
+                for kind in ("image", "audio"):
+                    for retire_generation in (False, True):
+                        saved = probe.media_capture_probe(source["windowId"], project, kind, retire_generation)
+                        assert saved == {"status": "saved", "mediaKind": kind,
+                            "generationRetired": retire_generation, "captureCount": 1, "assetCount": 1,
+                            "bytesMatch": True, "captionMatches": True, "contextMatches": True,
+                            "branchMatches": True, "duplicateRefused": True, "leaseReleased": True,
+                            "stagingPreserved": True, "duplicateInvocationPreserved": True,
+                            "staleSaveRefused": True if retire_generation else None,
+                            "lateAutomaticRefused": True if retire_generation else None}, saved
+            print("PASS: native PNG/WAV save and generation-loss/manual-correction recipes preserve bytes and session authority", flush=True)
             failures = []
             durations = []
             expected_save = {"status": "saved", "bodyMatches": True, "projectMatches": True,
