@@ -1,6 +1,7 @@
 """Controller for the owned desktop fixture, never a production command."""
 
 import os
+from contextlib import contextmanager
 from pathlib import Path
 import re
 import select
@@ -32,8 +33,8 @@ def read_generation(connection):
     return bytes(response[1:])
 
 
-def kill_owned_app(process, executable, runtime, *, expected_cwd=None):
-    """Return the retained pidfd after SIGKILL/wait, or refuse before signalling."""
+def _pin_owned_app(process, executable, runtime, *, expected_cwd=None):
+    """Validate the private direct child before returning a live kernel pin."""
     runtime = Path(runtime)
     root = runtime.parent
     assert root.is_absolute() and root.name.startswith("lyn-gnome-run-")
@@ -64,8 +65,20 @@ def kill_owned_app(process, executable, runtime, *, expected_cwd=None):
         assert all(before[index] == after[index] for index in (1, 2, 3, 4, 19))
         assert target.stat().st_uid == os.geteuid() and (target / "exe").samefile(executable)
         assert not poller.poll(0), "Fixture app exited before signalling"
+        return pin
+    except BaseException:
+        os.close(pin)
+        raise
+
+
+def kill_owned_app(process, executable, runtime, *, expected_cwd=None):
+    """Return the retained pidfd after SIGKILL/wait, or refuse before signalling."""
+    pin = _pin_owned_app(process, executable, runtime, expected_cwd=expected_cwd)
+    try:
         signal.pidfd_send_signal(pin, signal.SIGKILL)
         assert process.wait(timeout=5) == -signal.SIGKILL, "App did not die from the requested SIGKILL"
+        poller = select.poll()
+        poller.register(pin, select.POLLIN)
         events = poller.poll(1000)
         assert len(events) == 1 and events[0][1] & select.POLLIN
         assert not events[0][1] & (select.POLLERR | select.POLLNVAL)
@@ -73,3 +86,37 @@ def kill_owned_app(process, executable, runtime, *, expected_cwd=None):
     except BaseException:
         os.close(pin)
         raise
+
+
+@contextmanager
+def pause_owned_app(process, executable, runtime, *, expected_cwd=None):
+    """Pause only the pinned private child, always resume it on controller exit."""
+    pin = _pin_owned_app(process, executable, runtime, expected_cwd=expected_cwd)
+    requested = False
+    try:
+        initial_state = Path(f"/proc/{process.pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        assert initial_state not in ("T", "t"), "Do not resume a child already stopped by another action"
+        # Delivery may succeed just before Python raises an interruption.
+        # Own the matching resume before crossing the signalling syscall.
+        requested = True
+        signal.pidfd_send_signal(pin, signal.SIGSTOP)
+        poller = select.poll()
+        poller.register(pin, select.POLLIN)
+        deadline = time.monotonic() + 1
+        while True:
+            assert not poller.poll(0), "Private child exited before observed stop"
+            state = Path(f"/proc/{process.pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+            assert time.monotonic() < deadline, "Private child stop observation exceeded deadline"
+            if state == "T":
+                break
+            time.sleep(.005)
+        yield pin
+    finally:
+        try:
+            if requested:
+                try:
+                    signal.pidfd_send_signal(pin, signal.SIGCONT)
+                except ProcessLookupError:
+                    pass
+        finally:
+            os.close(pin)

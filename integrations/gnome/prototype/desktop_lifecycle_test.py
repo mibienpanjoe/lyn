@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from desktop_lifecycle import kill_owned_app, read_generation, active_window_is
+from desktop_lifecycle import kill_owned_app, pause_owned_app, read_generation, active_window_is
 
 
 class LifecycleTest(unittest.TestCase):
@@ -48,6 +48,79 @@ class LifecycleTest(unittest.TestCase):
                 self.assertEqual(child.returncode, -signal.SIGKILL)
             finally:
                 os.close(pin)
+
+    def test_pause_is_observed_and_resumed_after_success_or_exception(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail), self.child() as child:
+                try:
+                    with pause_owned_app(child, Path(sys.executable), self.runtime) as pin:
+                        self.assertEqual(Path(f"/proc/{child.pid}/stat").read_text().rsplit(")", 1)[1].split()[0], "T")
+                        self.assertIsInstance(pin, int)
+                        if fail:
+                            raise ValueError("synthetic controller failure")
+                except ValueError:
+                    self.assertTrue(fail)
+                import time
+                deadline = time.monotonic() + 1
+                while Path(f"/proc/{child.pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "T":
+                    self.assertLess(time.monotonic(), deadline, "Owned child remained stopped")
+                    time.sleep(.005)
+                self.assertIsNone(child.poll())
+
+    def test_pause_refuses_wrong_executable_or_public_runtime_without_signalling(self):
+        with self.child() as child, patch("desktop_lifecycle.signal.pidfd_send_signal") as send:
+            with self.assertRaises(AssertionError):
+                with pause_owned_app(child, Path("/usr/bin/true"), self.runtime):
+                    self.fail("Wrong executable admitted")
+            self.runtime.chmod(0o755)
+            with self.assertRaises(AssertionError):
+                with pause_owned_app(child, Path(sys.executable), self.runtime):
+                    self.fail("Public runtime admitted")
+            send.assert_not_called()
+            self.assertIsNone(child.poll())
+
+    def test_nested_pause_refuses_without_resuming_the_existing_stop(self):
+        with self.child() as child:
+            with pause_owned_app(child, Path(sys.executable), self.runtime):
+                with self.assertRaises(AssertionError):
+                    with pause_owned_app(child, Path(sys.executable), self.runtime):
+                        self.fail("Nested pause admitted")
+                self.assertEqual(Path(f"/proc/{child.pid}/stat").read_text().rsplit(")", 1)[1].split()[0], "T")
+
+    def test_interruption_after_stop_delivery_still_resumes_owned_child(self):
+        real_send = signal.pidfd_send_signal
+        def interrupted_send(pin, operation):
+            real_send(pin, operation)
+            if operation == signal.SIGSTOP:
+                raise KeyboardInterrupt("after delivered SIGSTOP")
+        with self.child() as child:
+            with patch("desktop_lifecycle.signal.pidfd_send_signal", side_effect=interrupted_send):
+                with self.assertRaises(KeyboardInterrupt):
+                    with pause_owned_app(child, Path(sys.executable), self.runtime):
+                        self.fail("Interrupted pause yielded")
+            import time
+            deadline = time.monotonic() + .25
+            while Path(f"/proc/{child.pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "T":
+                self.assertLess(time.monotonic(), deadline, "Interrupted pause left the child stopped")
+                time.sleep(.005)
+
+    def test_late_stopped_observation_cannot_bypass_the_deadline(self):
+        real_send = signal.pidfd_send_signal
+        with self.child() as child:
+            def settled_send(pin, operation):
+                real_send(pin, operation)
+                if operation == signal.SIGSTOP:
+                    import time
+                    for _ in range(100):
+                        if Path(f"/proc/{child.pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "T":
+                            return
+                        time.sleep(.001)
+                    self.fail("Own child did not stop")
+            with patch("desktop_lifecycle.signal.pidfd_send_signal", side_effect=settled_send), \
+                    patch("desktop_lifecycle.time.monotonic", side_effect=[0, 2]):
+                with self.assertRaisesRegex(AssertionError, "deadline"):
+                    with pause_owned_app(child, Path(sys.executable), self.runtime):
+                        self.fail("Late T observation admitted")
 
     def test_wrong_executable_and_parent_refuse_without_signalling(self):
         with self.child() as child:
