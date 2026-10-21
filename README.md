@@ -140,6 +140,8 @@ The backend suite also saves synthetic PNG/WAV captures and checks media preserv
 
 `pnpm provider:gnome:desktop:test --module-slow` pauses only the pidfd-pinned private GNOME server after a successful native invocation. It checks typing and manual save while that module cannot respond, then resumes the server and checks the original source survives. No terminal in your session is paused; this is not a latency benchmark or explicit channel-cut acceptance.
 
+`pnpm provider:gnome:desktop:test --channel-cut` shuts down only the private fixture's native broker after admission, then checks typing, draft preservation, manual save, focus and rendered Library while the endpoint remains unavailable. GNOME stays alive. This is not a latency benchmark, isolated stream-cut recovery or installed acceptance.
+
 `pnpm provider:gnome:desktop:test --restart-app` saves before and after a clean Tauri exit/relaunch, keeping the same private GNOME server and SQLite database. It requires endpoint cleanup, unchanged terminal identity, both exact notes painted in the Library and focus return. Crash recovery and stale-draft refusal remain separate checks.
 
 `pnpm provider:gnome:desktop:test --crash-app` kills only the verified, pidfd-pinned Lyn fixture process, then relaunches it with the same GNOME server and database. It requires the abandoned socket to remain untouched, a fresh endpoint/generation, the original foreground process still alive, exact saves on both sides, painted Library notes and focus return. It installs nothing and does not establish installed-package recovery.
