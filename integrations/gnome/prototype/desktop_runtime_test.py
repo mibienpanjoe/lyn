@@ -22,6 +22,7 @@ from desktop_pixels import region_changed, region_has_contrast
 from desktop_accessibility import page_heading, html_alert
 from cwd_fixture import change_cwd
 from foreground_fixture import ready as foreground_shape_ready
+from desktop_lifecycle import kill_owned_app, read_generation
 
 
 def wait_for(check, message, timeout=12):
@@ -34,7 +35,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False, process_shape=None):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False, process_shape=None, crash_app=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -82,6 +83,9 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
     lifecycle_listener = None
     lifecycle = None
     retired_process_pin = None
+    crashed_app_pin = None
+    source_process_pin = None
+    app_relaunch = restart_app or crash_app
 
     def start(command, env=environment, **kwargs):
         process = subprocess.Popen(command, env=env, **kwargs)
@@ -196,7 +200,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             os.chmod(root / "runtime/native-query-gate.sock", 0o600)
             gate_listener.listen(1)
             gate_listener.settimeout(3)
-        if restart_app or stale_reconnect or stale_selection:
+        if app_relaunch or stale_reconnect or stale_selection:
             lifecycle_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             lifecycle_listener.bind(str(root / "runtime/desktop-lifecycle.sock"))
             os.chmod(root / "runtime/desktop-lifecycle.sock", 0o600)
@@ -208,7 +212,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                           "--nocapture", "--test-threads=1"],
                          env=dict(environment, LYN_GNOME_UI_FIXTURE="1", LYN_GNOME_UI_PORT=str(port),
                                   LYN_GNOME_UI_QUERY_GATE="1" if race else "0",
-                                  LYN_GNOME_UI_RESTART="1" if restart_app or stale_reconnect or stale_selection else "0"))
+                                  LYN_GNOME_UI_RESTART="1" if app_relaunch or stale_reconnect or stale_selection else "0"))
 
         def lifecycle_connection():
             connection, _ = lifecycle_listener.accept()
@@ -218,7 +222,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             return connection
 
         app = None if late_app else start_app()
-        if restart_app or stale_reconnect or stale_selection:
+        if app_relaunch or stale_reconnect or stale_selection:
             lifecycle = lifecycle_connection()
         if race:
             query_gate, _ = gate_listener.accept()
@@ -675,8 +679,10 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         bodies = []
         detached = False
         original_source = None
+        original_generation = None
+        abandoned_socket = None
         capture_projects = [projects[index % 2] for index in range(alternations + 1)] if warm else projects
-        if restart_app:
+        if app_relaunch:
             capture_projects = [projects[0], projects[0]]
         if closed_source or cwd_change:
             capture_projects = [projects[1]]
@@ -685,28 +691,44 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         if process_shape:
             capture_projects = [projects[1] if process_shape == "child-tui" else projects[0]]
         for project in capture_projects:
-            if restart_app and len(bodies) == 1:
+            if app_relaunch and len(bodies) == 1:
                 previous_app = app.pid
                 previous_endpoint = endpoint
                 previous_socket = endpoint.stat().st_ino
                 original_source = producer_state["selectedSource"].copy()
-                lifecycle.sendall(b'X')
-                assert app.wait(timeout=5) == 0, "Lyn did not exit cleanly"
+                if crash_app:
+                    original_generation = read_generation(lifecycle)
+                    abandoned_socket = endpoint.lstat()
+                    crashed_app_pin = kill_owned_app(app, executable, runtime)
+                    assert endpoint.lstat() == abandoned_socket, "Crash changed the abandoned socket"
+                    assert endpoint_ready() is None, "Dead app was considered ready"
+                    assert publication.read_text() == endpoint.parent.name + "\n"
+                    wait_for(lambda: not visible_windows(previous_app), "Crashed app windows still mapped")
+                else:
+                    lifecycle.sendall(b'X')
+                    assert app.wait(timeout=5) == 0, "Lyn did not exit cleanly"
                 lifecycle.close()
                 lifecycle = None
-                assert not endpoint.exists(), "Clean app exit left its native broker socket behind"
-                assert not publication.exists(), "Clean app exit left its publication behind"
+                if not crash_app:
+                    assert not endpoint.exists(), "Clean app exit left its native broker socket behind"
+                    assert not publication.exists(), "Clean app exit left its publication behind"
                 assert server.poll() is None, "App exit terminated the private GNOME server"
                 app = start_app()
                 lifecycle = lifecycle_connection()
                 assert app.pid != previous_app
-                endpoint = wait_for(endpoint_ready, "Restarted Lyn publication not ready", 15)
-                assert endpoint != previous_endpoint, "Restart reused a native instance address"
+                def restarted_endpoint():
+                    # A stale record is a valid address hint, not proof that
+                    # this new app has published. Never remove it to proceed.
+                    address = endpoint_ready()
+                    return address if address != previous_endpoint else None
+                endpoint = wait_for(restarted_endpoint, "Restarted Lyn did not publish a fresh instance address", 15)
+                if crash_app:
+                    assert previous_endpoint.lstat() == abandoned_socket, "Relaunch removed or changed the abandoned socket"
                 wait_for(lambda: named(app.pid, "All captures"), "Restarted Library not accessible", 15)
                 library_window = wait_for(lambda: visible_windows(app.pid), "Restarted Library not mapped")[0]
-                # Absence between lifetimes is mandatory; inode numbers alone
-                # are not lifetime identities and may legitimately be reused.
-                print(json.dumps({"check": "app_restarted", "oldSocketInode": previous_socket,
+                # Clean exit removes its own socket; SIGKILL must leave it
+                # untouched. Neither old numeric inode nor PID is a lifetime ID.
+                print(json.dumps({"check": "app_crashed_relaunched" if crash_app else "app_restarted", "oldSocketInode": previous_socket,
                                   "newSocketInode": endpoint.stat().st_ino}), flush=True)
             capture_started = time.monotonic()
             window = windows[project.name]
@@ -726,9 +748,30 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                                       "serverExit": server.poll(),
                                       **producer_state}), flush=True)
                     raise
-            if restart_app and len(bodies) == 1:
-                for field in ("sourceId", "ptyNumber", "foregroundPgid", "registeredAtUs"):
+            if app_relaunch and len(bodies) == 1:
+                for field in ("sourceId", "windowId", "ptyNumber", "foregroundPgid", "registeredAtUs", "revision", "changedAtUs"):
                     assert producer_state["selectedSource"][field] == original_source[field], field
+            if app_relaunch and not bodies:
+                source = producer_state["selectedSource"]
+                source_pid = source["foregroundPgid"]
+                source_process_pin = os.pidfd_open(source_pid)
+                source_poller = select.poll()
+                source_poller.register(source_process_pin, select.POLLIN)
+                def source_identity():
+                    assert not source_poller.poll(0), "Original foreground process exited"
+                    process = Path(f"/proc/{source_pid}")
+                    metadata = process.stat()
+                    fields = (process / "stat").read_text().rsplit(")", 1)[1].split()
+                    assert metadata.st_uid == os.geteuid() and int(fields[1]) == server.pid
+                    assert int(fields[2]) == source_pid and int(fields[5]) == source_pid
+                    assert int(fields[4]) == os.stat(f'/dev/pts/{source["ptyNumber"]}').st_rdev
+                    assert (process / "exe").samefile("/usr/bin/sleep")
+                    assert (process / "cwd").resolve(strict=True) == project
+                    executable_identity = (process / "exe").stat()
+                    assert not source_poller.poll(0), "Original foreground process exited during observation"
+                    return (metadata.st_dev, metadata.st_ino, fields[19],
+                            executable_identity.st_dev, executable_identity.st_ino)
+                original_process_identity = source_identity()
             if process_shape:
                 def settled_shape():
                     if not producer_ready():
@@ -770,6 +813,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             capture_window = command("xdotool", "getactivewindow")
             assert command("xdotool", "getwindowpid", capture_window) == str(app.pid), "Input target is not the owned Lyn process"
             body = (f"synthetic-{warm}-{len(bodies):02d}-{project.name}" if warm else
+                    f"synthetic-crash-{len(bodies)}" if crash_app else
                     f"synthetic-restart-{len(bodies)}" if restart_app else
                     "synthetic-native-desktop-acceptance" + (f"-{project.name}" if concurrent else ""))
             bodies.append(body)
@@ -784,12 +828,23 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                     return count == len(bodies) and rows == [(body, f"gnome-{project.name}", str(project.resolve()))]
             wait_for(saved, f"Real popup did not durably save once: {project.name}")
             wait_for(lambda: int(command("xdotool", "getactivewindow")) == int(window), "Focus not restored to GNOME")
+            if app_relaunch:
+                assert source_identity() == original_process_identity, "Original foreground kernel identity changed"
+            if crash_app and len(bodies) == 2:
+                assert original_generation is not None
+                assert read_generation(lifecycle) != original_generation, "App restart retained the old generation"
+                assert previous_endpoint.lstat() == abandoned_socket
+                print(json.dumps({"check": "app_crash_recovery", "killedThroughPidfd": True,
+                                  "sameServerAndSource": server.poll() is None,
+                                  "originalForegroundProcessPinnedAlive": True,
+                                  "abandonedSocketUnchanged": True, "generationChanged": True,
+                                  "savedCount": len(bodies)}), flush=True)
             if warm:
                 print(json.dumps({"check": "warm_capture", "mode": warm, "index": len(bodies) - 1,
                                   "project": project.name,
                                   "elapsedMs": round((time.monotonic() - capture_started) * 1000, 2)}), flush=True)
         assert not relocate or detached, "Requested tab relocation was not exercised"
-        if restart_app:
+        if app_relaunch:
             # Restart loads the first saved row into Recent. It may already be
             # painted identically before switching to All captures. Establish
             # an actually obscured baseline, not an unchanged old-row failure.
@@ -857,6 +912,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         print(json.dumps({"check": "real_gnome_desktop_capture", "nativeContextRendered": True,
                           "appStartedAfterGnome": late_app,
                           "appRestarted": restart_app,
+                          "appCrashedRelaunched": crash_app,
                           "staleReconnect": stale_reconnect,
                           "closedSource": closed_source,
                           "staleSelection": stale_selection,
@@ -892,6 +948,10 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             lifecycle_listener.close()
         if retired_process_pin is not None:
             os.close(retired_process_pin)
+        if crashed_app_pin is not None:
+            os.close(crashed_app_pin)
+        if source_process_pin is not None:
+            os.close(source_process_pin)
 
 
 if __name__ == "__main__":
@@ -900,7 +960,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "stale-reconnect", "closed-source", "stale-selection", "cwd-change", "pty-reuse"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "crash-app", "stale-reconnect", "closed-source", "stale-selection", "cwd-change", "pty-reuse"):
         mode.add_argument(f"--{name}", action="store_true")
     mode.add_argument("--process-shape", choices=("shell", "exec-tui", "child-tui"))
     parser.add_argument("--alternations", type=int, default=4)
@@ -913,7 +973,7 @@ if __name__ == "__main__":
         warm="windows" if arguments.warm_windows else "tabs" if arguments.warm_tabs or arguments.relocate_tab or arguments.race_switch or arguments.race_aba else None,
         alternations=arguments.alternations, relocate=arguments.relocate_tab,
         race="switch" if arguments.race_switch else "aba" if arguments.race_aba else None,
-        late_app=arguments.late_app, restart_app=arguments.restart_app,
+        late_app=arguments.late_app, restart_app=arguments.restart_app, crash_app=arguments.crash_app,
         stale_reconnect=arguments.stale_reconnect, closed_source=arguments.closed_source,
         stale_selection=arguments.stale_selection, cwd_change=arguments.cwd_change,
         pty_reuse=arguments.pty_reuse, process_shape=arguments.process_shape)

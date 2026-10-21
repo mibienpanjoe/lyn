@@ -20,6 +20,7 @@ parser.add_argument("--tab-relocation", action="store_true")
 parser.add_argument("--invocation-races", action="store_true")
 parser.add_argument("--late-app", action="store_true")
 parser.add_argument("--restart-app", action="store_true")
+parser.add_argument("--crash-app", action="store_true")
 parser.add_argument("--stale-reconnect", action="store_true")
 parser.add_argument("--closed-source", action="store_true")
 parser.add_argument("--stale-selection", action="store_true")
@@ -39,6 +40,8 @@ if arguments.late_app and not arguments.desktop:
     parser.error("--late-app requires --desktop")
 if arguments.restart_app and not arguments.desktop:
     parser.error("--restart-app requires --desktop")
+if arguments.crash_app and not arguments.desktop:
+    parser.error("--crash-app requires --desktop")
 if arguments.stale_reconnect and not arguments.desktop:
     parser.error("--stale-reconnect requires --desktop")
 if arguments.closed_source and not arguments.desktop:
@@ -53,6 +56,7 @@ if arguments.foreground_shapes and not arguments.desktop:
     parser.error("--foreground-shapes requires --desktop")
 desktop = arguments.desktop
 if desktop:
+    subprocess.run([sys.executable, str(root / "desktop_lifecycle_test.py")], check=True)
     subprocess.run([sys.executable, str(root / "foreground_fixture_test.py")], check=True)
     subprocess.run([sys.executable, str(root / "cwd_fixture_test.py")], check=True)
     subprocess.run([sys.executable, str(root / "desktop_accessibility_test.py")], check=True)
@@ -143,6 +147,8 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
             modes.append(["--late-app"])
         if arguments.restart_app:
             modes.append(["--restart-app"])
+        if arguments.crash_app:
+            modes.append(["--crash-app"])
         if arguments.stale_reconnect:
             modes.append(["--stale-reconnect"])
         if arguments.closed_source:

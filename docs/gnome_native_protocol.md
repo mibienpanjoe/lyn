@@ -38,9 +38,9 @@ The Rust [listener primitive](../src-tauri/src/context/gnome_listener.rs) binds 
 
 The Rust [connection manager](../src-tauri/src/context/gnome_broker.rs) composes these primitives on one admission worker, with one bounded handshake and at most eight admitted server PIDs. Its public Rust query path derives the server from the frozen window's XRes owner as described below; there is no fallback to another peer. It never holds the registry mutex across peer checks or stream exchanges, and a busy channel immediately refuses a second query. Idle reconnect replaces and closes the old generation; a busy reconnect is refused. Dead idle channels are reaped on admission, while fatal query failures retire only the matching slot. Returned evidence includes the authenticated PID and connection generation, but still requires PTY/process attestation and later source revalidation. Shutdown marks the manager unavailable, wakes accept and joins the worker; a pending handshake may consume its remaining 500 ms budget. Unit tests use real sockets and same-executable fixture peers, including distinct subprocess PIDs for capacity. The separate native harness exercises real GNOME admission, source preparation, capture persistence and Library reads; it does not launch the desktop popup.
 
-## Accepted crash-safe discovery — app-crash acceptance pending
+## Accepted crash-safe discovery — isolated app-crash proof
 
-**Contract accepted by the user on 2026-10-19; wired into Linux startup and the isolated desktop fixture, not installed.** A fixed filesystem socket survives a killed owner, so the existing listener must refuse rebinding that occupied path. The new owner must not unlink it. The accepted remedy is a fresh private listener instance plus discovery, not relaxed socket ownership or authentication. All existing wire, capture and peer contracts remain in force. Actual application-crash recovery and installed acceptance are not established yet.
+**Contract accepted by the user on 2026-10-19; wired into Linux startup and verified through the isolated desktop fixture, not installed.** A fixed filesystem socket survives a killed owner, so the existing listener must refuse rebinding that occupied path. The new owner must not unlink it. The accepted remedy is a fresh private listener instance plus discovery, not relaxed socket ownership or authentication. All existing wire, capture and peer contracts remain in force. The real Tauri SIGKILL/relaunch flow now has isolated proof; installed recovery remains unverified.
 
 ### Contract and boundaries
 
@@ -65,6 +65,25 @@ Rust tests cover a pidfd-pinned publisher SIGKILL followed by a new publication 
 3. Wire actual Linux startup and the isolated desktop fixture to the published endpoint. Add a real app SIGKILL/relaunch case with the same live GNOME server and SQLite: old socket unchanged, new endpoint/generation, exact saves before/after, painted Library and focus. Replay late startup, clean restart, stale selections, cwd, PTY reuse and foreground-shape checks on this path.
 
 Verification uses the existing `cargo test --manifest-path src-tauri/Cargo.toml`, `pnpm provider:gnome:test` and `pnpm provider:gnome:desktop:test` runners; any new CLI flag must be implemented and documented with its acceptance case. Codec/unit success is not app-crash recovery. Discovery activation in the installed module, distribution, performance, media and installed acceptance remain later gates. User approval authorizes implementation, not a claim that the crash defect is resolved: that requires the complete producer-to-rendered-result proof.
+
+`pnpm provider:gnome:desktop:test --crash-app` supplies that isolated crash proof:
+the controller pins and verifies only its owned Tauri child before SIGKILL, then
+relaunches it with the original GNOME server and SQLite. A foreground-process
+pidfd is retained before the first capture through the second save, requiring
+liveness and unchanged proc/starttime/executable identity, in addition to equal
+native source/window/PTY/PGID/registration/topology. The abandoned socket's
+metadata remains unchanged, a distinct publication appears, and a fresh
+production-policy handshake has a different generation. Both exact synthetic
+notes save once, return focus and paint in Library; the reference screenshot
+was inspected. This is not installed-package acceptance or numeric PID/XID reuse.
+
+The private lifecycle controller can observe an already-admitted generation
+once per app via fixed `G` request and 17-byte acknowledgement, independently of
+its existing single reconnect/exit controls. This cfg(test)-only observation has
+no provider exchange, reconnect, source identity input or admission authority.
+On relaunch, the bounded C reader may initially return the abandoned address:
+it is an address hint, not readiness. The controller waits for a distinct address
+within its original readiness limit, never deleting a socket or retrying capture.
 
 ## X11 window ownership
 
@@ -183,7 +202,7 @@ Both reference races received the actual native topology-change refusal under th
 
 `pnpm provider:gnome:desktop:test --late-app` starts a private GNOME server/window and verifies credential-checked source metadata before any Lyn process or broker endpoint exists. It then starts the real Tauri fixture, requires the same live server and source identity, and runs the normal shortcut/context/save/Library/focus checks. The reference run passed and its screenshot was inspected. It does not delete a socket to enable connection. Old-lease invalidation, latency and installed acceptance remain separate work.
 
-`pnpm provider:gnome:desktop:test --restart-app` saves a synthetic note, requests a clean Tauri exit, requires the native endpoint to disappear, then relaunches Lyn on the same private XDG/SQLite state without restarting GNOME. The same source/PTY/process/registration must remain usable; a second exact save and the total SQLite count prove persistence across lifetimes. The final Library must paint both notes and focus must return after each save. The reference image is taken with Library minimized because Recent may already paint the older note identically before All captures. The private cfg(test) lifecycle socket authenticates the same-user parent under a 45-second read limit, inside the original 60-second fixture lifetime. It permits at most one reconnect fault followed by one exit byte, never a source or admission override. Installed acceptance remains separate.
+`pnpm provider:gnome:desktop:test --restart-app` saves a synthetic note, requests a clean Tauri exit, requires the native endpoint to disappear, then relaunches Lyn on the same private XDG/SQLite state without restarting GNOME. The same source/PTY/process/registration must remain usable; a second exact save and the total SQLite count prove persistence across lifetimes. The final Library must paint both notes and focus must return after each save. The reference image is taken with Library minimized because Recent may already paint the older note identically before All captures. The private cfg(test) lifecycle socket authenticates the same-user parent under a 45-second read limit, inside the original 60-second fixture lifetime. It permits at most one read-only generation observation, one reconnect fault and one exit byte, never a source or admission override. Both clean and crash relaunch retain the foreground-process pidfd and compare kernel identity after each save. Installed acceptance remains separate.
 
 `pnpm provider:gnome:desktop:test --stale-reconnect` opens an attested native draft, then injects a disconnect of the single admitted fixture channel through that private lifecycle socket. Only cfg(test) can retire this channel; GNOME must reconnect through the production peer/handshake policy within three seconds. A fixed 33-byte acknowledgement carries the two different generations, not source/window/process identities. The original server, source, PTY, process, registration and topology must remain unchanged. Saving the old lease must mark the source stale, open the chooser and leave SQLite empty; Back to note must preserve the exact painted draft. After explicit cancellation, a fresh invocation must save once in the expected project/branch and render in Library with focus restored. This verifies generation invalidation rather than process/topology rejection, without retrying a capture or changing protocol deadlines. Selection revalidation, media and crash recovery remain separate cases.
 
