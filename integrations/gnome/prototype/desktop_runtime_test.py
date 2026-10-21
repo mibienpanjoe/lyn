@@ -36,7 +36,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False, process_shape=None, crash_app=False, xid_reuse=False, closed_tab=False, shell_exit=False, image_closed_source=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False, process_shape=None, crash_app=False, xid_reuse=False, closed_tab=False, shell_exit=False, image_closed_source=False, audio_closed_source=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -274,14 +274,14 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
         if not late_app:
             wait_for(lambda: named(app.pid, "All captures"), "Real Library not accessible", 15)
             library_window = wait_for(lambda: visible_windows(app.pid), "Owned Library window not mapped")[0]
-        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source or cwd_change or pty_reuse or process_shape or closed_tab or shell_exit or image_closed_source else ("alpha",))
+        projects = repositories(root, ("alpha", "beta") if concurrent or warm or closed_source or cwd_change or pty_reuse or process_shape or closed_tab or shell_exit or image_closed_source or audio_closed_source else ("alpha",))
         if shell_exit:
             os.mkfifo(runtime / "shell-exit.fifo", 0o600)
             environment["GSETTINGS_BACKEND"] = "keyfile"
             profile_id = command("gsettings", "get", "org.gnome.Terminal.ProfilesList", "default").strip("'")
             profile = f"org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:{profile_id}/"
             command("gsettings", "set", profile, "exit-action", "'hold'")
-        if closed_source or pty_reuse or closed_tab or image_closed_source:
+        if closed_source or pty_reuse or closed_tab or image_closed_source or audio_closed_source:
             environment["GSETTINGS_BACKEND"] = "keyfile"
             command("gsettings", "set", "org.gnome.Terminal.Legacy.Settings", "confirm-close", "false")
         if warm == "tabs" or closed_tab:
@@ -404,16 +404,21 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             wait_for(producer_ready, "Original GNOME source disappeared during late app startup")
             assert producer_state["selectedSource"]["sourceId"] == original_source["sourceId"]
         database = Path(environment["XDG_DATA_HOME"]) / "com.mibienpanjoe.lyn/lyn.db"
-        if image_closed_source:
-            from desktop_media import run_image_closed_source
+        if image_closed_source or audio_closed_source:
+            if image_closed_source:
+                from desktop_media import run_image_closed_source as run_media
+                media_options = {"sdk": sdk, "start": start}
+            else:
+                from desktop_audio import run_audio_closed_source as run_media
+                media_options = {}
             project = projects[0]
             window = windows[project.name]
             command("xdotool", "windowactivate", "--sync", window)
             readiness_after_us = time.monotonic_ns() // 1000
-            wait_for(producer_ready, "Native source not ready before image fixture")
+            wait_for(producer_ready, "Native source not ready before media fixture")
             original = producer_state["selectedSource"].copy()
 
-            def close_image_source():
+            def close_media_source():
                 window_path = command("xprop", "-id", window, "_GTK_WINDOW_OBJECT_PATH")
                 object_path = re.search(r'= "([^"]+)"', window_path).group(1)
                 description = command("gdbus", "call", "--session", "--dest", app_id,
@@ -421,7 +426,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                 assert "'s'" in description
                 command("gdbus", "call", "--session", "--dest", app_id, "--object-path", object_path,
                         "--method", "org.gtk.Actions.Activate", "close", "[<'window'>]", "{}")
-                wait_for(lambda: window not in visible_windows(server.pid, "gnome-terminal"), "Image source window did not close")
+                wait_for(lambda: window not in visible_windows(server.pid, "gnome-terminal"), "Media source window did not close")
 
                 def removed():
                     for _ in range(32):
@@ -432,13 +437,13 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                             return True
                     return False
 
-                wait_for(removed, "Native image source retained after window closure")
+                wait_for(removed, "Native media source retained after window closure")
                 assert server.poll() is None
 
-            run_image_closed_source(sdk=sdk, app=app, window=window, library_window=library_window,
-                                    database=database, start=start, command=command, named=named, nodes=nodes,
-                                    wait_for=wait_for, pixels=pixels, save_screenshot=save_screenshot,
-                                    close_source=close_image_source)
+            run_media(app=app, window=window, library_window=library_window,
+                      database=database, command=command, named=named, nodes=nodes,
+                      wait_for=wait_for, pixels=pixels, save_screenshot=save_screenshot,
+                      close_source=close_media_source, **media_options)
             return
         if race:
             window = windows[projects[0].name]
@@ -1093,7 +1098,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "crash-app", "stale-reconnect", "closed-source", "closed-tab", "shell-exit", "stale-selection", "cwd-change", "pty-reuse", "xid-reuse", "image-closed-source"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "crash-app", "stale-reconnect", "closed-source", "closed-tab", "shell-exit", "stale-selection", "cwd-change", "pty-reuse", "xid-reuse", "image-closed-source", "audio-closed-source"):
         mode.add_argument(f"--{name}", action="store_true")
     mode.add_argument("--process-shape", choices=("shell", "exec-tui", "child-tui"))
     parser.add_argument("--alternations", type=int, default=4)
@@ -1110,4 +1115,5 @@ if __name__ == "__main__":
         stale_reconnect=arguments.stale_reconnect, closed_source=arguments.closed_source,
         stale_selection=arguments.stale_selection, cwd_change=arguments.cwd_change,
         pty_reuse=arguments.pty_reuse, process_shape=arguments.process_shape, xid_reuse=arguments.xid_reuse,
-        closed_tab=arguments.closed_tab, shell_exit=arguments.shell_exit, image_closed_source=arguments.image_closed_source)
+        closed_tab=arguments.closed_tab, shell_exit=arguments.shell_exit, image_closed_source=arguments.image_closed_source,
+        audio_closed_source=arguments.audio_closed_source)
