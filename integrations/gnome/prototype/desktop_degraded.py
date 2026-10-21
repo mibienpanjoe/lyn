@@ -5,14 +5,19 @@ import sqlite3
 import time
 
 
-def run_module_absent(*, app, window, library_window, database, command, named,
-                      nodes, wait_for, pixels, save_screenshot, focus_is):
+def run_unavailable_context(*, app, window, library_window, database, command, named,
+                            nodes, wait_for, pixels, save_screenshot, focus_is,
+                            mode="module-absent", assert_unavailable=None):
     from gi.repository import Atspi
     from desktop_accessibility import page_heading
     from desktop_pixels import region_changed, region_has_contrast
 
-    body = "synthetic-module-absent-manual-draft-ENDOFNOTE"
-    manual_name = "Synthetic module absent"
+    manual_name = {"module-absent": "Synthetic module absent",
+                   "module-slow": "Synthetic module slow"}[mode]
+    body = f"synthetic-{mode}-manual-draft-ENDOFNOTE"
+    check_prefix = "native_" + mode.replace("-", "_")
+    if assert_unavailable:
+        assert_unavailable()
     started = time.monotonic()
     command("xdotool", "key", "--delay", "0", "--clearmodifiers", "ctrl+shift+space")
 
@@ -33,6 +38,8 @@ def run_module_absent(*, app, window, library_window, database, command, named,
         return candidates[0] if candidates else None
 
     wait_for(field, "Module absence lost typed input")
+    if assert_unavailable:
+        assert_unavailable()
     wait_for(lambda: named(app.pid, "Choose context"), "Missing module incorrectly resolved native context")
     command("xdotool", "key", "Return")
     back = wait_for(lambda: named(app.pid, "Back to note"), "Unresolved save did not open chooser")
@@ -54,10 +61,10 @@ def run_module_absent(*, app, window, library_window, database, command, named,
         return current if region_has_contrast(current, region) else False
 
     painted = wait_for(draft_painted, "Unresolved save lost painted draft")
-    print(json.dumps({"check": "native_module_absent_input", "savedCount": 0,
+    print(json.dumps({"check": check_prefix + "_input", "savedCount": 0,
                       "inputObservedMs": round(input_observed_ms, 2),
                       "latencyDistribution": False,
-                      "screenshot": save_screenshot(painted, "gnome-module-absent-draft-")}), flush=True)
+                      "screenshot": save_screenshot(painted, f"gnome-{mode}-draft-")}), flush=True)
     assert named(app.pid, "Choose context").do_action(0)
     name_input = wait_for(lambda: named(app.pid, "New context name"), "Manual fallback form missing")
     assert name_input.grab_focus()
@@ -81,6 +88,8 @@ def run_module_absent(*, app, window, library_window, database, command, named,
             return True
 
     wait_for(saved, "Module absence blocked exact single manual save")
+    if assert_unavailable:
+        assert_unavailable()
     wait_for(lambda: focus_is(window), "Manual fallback did not restore the original GNOME window")
     command("xdotool", "windowactivate", "--sync", library_window)
     before_navigation = pixels()
@@ -103,6 +112,6 @@ def run_module_absent(*, app, window, library_window, database, command, named,
         return current
 
     painted = wait_for(library_painted, "Manual fallback did not render in Library")
-    print(json.dumps({"check": "native_module_absent_manual_save", "savedCount": 1,
+    print(json.dumps({"check": check_prefix + "_manual_save", "savedCount": 1,
                       "draftPreserved": True, "focusRestored": True,
-                      "screenshot": save_screenshot(painted, "gnome-module-absent-library-")}), flush=True)
+                      "screenshot": save_screenshot(painted, f"gnome-{mode}-library-")}), flush=True)

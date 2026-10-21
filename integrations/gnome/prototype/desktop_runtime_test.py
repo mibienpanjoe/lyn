@@ -22,7 +22,7 @@ from desktop_pixels import region_changed, region_has_contrast
 from desktop_accessibility import page_heading, html_alert
 from cwd_fixture import change_cwd
 from foreground_fixture import ready as foreground_shape_ready
-from desktop_lifecycle import kill_owned_app, read_generation, active_window_is
+from desktop_lifecycle import kill_owned_app, pause_owned_app, read_generation, active_window_is
 from desktop_shell_exit import release_shell
 
 
@@ -36,7 +36,7 @@ def wait_for(check, message, timeout=12):
     raise AssertionError(message)
 
 
-def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False, process_shape=None, crash_app=False, xid_reuse=False, closed_tab=False, shell_exit=False, image_closed_source=False, audio_closed_source=False, module_absent=False):
+def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alternations=4, relocate=False, race=None, late_app=False, restart_app=False, stale_reconnect=False, closed_source=False, stale_selection=False, cwd_change=False, pty_reuse=False, process_shape=None, crash_app=False, xid_reuse=False, closed_tab=False, shell_exit=False, image_closed_source=False, audio_closed_source=False, module_absent=False, module_slow=False):
     root = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     assert root.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={root}/runtime/")
@@ -88,6 +88,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
     source_process_pin = None
     retired_server_pin = None
     app_relaunch = restart_app or crash_app
+    uses_lifecycle = app_relaunch or stale_reconnect or stale_selection or module_slow
 
     def start(command, env=environment, **kwargs):
         process = subprocess.Popen(command, env=env, **kwargs)
@@ -205,7 +206,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             os.chmod(root / "runtime/native-query-gate.sock", 0o600)
             gate_listener.listen(1)
             gate_listener.settimeout(3)
-        if app_relaunch or stale_reconnect or stale_selection:
+        if uses_lifecycle:
             lifecycle_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             lifecycle_listener.bind(str(root / "runtime/desktop-lifecycle.sock"))
             os.chmod(root / "runtime/desktop-lifecycle.sock", 0o600)
@@ -217,7 +218,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
                           "--nocapture", "--test-threads=1"],
                          env=dict(environment, LYN_GNOME_UI_FIXTURE="1", LYN_GNOME_UI_PORT=str(port),
                                   LYN_GNOME_UI_QUERY_GATE="1" if race else "0",
-                                  LYN_GNOME_UI_RESTART="1" if app_relaunch or stale_reconnect or stale_selection else "0"))
+                                  LYN_GNOME_UI_RESTART="1" if uses_lifecycle else "0"))
 
         def lifecycle_connection():
             connection, _ = lifecycle_listener.accept()
@@ -227,7 +228,7 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             return connection
 
         app = None if late_app else start_app()
-        if app_relaunch or stale_reconnect or stale_selection:
+        if uses_lifecycle:
             lifecycle = lifecycle_connection()
         if race:
             query_gate, _ = gate_listener.accept()
@@ -405,15 +406,52 @@ def run(module, executable, sdk, probe=False, concurrent=False, warm=None, alter
             wait_for(producer_ready, "Original GNOME source disappeared during late app startup")
             assert producer_state["selectedSource"]["sourceId"] == original_source["sourceId"]
         database = Path(environment["XDG_DATA_HOME"]) / "com.mibienpanjoe.lyn/lyn.db"
+        if module_slow:
+            from desktop_degraded import run_unavailable_context
+            project = projects[0]
+            window = windows[project.name]
+            command("xdotool", "windowactivate", "--sync", window)
+            readiness_after_us = time.monotonic_ns() // 1000
+            wait_for(producer_ready, "Native module not ready before controlled stall")
+            original = producer_state["selectedSource"].copy()
+            command("xdotool", "key", "--delay", "0", "--clearmodifiers", "ctrl+shift+space")
+            wait_for(lambda: named(app.pid, "Context alpha, branch gnome-alpha. Change context"),
+                     "A real native context is required before stalling its module")
+            assert named(app.pid, "Cancel").do_action(0)
+            wait_for(lambda: focus_is(window), "Priming cancellation did not return to GNOME")
+            assert any(read_generation(lifecycle)), "Native channel was never admitted"
+            with pause_owned_app(server, Path("/usr/libexec/gnome-terminal-server"), runtime,
+                                 expected_cwd=Path.home()) as pin:
+                stopped = select.poll()
+                stopped.register(pin, select.POLLIN)
+
+                def assert_stalled():
+                    assert not stopped.poll(0)
+                    assert Path(f"/proc/{server.pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "T"
+                    assert not stopped.poll(0)
+
+                run_unavailable_context(app=app, window=window, library_window=library_window,
+                                        database=database, command=command, named=named, nodes=nodes,
+                                        wait_for=wait_for, pixels=pixels, save_screenshot=save_screenshot,
+                                        focus_is=focus_is, mode="module-slow", assert_unavailable=assert_stalled)
+            wait_for(lambda: Path(f"/proc/{server.pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "T",
+                     "Private GNOME did not resume after the stall")
+            readiness_after_us = time.monotonic_ns() // 1000
+            wait_for(producer_ready, "Native metadata did not resume after the stall")
+            for field in ("sourceId", "windowId", "ptyNumber", "foregroundPgid", "registeredAtUs", "revision"):
+                assert producer_state["selectedSource"][field] == original[field], field
+            print(json.dumps({"check": "native_module_slow_resumed", "moduleStoppedDuringInputAndSave": True,
+                              "sameServerSourceResumed": True}), flush=True)
+            return
         if module_absent:
-            from desktop_degraded import run_module_absent
+            from desktop_degraded import run_unavailable_context
             window = windows[projects[0].name]
             command("xdotool", "windowactivate", "--sync", window)
             wait_for(lambda: focus_is(window), "Unmodified GNOME window not foreground")
             # Absence is actual module absence, not an unready producer or a
             # guessed context. No native-readiness diagnostic can arrive here.
             assert not any(str(module) in line for line in Path(f"/proc/{server.pid}/maps").read_text().splitlines())
-            run_module_absent(app=app, window=window, library_window=library_window,
+            run_unavailable_context(app=app, window=window, library_window=library_window,
                               database=database, command=command, named=named, nodes=nodes,
                               wait_for=wait_for, pixels=pixels, save_screenshot=save_screenshot,
                               focus_is=focus_is)
@@ -1113,7 +1151,7 @@ if __name__ == "__main__":
     parser.add_argument("executable", type=Path)
     parser.add_argument("sdk")
     mode = parser.add_mutually_exclusive_group()
-    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "crash-app", "stale-reconnect", "closed-source", "closed-tab", "shell-exit", "stale-selection", "cwd-change", "pty-reuse", "xid-reuse", "image-closed-source", "audio-closed-source", "module-absent"):
+    for name in ("probe", "concurrent-start", "warm-windows", "warm-tabs", "relocate-tab", "race-switch", "race-aba", "late-app", "restart-app", "crash-app", "stale-reconnect", "closed-source", "closed-tab", "shell-exit", "stale-selection", "cwd-change", "pty-reuse", "xid-reuse", "image-closed-source", "audio-closed-source", "module-absent", "module-slow"):
         mode.add_argument(f"--{name}", action="store_true")
     mode.add_argument("--process-shape", choices=("shell", "exec-tui", "child-tui"))
     parser.add_argument("--alternations", type=int, default=4)
@@ -1131,4 +1169,5 @@ if __name__ == "__main__":
         stale_selection=arguments.stale_selection, cwd_change=arguments.cwd_change,
         pty_reuse=arguments.pty_reuse, process_shape=arguments.process_shape, xid_reuse=arguments.xid_reuse,
         closed_tab=arguments.closed_tab, shell_exit=arguments.shell_exit, image_closed_source=arguments.image_closed_source,
-        audio_closed_source=arguments.audio_closed_source, module_absent=arguments.module_absent)
+        audio_closed_source=arguments.audio_closed_source, module_absent=arguments.module_absent,
+        module_slow=arguments.module_slow)
