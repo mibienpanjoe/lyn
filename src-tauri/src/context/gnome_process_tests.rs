@@ -61,6 +61,69 @@ fn foreign_uid_in_the_target_group_is_not_silently_skipped() {
 }
 
 #[test]
+fn proc_namespace_guard_refuses_nested_even_when_numeric_pids_coincide() {
+    assert!(same_proc_pid_view("Name:\tfixture\nNSpid:\t42\n", 42).is_ok());
+    for status in [
+        "NSpid:\t42 42\n",
+        "NSpid:\t900 42\n",
+        "NSpid:\t43\n",
+        "NSpid:\t0\n",
+        "NSpid:\t+42\n",
+        "NSpid:\t042\n",
+        "NSpid:\t2147483648\n",
+        "NSpid:\n",
+        "NStgid:\t42\n",
+        "NSpid:\t42\nNSpid:\t42\n",
+    ] {
+        assert!(same_proc_pid_view(status, 42).is_err(), "{status:?}");
+    }
+    assert!(same_proc_pid_view("NSpid:\t0\n", 0).is_err());
+    assert!(same_proc_pid_view(&format!("NSpid:\t42\n{}", "x".repeat(65536)), 42).is_err());
+}
+
+#[test]
+fn proc_namespace_guard_accepts_current_kernel_view() {
+    require_same_proc_pid_view().unwrap();
+}
+
+#[test]
+fn kernel_group_probe_refuses_unknown_observations_instead_of_hiding_members() {
+    assert!(probe_group_with(42, 40, |_| Ok(40)).unwrap());
+    assert!(!probe_group_with(42, 40, |_| Ok(41)).unwrap());
+    assert!(!probe_group_with(42, 40, |_| Err(io::Error::from_raw_os_error(libc::ESRCH))).unwrap());
+    for error in [libc::EPERM, libc::EACCES, libc::EIO, libc::EINTR] {
+        assert!(probe_group_with(42, 40, |_| Err(io::Error::from_raw_os_error(error))).is_err());
+    }
+    // Kernel threads can legitimately have PGID zero, unlike terminal groups.
+    assert!(!probe_group_with(42, 40, |_| Ok(0)).unwrap());
+    assert!(probe_group_with(42, 40, |_| Ok(u32::MAX)).is_err());
+    for pid in [0, u32::MAX] {
+        assert!(probe_group_with(pid, 40, |_| panic!("invalid PID reached kernel")).is_err());
+    }
+    // A kernel group match supplies no UID authority; even a foreign member
+    // must still reach the unchanged detailed rejection boundary.
+    let row = parse_stat(&stat("S", 8, 40, 30, 34816, 40, 123)).unwrap();
+    assert!(probe_group_with(42, 40, |_| Ok(40)).unwrap());
+    assert!(is_group_member(row, 0, 1000, 40).is_err());
+}
+
+#[test]
+fn kernel_group_probe_agrees_with_current_proc_view() {
+    let group = unsafe { libc::getpgrp() } as u32;
+    assert!(kernel_group_matches(std::process::id(), group).unwrap());
+    let different = if group == i32::MAX as u32 {
+        1
+    } else {
+        group + 1
+    };
+    assert!(!kernel_group_matches(std::process::id(), different).unwrap());
+    assert_eq!(
+        read_stat(Path::new("/proc/self")).unwrap().unwrap().group,
+        group
+    );
+}
+
+#[test]
 fn missing_group_and_expired_deadline_are_unresolved() {
     let invocation = ProcessInvocation::now().unwrap();
     assert!(inspect(std::process::id(), u32::MAX, 34816, invocation, u64::MAX).is_err());
@@ -190,6 +253,25 @@ fn real_foreground_group_proves_cwd_but_not_a_wrong_parent_or_tty() {
     drop(fixture);
     assert_eq!(unsafe { libc::poll(&mut foreground, 1, 1000) }, 1);
     assert!(proof.revalidate_lifetimes().is_err());
+}
+
+#[test]
+fn report_live_process_snapshot_cost_without_transport_or_warmup() {
+    let fixture = Fixture::new(0);
+    let mut samples = Vec::new();
+    for _ in 0..20 {
+        let started = std::time::Instant::now();
+        let proof = fixture.inspect(fixture.child.id(), fixture.tty).unwrap();
+        assert_eq!(proof.processes.len(), 1);
+        samples.push(started.elapsed().as_micros());
+    }
+    samples.sort_unstable();
+    eprintln!(
+        "native process snapshot: samples=20 p50Us={} p95Us={} maxUs={}",
+        samples[9], samples[18], samples[19]
+    );
+    // This measures only the kernel snapshot under the pre-existing unit
+    // fixture's 500ms bound, never the production invocation/transport budget.
 }
 
 #[test]

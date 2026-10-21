@@ -112,6 +112,17 @@ mount/user/PID namespaces must match the broker. Standard system SSH/multiplexer
 container proxy executable inodes are refused; this is not exhaustive detection
 of copied/custom remote clients or a claim to resolve their remote directory.
 
+To bound scan cost without selecting a same-uid subset, each numeric proc entry
+first receives a kernel `getpgid` exclusion check. Only a different group
+(including kernel-thread group zero) or `ESRCH` skips detailed reads; other
+errors refuse. This supplies no admission evidence. Before scanning, a bounded
+64 KiB `/proc/self/status` must contain exactly one `NSpid` value equal to the
+calling PID. The [kernel namespace-field ordering](https://man7.org/linux/man-pages/man5/proc_pid_status.5.html)
+makes multiple values a mismatched procfs view even when their numbers coincide;
+missing, malformed or oversized status also refuses, with no numeric fallback.
+All matching members retain the detailed checks above. The two snapshots are
+successive live observations, not an atomic or continuous membership guarantee.
+
 `NativeBroker::query_window_process` compares two complete snapshots (including
 proc/starttime, executable and directory identities) before final native
 source/revision confirmation and owner/generation checks. It retains pidfd pins

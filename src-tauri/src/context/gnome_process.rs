@@ -16,6 +16,7 @@ const MAX_PROCESSES: usize = 8192;
 const MAX_MEMBERS: usize = 64;
 const MAX_ANCESTRY: usize = 64;
 const MAX_PINS: usize = 256;
+const MAX_SELF_STATUS: usize = 65536;
 
 /// Mint on Rust's invocation boundary, before popup/owner/socket work. Never
 /// reconstruct BOOTTIME later from a historical MONOTONIC timestamp.
@@ -109,10 +110,13 @@ pub(super) fn inspect(
     invocation: ProcessInvocation,
     deadline: u64,
 ) -> io::Result<ForegroundGroup> {
+    #[cfg(test)]
+    let inspection_started = monotonic_us().map_err(|_| unavailable())?;
     check_deadline(deadline)?;
     if group == 0 || group > i32::MAX as u32 || tty == 0 {
         return Err(unavailable());
     }
+    require_same_proc_pid_view()?;
     let uid = unsafe { libc::geteuid() };
     let invocation_boot = invocation.boottime_lower;
     if monotonic_us().map_err(|_| unavailable())? < invocation.monotonic {
@@ -127,7 +131,12 @@ pub(super) fn inspect(
         pins: Vec::new(),
     };
     for (count, entry) in fs::read_dir("/proc")?.enumerate() {
-        check_deadline(deadline)?;
+        check_deadline(deadline).inspect_err(|_| {
+            #[cfg(test)]
+            eprintln!("native process scan timed out: entries={count}, initialRemainingUs={}, elapsedUs={}",
+                deadline.saturating_sub(inspection_started),
+                monotonic_us().unwrap_or(inspection_started).saturating_sub(inspection_started));
+        })?;
         if count >= MAX_PROCESSES {
             return Err(unavailable());
         }
@@ -139,6 +148,12 @@ pub(super) fn inspect(
         else {
             continue;
         };
+        // Exclusion only, never admission. The namespace guard above makes
+        // syscall and procfs numbers comparable; all matching members still
+        // pass the complete UID, lifetime, TTY, ancestry and cwd checks below.
+        if !kernel_group_matches(pid, group)? {
+            continue;
+        }
         let path = entry.path();
         let before = match fs::metadata(&path) {
             Ok(value) => value,
@@ -280,6 +295,65 @@ fn same_namespace_and_root(process: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+fn require_same_proc_pid_view() -> io::Result<()> {
+    let mut status = String::new();
+    File::open("/proc/self/status")?
+        .take((MAX_SELF_STATUS + 1) as u64)
+        .read_to_string(&mut status)?;
+    same_proc_pid_view(&status, std::process::id())
+}
+
+fn same_proc_pid_view(status: &str, pid: u32) -> io::Result<()> {
+    if status.len() > MAX_SELF_STATUS || pid == 0 || pid > i32::MAX as u32 {
+        return Err(unavailable());
+    }
+    // NSpid is ordered from the namespace mounting procfs to the innermost
+    // one. Equal numeric PIDs in two namespaces still mean different views.
+    let mut fields = status
+        .lines()
+        .filter_map(|line| line.strip_prefix("NSpid:"));
+    let mut ids = fields
+        .next()
+        .ok_or_else(unavailable)?
+        .split_ascii_whitespace();
+    if ids.next() != Some(pid.to_string().as_str())
+        || ids.next().is_some()
+        || fields.next().is_some()
+    {
+        return Err(unavailable());
+    }
+    Ok(())
+}
+
+fn probe_group_with(
+    pid: u32,
+    group: u32,
+    observe: impl FnOnce(libc::pid_t) -> io::Result<u32>,
+) -> io::Result<bool> {
+    if pid == 0 || pid > i32::MAX as u32 || group == 0 || group > i32::MAX as u32 {
+        return Err(unavailable());
+    }
+    match observe(pid as libc::pid_t) {
+        // Kernel threads may have PGID zero; the requested terminal group
+        // cannot. Zero is an observed nonmember, not a syscall failure.
+        Ok(actual) if actual <= i32::MAX as u32 => Ok(actual == group),
+        Ok(_) => Err(unavailable()),
+        Err(error) if error.raw_os_error() == Some(libc::ESRCH) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn kernel_group_matches(pid: u32, group: u32) -> io::Result<bool> {
+    probe_group_with(pid, group, |pid| {
+        let actual = unsafe { libc::getpgid(pid) };
+        if actual < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(actual as u32)
+        }
+    })
 }
 
 fn pin(pid: u32) -> io::Result<OwnedFd> {
