@@ -14,6 +14,7 @@ import tempfile
 root = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--desktop", action="store_true")
+parser.add_argument("--pid-reuse", action="store_true")
 parser.add_argument("--startup-pairs", type=int, default=1)
 parser.add_argument("--warm-alternations", type=int, default=0)
 parser.add_argument("--tab-relocation", action="store_true")
@@ -91,6 +92,10 @@ probes = [item["executable"] for item in artifacts
           and item["profile"]["test"] and item.get("executable")]
 assert len(probes) == 1, "Expected one current Rust library test executable"
 probe = Path(probes[0]).resolve(strict=True)
+
+if arguments.pid_reuse:
+    subprocess.run([sys.executable, str(root / "pid_reuse_runner_test.py")], check=True)
+    subprocess.run([sys.executable, str(root / "pid_reuse_runner.py"), str(probe)], check=True)
 
 with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     destination = Path(directory)

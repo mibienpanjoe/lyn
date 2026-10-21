@@ -85,6 +85,32 @@ On relaunch, the bounded C reader may initially return the abandoned address:
 it is an address hint, not readiness. The controller waits for a distinct address
 within its original readiness limit, never deleting a socket or retrying capture.
 
+## Kernel PID reuse proof (developer opt-in)
+
+`pnpm provider:gnome:test --pid-reuse` adds a real numeric PID reuse case to the
+native runner. Its current Cargo test entry runs only inside a disposable
+user/PID/mount namespace. Before either counter write it requires PID1/PPID0,
+singleton procfs NSpid1, distinct namespaces, a proc filesystem and exact private
+UID/GID mappings to the ordinary invoking user. Only the namespace-local
+[`ns_last_pid`](https://man7.org/linux/man-pages/man7/pid_namespaces.7.html)
+is written; missing namespace support fails the opt-in, without host policy
+changes, host counter writes or allocation retries.
+
+Two same-UID/Python-executable peers actually receive PID64 successively. The
+first exits by its owned control pipe and is reaped; the new peer is admitted
+and remains live around both stale-peer checks. The original peer's dead pidfd
+refuses revalidation even when its test-only proc/executable/starttime metadata
+is refreshed to match the replacement. Exit requires POLLIN with no poll error;
+POLLHUP after reap is permitted. This uses the private executable fixture policy,
+not production GNOME executable admission or a desktop capture. Window reuse
+and installed acceptance remain separate.
+
+The inner five-second alarm installs and unblocks its signal. The unchanged
+private-group runner supplies an eight-second outer deadline, including setup
+before that alarm, and cleans only owned fixture processes. Temporary files live
+under one wrapper-owned directory. A fresh completion nonce and exactly one
+passed test are required, so an absent/zero-test entry cannot become evidence.
+
 ## X11 window ownership
 
 The Rust [window-owner adapter](../src-tauri/src/platform/x11_owner.rs) uses [X-Resource 1.2](https://sources.debian.org/src/xorgproto/2025.1-1/resproto.txt), not `_NET_WM_PID`. It verifies a live Window, maps it to exactly one server-advertised client resource range, and requires one canonical positive `LOCAL_CLIENT_PID` for that base. The client base is not necessarily the window XID: the current Xorg/Xvfb returns the base even when queried with a window. Duplicate/overlapping ranges, unsupported negotiated versions, malformed identities, absent extensions and remote/TCP transports stay unresolved. A second live-window check refuses an unused XID that merely falls inside a client's range.
