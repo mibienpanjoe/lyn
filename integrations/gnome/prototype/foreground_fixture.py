@@ -15,11 +15,15 @@ def recipe(shape, beta, config):
         "shell": "/usr/bin/sleep 40 & wait",
         "exec-tui": 'exec /usr/bin/htop --pid "$$"',
         "child-tui": 'set -m; /usr/bin/env -C "$1" /usr/bin/htop --pid "$$"; wait',
+        "exit-shell": 'IFS= read -r < "$2"',
     }
     assert shape in scripts
     environment = {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color", "LANG": "C.UTF-8",
                    "XDG_CONFIG_HOME": str(config), "HTOPRC": str(config / "fixture-htoprc")}
-    return ["/bin/bash", "--noprofile", "--norc", "-c", scripts[shape], "lyn-fixture", str(beta)], environment
+    arguments = ["/bin/bash", "--noprofile", "--norc", "-c", scripts[shape], "lyn-fixture", str(beta)]
+    if shape == "exit-shell":
+        arguments.append(str(config.parent / "runtime/shell-exit.fifo"))
+    return arguments, environment
 
 
 def ready(shape, source, server, alpha, beta):
@@ -36,7 +40,7 @@ def ready(shape, source, server, alpha, beta):
         tty = os.stat(f'/dev/pts/{source["ptyNumber"]}').st_rdev
         if int(row[2]) != pid or int(row[4]) != tty or int(row[5]) != pid:
             return None
-        expected = "/bin/bash" if shape == "shell" else "/usr/bin/htop"
+        expected = "/bin/bash" if shape in ("shell", "exit-shell") else "/usr/bin/htop"
         if not (root / "exe").samefile(expected):
             return None
         directory = beta if shape == "child-tui" else alpha

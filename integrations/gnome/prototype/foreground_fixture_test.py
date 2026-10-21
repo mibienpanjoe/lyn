@@ -25,6 +25,14 @@ class ForegroundRecipeTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             recipe("arbitrary-command", target, Path("/private/config"))
 
+    def test_exit_shell_waits_on_private_fifo_not_terminal_input(self):
+        args, environment = recipe("exit-shell", Path("/private/beta"), Path("/private/config"))
+        self.assertEqual(args[:4], ["/bin/bash", "--noprofile", "--norc", "-c"])
+        self.assertEqual(args[4], 'IFS= read -r < "$2"')
+        self.assertEqual(args[-2:], ["/private/beta", "/private/runtime/shell-exit.fifo"])
+        self.assertNotIn("BASH_ENV", environment)
+        self.assertNotIn("ENV", environment)
+
 
 if __name__ == "__main__":
     unittest.main()
