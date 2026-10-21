@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import select
 import socket
 import struct
 import subprocess
@@ -12,9 +13,14 @@ import time
 
 from fixtures import repositories
 from rust_probe import RustProbe
+from desktop_isolation import require_owned_display
+from desktop_lifecycle import _pin_owned_app
+from resource_test import stop_server
 
 
-def run(module, executable):
+def run(module, executable, cycles=1, sdk=None):
+    assert 1 <= cycles <= 20
+    require_owned_display(sdk)
     assert Path(os.environ["XDG_RUNTIME_DIR"]).parent.name.startswith("lyn-gnome-run-")
     with tempfile.TemporaryDirectory(prefix="lyn-gnome-reconnect-") as directory:
         root = Path(directory)
@@ -30,9 +36,20 @@ def run(module, executable):
         server = subprocess.Popen(["/usr/libexec/gnome-terminal-server", "--app-id=org.lyn.NativeReconnect"],
                                   env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         broker = None
+        pin = None
         try:
             subprocess.run(["gdbus", "wait", "--session", "--timeout", "5", "org.lyn.NativeReconnect"],
                            check=True, timeout=6)
+            pin = _pin_owned_app(server, Path("/usr/libexec/gnome-terminal-server"),
+                                 Path(os.environ["XDG_RUNTIME_DIR"]), expected_cwd=Path.home())
+            poller = select.poll()
+            poller.register(pin, select.POLLIN)
+
+            def descriptors():
+                assert server.poll() is None and not poller.poll(0), "Owned GNOME server exited"
+                count = len(list(Path(f"/proc/{server.pid}/fd").iterdir()))
+                assert not poller.poll(0), "Owned GNOME exited during FD observation"
+                return count
             client = "/usr/bin/gnome-terminal.real" if Path("/usr/bin/gnome-terminal.real").is_file() else "gnome-terminal"
             subprocess.run([client, "--app-id=org.lyn.NativeReconnect", "--window",
                             f"--working-directory={project}", "--", "/usr/bin/sleep", "60"],
@@ -61,40 +78,47 @@ def run(module, executable):
             broker.handshake(server)
             initial = broker.window_query(source["windowId"])
             assert initial["status"] == "candidate" and initial["sourceId"] == source["sourceId"], initial
+            assert initial["serverPid"] == server.pid
+            original_metadata = {key: value for key, value in initial.items() if key != "generation"}
             expected_save = {"status": "saved", "bodyMatches": True, "projectMatches": True,
                              "branchMatches": True, "duplicateRefused": True, "captureCount": 1,
                              "leaseReleased": True}
             assert broker.capture_probe(source["windowId"], project) == expected_save
-            first_generation = initial["generation"]
-            broker.close()
-            broker = None
-            (root / "rust-runtime").rmdir()  # Empty fixture-owned directory only.
-            broker = RustProbe(root, executable)
-            broker.handshake(server)
-            current = broker.window_query(source["windowId"])
-            assert current["status"] == "candidate" and current["sourceId"] == source["sourceId"], current
-            assert current["generation"] != first_generation, "Reconnect reused the retired generation"
-            saved = broker.capture_probe(source["windowId"], project)
-            assert saved == expected_save, saved
+            generations = {initial["generation"]}
+            baseline_fds = descriptors()
+            started = time.monotonic()
+            for _ in range(cycles):
+                broker.close()
+                broker = None
+                (root / "rust-runtime").rmdir()  # Empty fixture-owned directory only.
+                broker = RustProbe(root, executable)
+                broker.handshake(server)
+                current = broker.window_query(source["windowId"])
+                assert {key: value for key, value in current.items() if key != "generation"} == original_metadata, current
+                assert current["generation"] not in generations, "Reconnect reused a retired generation"
+                generations.add(current["generation"])
+                saved = broker.capture_probe(source["windowId"], project)
+                assert saved == expected_save, saved
+            final_fds = descriptors()
+            assert final_fds == baseline_fds, ("Native GNOME FD count changed", baseline_fds, final_fds)
             print(json.dumps({"check": "native_broker_reconnect", "lateBrokerAdmitted": True,
                               "sameServerAndSource": True, "generationChanged": True,
-                              "lateCaptureSavedOnce": True, "captureSavedOnce": True}), flush=True)
+                              "lateCaptureSavedOnce": True, "captureSavedOnce": True,
+                              "reconnectCycles": cycles, "distinctGenerations": len(generations),
+                              "baselineFds": baseline_fds, "finalFds": final_fds,
+                              "interactionSeconds": round(time.monotonic() - started, 3)}), flush=True)
         finally:
             try:
                 if broker:
                     broker.close()
             finally:
                 try:
-                    if server.poll() is None:
-                        server.terminate()
-                        try:
-                            server.wait(timeout=3)
-                        except subprocess.TimeoutExpired:
-                            server.kill()
-                            server.wait(timeout=2)
+                    stop_server(server, pin)
                 finally:
                     diagnostics.close()
 
 
 if __name__ == "__main__":
-    run(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).resolve(strict=True))
+    run(Path(sys.argv[1]).resolve(strict=True), Path(sys.argv[2]).resolve(strict=True),
+        int(sys.argv[3]) if len(sys.argv) > 3 else 1,
+        Path(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] != "-" else None)

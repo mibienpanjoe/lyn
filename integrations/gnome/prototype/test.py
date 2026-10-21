@@ -41,7 +41,13 @@ parser.add_argument("--native-safety", action="store_true",
                     help="add ASan/UBSan transport fixtures, not an instrumented GNOME server")
 parser.add_argument("--native-metrics", action="store_true",
                     help="measure private real GNOME CPU/RSS and test-build callback bodies")
+parser.add_argument("--reconnect-cycles", type=int,
+                    help="repeat real GNOME/Rust broker reconnects (1 to 20, native mode only)")
 arguments = parser.parse_args()
+if arguments.reconnect_cycles is not None and (arguments.desktop or not 1 <= arguments.reconnect_cycles <= 20):
+    parser.error("--reconnect-cycles requires native mode and a value from 1 to 20")
+if arguments.reconnect_cycles is None:
+    arguments.reconnect_cycles = 1
 if not 1 <= arguments.startup_pairs <= 20 or (not arguments.desktop and arguments.startup_pairs != 1):
     parser.error("--startup-pairs requires --desktop and a value from 1 to 20")
 if not 0 <= arguments.warm_alternations <= 100 or (not arguments.desktop and arguments.warm_alternations):
@@ -85,6 +91,7 @@ if arguments.module_slow and not arguments.desktop:
 if arguments.channel_cut and not arguments.desktop:
     parser.error("--channel-cut requires --desktop")
 desktop = arguments.desktop
+subprocess.run([sys.executable, str(root / "reconnect_controller_test.py")], check=True)
 if desktop:
     subprocess.run([sys.executable, str(root / "desktop_latency_test.py")], check=True)
     subprocess.run([sys.executable, str(root / "desktop_audio_test.py")], check=True)
@@ -260,7 +267,8 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
         cases = [("desktop_runtime_test.py", [*fixture_args, *mode]) for mode in modes]
     else:
         cases = (("startup_test.py", [str(module), str(startup_fixture)]),
-                 ("reconnect_test.py", [str(module), str(probe)]),
+                 ("reconnect_test.py", [str(module), str(probe), str(arguments.reconnect_cycles),
+                                        str(sdk) if sdk else "-"]),
                  ("smoke_test.py", [str(module)]),
                  ("identity_test.py", [str(module), str(preserved)]),
                  ("rust_broker_test.py", [str(module), str(probe)]))
