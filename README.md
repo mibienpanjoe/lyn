@@ -126,6 +126,8 @@ The backend suite also saves synthetic PNG/WAV captures and checks media preserv
 
 `pnpm provider:gnome:desktop:test --warm-alternations=100` adds a continuous series on the same two windows, then the same two tabs with distinct project directories. Each series saves an initial note followed by 100 alternating captures, checks every SQLite result and focus return, and inspects the latest five Library rows. Tab creation uses a synthetic command in the fixture's private settings, never the user's shell profiles. The per-fixture 60-second limit still applies.
 
+The warm runner separately reports shortcut-to-focused-input and shortcut-to-rendered-context p50/p95/max, excluding only the separately reported initial invocation. Its 100-sample gates require p95 ≤ 250 ms for each conservative AT-SPI observation bound; this is isolated fixture coverage, not installed-package or cold-start acceptance.
+
 `pnpm provider:gnome:desktop:test --tab-relocation` adds five captures across two tabs, detaches one into a new window and verifies source/PTY/process continuity, changed window/topology and captures from both resulting windows.
 
 `pnpm provider:gnome:desktop:test --invocation-races` switches A→B and A→B→A after Rust freezes the real invocation. A private `cfg(test)` scheduling barrier preserves the original 120 ms reply deadline. Both cases must receive the native topology-change refusal, keep the draft visible and refuse saving without a context; a timeout does not count as success.
