@@ -31,6 +31,7 @@ parser.add_argument("--cwd-change", action="store_true")
 parser.add_argument("--pty-reuse", action="store_true")
 parser.add_argument("--xid-reuse", action="store_true")
 parser.add_argument("--foreground-shapes", action="store_true")
+parser.add_argument("--image-closed-source", action="store_true")
 arguments = parser.parse_args()
 if not 1 <= arguments.startup_pairs <= 20 or (not arguments.desktop and arguments.startup_pairs != 1):
     parser.error("--startup-pairs requires --desktop and a value from 1 to 20")
@@ -64,8 +65,11 @@ if arguments.xid_reuse and not arguments.desktop:
     parser.error("--xid-reuse requires --desktop")
 if arguments.foreground_shapes and not arguments.desktop:
     parser.error("--foreground-shapes requires --desktop")
+if arguments.image_closed_source and not arguments.desktop:
+    parser.error("--image-closed-source requires --desktop")
 desktop = arguments.desktop
 if desktop:
+    subprocess.run([sys.executable, str(root / "desktop_media_test.py")], check=True)
     subprocess.run([sys.executable, str(root / "desktop_shell_exit_test.py")], check=True)
     subprocess.run([sys.executable, str(root / "desktop_lifecycle_test.py")], check=True)
     subprocess.run([sys.executable, str(root / "foreground_fixture_test.py")], check=True)
@@ -182,6 +186,8 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
             modes.append(["--xid-reuse"])
         if arguments.foreground_shapes:
             modes.extend([[f"--process-shape={shape}"] for shape in ("shell", "exec-tui", "child-tui")])
+        if arguments.image_closed_source:
+            modes.append(["--image-closed-source"])
         cases = [("desktop_runtime_test.py", [*fixture_args, *mode]) for mode in modes]
     else:
         cases = (("startup_test.py", [str(module), str(startup_fixture)]),
