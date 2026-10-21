@@ -1,6 +1,9 @@
 use super::*;
 use std::{os::unix::net::UnixStream, path::Path};
 
+#[path = "gnome_pid_reuse_tests.rs"]
+mod pid_reuse;
+
 #[test]
 fn same_uid_is_not_sufficient_for_native_admission() {
     let (server, _client) = UnixStream::pair().unwrap();
