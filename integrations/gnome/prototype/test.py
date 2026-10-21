@@ -131,6 +131,7 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     preserved = destination / "libexisting-gtk-module.so"
     wire_test = destination / "wire-test"
     startup_fixture = destination / "gnome-terminal-server"
+    traversal_fixture = destination / "traversal-test"
     lifecycle_test = destination / "channel-lifecycle-test"
     discovery_library = destination / "libnative-discovery-test.so"
     discovery_channel_test = destination / "discovery-channel-test"
@@ -154,6 +155,12 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-fstack-protector-strong", str(root / "startup_fixture.c"),
                     "-o", str(startup_fixture), *flags], check=True)
+    subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                    "-fstack-protector-strong", str(root / "traversal_test.c"),
+                    *[str(root.parent / file) for file in ("wire.c", "native_channel.c", "native_discovery.c")],
+                    "-o", str(traversal_fixture), *flags], check=True)
+    subprocess.run([sys.executable, str(root / "isolated_run.py"), str(sdk) if sdk else "-",
+                    str(root / "traversal_test.py"), str(traversal_fixture), str(sdk) if sdk else "-"], check=True)
     subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-fstack-protector-strong", str(root / "wire_test.c"),
                     str(root.parent / "wire.c"), "-o", str(wire_test)], check=True)

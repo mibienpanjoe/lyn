@@ -1,4 +1,4 @@
-/* Developer-only GTK/VTE proof, not connected to Lyn's production broker. */
+/* Developer-only GTK/VTE adapter; not installed or distributed by Lyn. */
 #include <gtk/gtk.h>
 #include <gmodule.h>
 #include <gdk/gdkx.h>
@@ -15,6 +15,9 @@
 static gchar *endpoint;
 static gchar *module_path;
 static guint64 next_source;
+
+#define MAX_WIDGETS 2048
+#define MAX_DEPTH 32
 
 typedef struct {
     guint64 id;
@@ -112,12 +115,24 @@ static gboolean observe(GtkWidget *widget, LynFrame *result)
     return TRUE;
 }
 
-/* Prototype only: enumerate native widget identities, never screen text. */
+typedef struct {
+    GString *frame;
+    guint visits, depth;
+    gboolean incomplete;
+} Snapshot;
+
+/* Prototype only: enumerate native widget identities, never screen text.
+ * Bound inspected widgets and recursion even when no terminal adds bytes.
+ * GTK's own sibling enumeration is not a wall-clock execution bound. */
 static void collect(GtkWidget *widget, gpointer data)
 {
-    GString *frame = data;
-    if (frame->len > 6000)
+    Snapshot *snapshot = data;
+    if (snapshot->incomplete) return;
+    GString *frame = snapshot->frame;
+    if (++snapshot->visits > MAX_WIDGETS || snapshot->depth >= MAX_DEPTH || frame->len > 6000) {
+        snapshot->incomplete = TRUE;
         return;
+    }
     if (VTE_IS_TERMINAL(widget)) {
         LynFrame source = {0};
         if (!observe(widget, &source)) return;
@@ -134,8 +149,11 @@ static void collect(GtkWidget *widget, gpointer data)
             (long long)source.registered_us, (long long)source.changed_us,
             (long long)source.at_us, (unsigned long long)source.revision);
     }
-    if (GTK_IS_CONTAINER(widget))
-        gtk_container_forall(GTK_CONTAINER(widget), collect, frame);
+    if (GTK_IS_CONTAINER(widget)) {
+        snapshot->depth++;
+        gtk_container_forall(GTK_CONTAINER(widget), collect, snapshot);
+        snapshot->depth--;
+    }
 }
 
 typedef struct {
@@ -149,7 +167,7 @@ static void lookup_widget(GtkWidget *widget, gpointer data)
 {
     NativeLookup *lookup = data;
     if (lookup->unavailable) return;
-    if (++lookup->visits > 2048 || lookup->depth >= 32) {
+    if (++lookup->visits > MAX_WIDGETS || lookup->depth >= MAX_DEPTH) {
         lookup->unavailable = TRUE;
         return;
     }
@@ -214,12 +232,13 @@ static gboolean snapshot(gpointer data)
 {
     (void)data;
     GString *frame = g_string_new("{\"version\":0,\"kind\":\"snapshot\",\"sources\":[");
+    Snapshot observation = {.frame = frame};
     GList *windows = gtk_window_list_toplevels();
-    for (GList *item = windows; item; item = item->next)
-        collect(GTK_WIDGET(item->data), frame);
+    for (GList *item = windows; item && !observation.incomplete; item = item->next)
+        collect(GTK_WIDGET(item->data), &observation);
     g_list_free(windows);
     /* Never publish a partially enumerated set as exact evidence. */
-    if (frame->len <= 6000) {
+    if (!observation.incomplete && frame->len <= 6000) {
         g_string_append(frame, "]}");
         publish(frame->str, frame->len);
     }
