@@ -36,6 +36,8 @@ parser.add_argument("--audio-closed-source", action="store_true")
 parser.add_argument("--module-absent", action="store_true")
 parser.add_argument("--module-slow", action="store_true")
 parser.add_argument("--channel-cut", action="store_true")
+parser.add_argument("--native-safety", action="store_true",
+                    help="add ASan/UBSan transport fixtures, not an instrumented GNOME server")
 arguments = parser.parse_args()
 if not 1 <= arguments.startup_pairs <= 20 or (not arguments.desktop and arguments.startup_pairs != 1):
     parser.error("--startup-pairs requires --desktop and a value from 1 to 20")
@@ -132,6 +134,7 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     wire_test = destination / "wire-test"
     startup_fixture = destination / "gnome-terminal-server"
     traversal_fixture = destination / "traversal-test"
+    fault_fixture = destination / "channel-fault-test"
     lifecycle_test = destination / "channel-lifecycle-test"
     discovery_library = destination / "libnative-discovery-test.so"
     discovery_channel_test = destination / "discovery-channel-test"
@@ -152,6 +155,25 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                     str(root.parent / "native_channel.c"), str(root.parent / "wire.c"),
                     str(root.parent / "native_discovery.c"), "-o", str(lifecycle_test), *flags], check=True)
     subprocess.run([str(lifecycle_test), str(destination)], check=True, timeout=3)
+    subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                    "-fstack-protector-strong", str(root / "channel_fault_test.c"),
+                    str(root.parent / "wire.c"), str(root.parent / "native_discovery.c"),
+                    "-o", str(fault_fixture), *flags], check=True)
+    subprocess.run([str(fault_fixture), str(destination)], check=True, timeout=3)
+    if arguments.native_safety:
+        safety_environment = dict(os.environ, ASAN_OPTIONS="detect_leaks=1:halt_on_error=1",
+                                  UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
+        for source in ("channel_fault_test.c", "channel_lifecycle_test.c", "discovery_channel_test.c"):
+            instrumented = destination / (Path(source).stem + "-sanitized")
+            sources = [str(root / source), str(root.parent / "wire.c"),
+                       str(root.parent / "native_discovery.c")]
+            if source != "channel_fault_test.c":
+                sources.append(str(root.parent / "native_channel.c"))
+            subprocess.run(["gcc", "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+                            "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                            *sources, "-o", str(instrumented), *flags], check=True)
+            subprocess.run([str(instrumented), str(destination)], env=safety_environment,
+                           check=True, timeout=5)
     subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-fstack-protector-strong", str(root / "startup_fixture.c"),
                     "-o", str(startup_fixture), *flags], check=True)
