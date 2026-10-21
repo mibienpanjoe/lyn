@@ -147,7 +147,13 @@ fn real_gnome_desktop_entry() {
     // Tauri 2.11.5 Context::config_mut / Builder::any_thread, checked against
     // the pinned crate's source; this localhost URL exists only in cfg(test).
     context.config_mut().build.dev_url = Some(format!("http://127.0.0.1:{port}").parse().unwrap());
+    // Tauri 2.11.5 runs setup at event-loop Ready, not build. Pre-manage the
+    // synthetic port: setup's Manager::manage(default) keeps the first value
+    // (documented in tauri/src/lib.rs), so no Voice action can reach a mic.
     let app = super::desktop_builder(Some(helper_root.path().to_path_buf()))
+        .manage(Mutex::new(
+            crate::platform::audio::NativeAudioInputPlatform::for_desktop_fixture(),
+        ))
         .any_thread()
         .build(context)
         .unwrap();

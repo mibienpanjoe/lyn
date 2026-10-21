@@ -39,9 +39,21 @@ struct RecordingHandle {
 #[derive(Default)]
 pub(crate) struct NativeAudioInputPlatform {
     recording: Option<RecordingHandle>,
+    #[cfg(all(test, target_os = "linux"))]
+    synthetic_recording: Option<bool>,
 }
 
 impl NativeAudioInputPlatform {
+    /// Only the private desktop test entry installs this; no environment switch
+    /// or production command can replace physical input with these samples.
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn for_desktop_fixture() -> Self {
+        Self {
+            recording: None,
+            synthetic_recording: Some(false),
+        }
+    }
+
     fn start_default(&mut self) -> Result<(), AudioInputError> {
         if self.recording.is_some() {
             return Err(AudioInputError::AlreadyRecording);
@@ -103,10 +115,57 @@ impl AudioInputPlatform for NativeAudioInputPlatform {
         if input_device_id.is_some() {
             return Err(AudioInputError::DeviceUnavailable);
         }
+        #[cfg(all(test, target_os = "linux"))]
+        if let Some(recording) = &mut self.synthetic_recording {
+            if *recording {
+                return Err(AudioInputError::AlreadyRecording);
+            }
+            *recording = true;
+            return Ok(());
+        }
         self.start_default()
     }
 
     fn stop(&mut self) -> Result<RecordedAudio, AudioInputError> {
+        #[cfg(all(test, target_os = "linux"))]
+        if let Some(recording) = &mut self.synthetic_recording {
+            if !*recording {
+                return Err(AudioInputError::NotRecording);
+            }
+            *recording = false;
+            return Ok(RecordedAudio {
+                samples: vec![0.25; 1600],
+                sample_rate: 16_000,
+                channels: 1,
+            });
+        }
         self.stop_recording()
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_synthetic_input_has_fixed_samples_and_recording_state() {
+        let mut input = NativeAudioInputPlatform::for_desktop_fixture();
+        assert_eq!(input.stop(), Err(AudioInputError::NotRecording));
+        assert_eq!(
+            input.start(Some("never-open-this-device")),
+            Err(AudioInputError::DeviceUnavailable)
+        );
+        assert_eq!(input.start(None), Ok(()));
+        assert_eq!(input.start(None), Err(AudioInputError::AlreadyRecording));
+        let expected = RecordedAudio {
+            samples: vec![0.25; 1600],
+            sample_rate: 16_000,
+            channels: 1,
+        };
+        assert_eq!(input.stop(), Ok(expected.clone()));
+        assert_eq!(input.stop(), Err(AudioInputError::NotRecording));
+        assert_eq!(input.start(None), Ok(()));
+        assert_eq!(input.stop(), Ok(expected));
+        assert!(input.recording.is_none());
     }
 }
