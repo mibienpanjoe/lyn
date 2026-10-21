@@ -13,7 +13,8 @@ def run_unavailable_context(*, app, window, library_window, database, command, n
     from desktop_pixels import region_changed, region_has_contrast
 
     manual_name = {"module-absent": "Synthetic module absent",
-                   "module-slow": "Synthetic module slow"}[mode]
+                   "module-slow": "Synthetic module slow",
+                   "channel-cut": "Synthetic channel cut"}[mode]
     body = f"synthetic-{mode}-manual-draft-ENDOFNOTE"
     check_prefix = "native_" + mode.replace("-", "_")
     if assert_unavailable:

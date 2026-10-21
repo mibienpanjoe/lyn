@@ -35,6 +35,7 @@ parser.add_argument("--image-closed-source", action="store_true")
 parser.add_argument("--audio-closed-source", action="store_true")
 parser.add_argument("--module-absent", action="store_true")
 parser.add_argument("--module-slow", action="store_true")
+parser.add_argument("--channel-cut", action="store_true")
 arguments = parser.parse_args()
 if not 1 <= arguments.startup_pairs <= 20 or (not arguments.desktop and arguments.startup_pairs != 1):
     parser.error("--startup-pairs requires --desktop and a value from 1 to 20")
@@ -76,6 +77,8 @@ if arguments.module_absent and not arguments.desktop:
     parser.error("--module-absent requires --desktop")
 if arguments.module_slow and not arguments.desktop:
     parser.error("--module-slow requires --desktop")
+if arguments.channel_cut and not arguments.desktop:
+    parser.error("--channel-cut requires --desktop")
 desktop = arguments.desktop
 if desktop:
     subprocess.run([sys.executable, str(root / "desktop_audio_test.py")], check=True)
@@ -204,6 +207,8 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
             modes.append(["--module-absent"])
         if arguments.module_slow:
             modes.append(["--module-slow"])
+        if arguments.channel_cut:
+            modes.append(["--channel-cut"])
         cases = [("desktop_runtime_test.py", [*fixture_args, *mode]) for mode in modes]
     else:
         cases = (("startup_test.py", [str(module), str(startup_fixture)]),
