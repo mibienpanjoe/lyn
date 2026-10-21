@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from sanitizer_environment import sanitizer_environment
 
 
 root = Path(__file__).resolve().parent
@@ -163,8 +164,8 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                     "-o", str(fault_fixture), *flags], check=True)
     subprocess.run([str(fault_fixture), str(destination)], check=True, timeout=3)
     if arguments.native_safety:
-        safety_environment = dict(os.environ, ASAN_OPTIONS="detect_leaks=1:halt_on_error=1",
-                                  UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
+        subprocess.run([sys.executable, str(root / "sanitizer_environment_test.py")], check=True)
+        safety_environment = sanitizer_environment(os.environ)
         for source in ("channel_fault_test.c", "channel_lifecycle_test.c", "discovery_channel_test.c"):
             instrumented = destination / (Path(source).stem + "-sanitized")
             sources = [str(root / source), str(root.parent / "wire.c"),
