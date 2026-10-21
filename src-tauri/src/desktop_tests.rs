@@ -166,9 +166,10 @@ fn real_gnome_desktop_entry() {
             stream
                 .set_read_timeout(Some(Duration::from_secs(45)))
                 .unwrap();
-            // At most one generation observation, one controlled reconnect
-            // and one clean exit; the read-only diagnostic cannot admit peers.
-            let mut reconnected = false;
+            // At most one read-only generation observation, one controlled
+            // reconnect OR broker stop, and one clean exit; no identity input.
+            let mut channel_changed = false;
+            let mut broker_stopped = false;
             let mut observed = false;
             for _ in 0..3 {
                 let mut request = [0];
@@ -176,7 +177,7 @@ fn real_gnome_desktop_entry() {
                     break;
                 }
                 match request[0] {
-                    b'G' if !observed => {
+                    b'G' if !observed && !broker_stopped => {
                         observed = true;
                         use tauri::Manager;
                         let broker = handle
@@ -191,8 +192,8 @@ fn real_gnome_desktop_entry() {
                         handle.exit(0);
                         break;
                     }
-                    b'R' if !reconnected => {
-                        reconnected = true;
+                    b'R' if !channel_changed => {
+                        channel_changed = true;
                         use tauri::Manager;
                         let broker = handle
                             .state::<std::sync::Arc<crate::context::gnome_broker::NativeBroker>>();
@@ -202,6 +203,17 @@ fn real_gnome_desktop_entry() {
                         stream.write_all(b"G").unwrap();
                         stream.write_all(old.as_bytes()).unwrap();
                         stream.write_all(new.as_bytes()).unwrap();
+                    }
+                    b'B' if !channel_changed => {
+                        channel_changed = true;
+                        broker_stopped = true;
+                        use tauri::Manager;
+                        handle
+                            .state::<std::sync::Arc<crate::context::gnome_broker::NativeBroker>>()
+                            .shutdown();
+                        // The real worker has joined and dropped its channels,
+                        // listener and publication before acknowledging stop.
+                        stream.write_all(b"B").unwrap();
                     }
                     _ => break,
                 }

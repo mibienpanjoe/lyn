@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from desktop_lifecycle import kill_owned_app, pause_owned_app, read_generation, active_window_is
+from desktop_lifecycle import kill_owned_app, pause_owned_app, read_generation, stop_native_broker, active_window_is
 
 
 class LifecycleTest(unittest.TestCase):
@@ -163,6 +163,24 @@ class LifecycleTest(unittest.TestCase):
             peer.sendall(b"G" + generation)
             self.assertEqual(read_generation(controller), generation)
             self.assertEqual(peer.recv(2), b"G")
+
+    def test_native_stop_has_one_fixed_request_ack_and_restores_controller_timeout(self):
+        with self.socket_pair() as pair:
+            controller, peer = pair
+            controller.settimeout(.5)
+            peer.sendall(b"B")
+            stop_native_broker(controller)
+            self.assertEqual(peer.recv(2), b"B")
+            self.assertEqual(controller.gettimeout(), .5)
+
+    def test_native_stop_refuses_wrong_ack_or_eof(self):
+        for response in (b"G", b"X", b""):
+            with self.subTest(response=response), self.socket_pair() as pair:
+                controller, peer = pair
+                peer.sendall(response)
+                peer.shutdown(socket.SHUT_WR)
+                with self.assertRaises(AssertionError):
+                    stop_native_broker(controller)
 
     @contextmanager
     def socket_pair(self):

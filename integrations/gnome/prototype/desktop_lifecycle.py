@@ -33,6 +33,17 @@ def read_generation(connection):
     return bytes(response[1:])
 
 
+def stop_native_broker(connection):
+    """One fixed test-only stop, acknowledged only after broker shutdown joins."""
+    previous = connection.gettimeout()
+    connection.settimeout(3)
+    try:
+        connection.sendall(b"B")
+        assert connection.recv(1) == b"B", "Native broker stop was not acknowledged"
+    finally:
+        connection.settimeout(previous)
+
+
 def _pin_owned_app(process, executable, runtime, *, expected_cwd=None):
     """Validate the private direct child before returning a live kernel pin."""
     runtime = Path(runtime)
