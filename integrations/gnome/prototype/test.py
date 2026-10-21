@@ -27,6 +27,7 @@ parser.add_argument("--closed-source", action="store_true")
 parser.add_argument("--stale-selection", action="store_true")
 parser.add_argument("--cwd-change", action="store_true")
 parser.add_argument("--pty-reuse", action="store_true")
+parser.add_argument("--xid-reuse", action="store_true")
 parser.add_argument("--foreground-shapes", action="store_true")
 arguments = parser.parse_args()
 if not 1 <= arguments.startup_pairs <= 20 or (not arguments.desktop and arguments.startup_pairs != 1):
@@ -53,6 +54,8 @@ if arguments.cwd_change and not arguments.desktop:
     parser.error("--cwd-change requires --desktop")
 if arguments.pty_reuse and not arguments.desktop:
     parser.error("--pty-reuse requires --desktop")
+if arguments.xid_reuse and not arguments.desktop:
+    parser.error("--xid-reuse requires --desktop")
 if arguments.foreground_shapes and not arguments.desktop:
     parser.error("--foreground-shapes requires --desktop")
 desktop = arguments.desktop
@@ -164,6 +167,8 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
             modes.append(["--cwd-change"])
         if arguments.pty_reuse:
             modes.append(["--pty-reuse"])
+        if arguments.xid_reuse:
+            modes.append(["--xid-reuse"])
         if arguments.foreground_shapes:
             modes.extend([[f"--process-shape={shape}"] for shape in ("shell", "exec-tui", "child-tui")])
         cases = [("desktop_runtime_test.py", [*fixture_args, *mode]) for mode in modes]

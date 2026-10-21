@@ -242,6 +242,27 @@ The native source/window/PTY/foreground PID/registration/topology must remain id
 
 `pnpm provider:gnome:desktop:test --pty-reuse` retains an old draft while closing its original native source. The controller pins the known private sleep child after checking uid, executable, server parent, process group, controlling PTY and cwd; it sends no process signal. Native removal and X11 disappearance must occur while a companion window keeps the server alive, and POLLIN on that exact pidfd must establish process exit (not a poll error). The fixture creates one replacement window in the same project and requires actual reuse of the original PTY number, a higher native source ID and later registration. An allocation that does not reuse the number fails rather than silently skipping the case or retrying capture. Re-focusing the already-owned popup must not rebind its lease: its old save stays stale, SQLite stays empty and the draft remains painted intact. Only cancellation plus a new invocation may save from the replacement; its single exact save, Library rendering and focus return are checked. The reference runs passed and their screenshots were inspected. This is PTY-number reuse evidence, not PID/XID-number reuse or installed acceptance.
 
+`pnpm provider:gnome:desktop:test --xid-reuse` covers a different boundary: the
+same XID is allocated by a replacement real GNOME server while Lyn retains the
+old attested draft. The controller validates and pidfd-pins its direct server
+child before SIGKILL, retaining that pin and the original foreground-process pin
+through teardown. Runtime, uid, executable, parent, private group/session and
+starttime must match. GNOME's
+[`init_server`](https://github.com/GNOME/gnome-terminal/blob/3.44.0/src/server.cc)
+changes cwd to its home; the additional expected-cwd check accounts for that,
+while the ordinary Lyn crash guard still defaults to the controller cwd.
+
+After actual process exit and old-window disappearance, a bounded backlog of
+at most 32 diagnostics is drained under the original server's credentials.
+Exactly one replacement server/window must have a distinct server PID, the
+same numeric XID and later source registration. No allocation retry, capture
+retry or admission relaxation is allowed. The old save must refuse as stale,
+leave SQLite empty and preserve the exact painted draft. Explicit cancellation
+and a fresh invocation must then save once to the correct project/branch, paint
+Library and restore focus. The reference fixture passed with screenshots
+inspected. This establishes isolated XID reuse and native server restart, not
+installed acceptance or a general audit of all recycled identities.
+
 `pnpm provider:gnome:desktop:test --foreground-shapes` creates three independent desktop fixtures for a shell foreground group, an exec-replaced htop and a job-controlled child htop. A fixed Python launcher validates the private project/config directories, sets a 45-second alarm and execs Bash without profiles or inherited shell-startup configuration. Only whitelisted environment values reach Bash; htop uses the private HTOPRC and a fixture-PID filter, so screenshots do not display arbitrary host process commands. Directory arguments are positional and quoted, not inserted into script text. The existing 60-second fixture lifetime and private display/bus/XDG guards remain unchanged.
 
 Readiness checks actual uid, executable, parent, process group, controlling TTY, cwd and process-start tick maturity. They establish the synthetic precondition, not production admission or an invocation-time override. The shell case requires Bash and its sleep child in alpha; the exec case requires foreground htop in alpha directly descended from the server; the child case requires foreground htop in beta while its Bash parent remains in alpha with a distinct process group. The reference runs saved exactly once in alpha, alpha and beta respectively, with the expected Git branch, painted Library and restored focus; screenshots were inspected. This proves the requested foreground-directory policy for these isolated shapes, not all TUI implementations, cold latency, arbitrary daemon lifetimes or installed acceptance.

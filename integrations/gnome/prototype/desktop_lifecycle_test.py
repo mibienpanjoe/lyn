@@ -29,9 +29,9 @@ class LifecycleTest(unittest.TestCase):
         self.runtime.mkdir(mode=0o700)
 
     @contextmanager
-    def child(self):
+    def child(self, cwd=None):
         child = subprocess.Popen([sys.executable, "-c",
-                                  "import signal,time; signal.alarm(5); time.sleep(30)"])
+                                  "import signal,time; signal.alarm(5); time.sleep(30)"], cwd=cwd)
         pin = os.pidfd_open(child.pid)
         try:
             yield child
@@ -58,6 +58,17 @@ class LifecycleTest(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     kill_owned_app(child, Path(sys.executable), self.runtime)
             self.assertIsNone(child.poll())
+
+    def test_explicit_fixture_cwd_is_required_and_checked(self):
+        with self.child(cwd=self.root) as child:
+            with self.assertRaises(AssertionError):
+                kill_owned_app(child, Path(sys.executable), self.runtime)
+            with self.assertRaises(AssertionError):
+                kill_owned_app(child, Path(sys.executable), self.runtime, expected_cwd=self.runtime)
+            self.assertIsNone(child.poll())
+            pin = kill_owned_app(child, Path(sys.executable), self.runtime, expected_cwd=self.root)
+            os.close(pin)
+            self.assertEqual(child.returncode, -signal.SIGKILL)
 
     def test_public_and_symlinked_runtime_refuse_without_signalling(self):
         with self.child() as child:

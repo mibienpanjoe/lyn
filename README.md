@@ -144,6 +144,8 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 `pnpm provider:gnome:desktop:test --pty-reuse` closes the original source and creates a replacement in the same project, requiring actual reuse of its PTY number. The old draft must remain stale with no save; only a fresh invocation may save from the replacement. This does not claim PID or XID number reuse.
 
+`pnpm provider:gnome:desktop:test --xid-reuse` replaces only the pidfd-verified GNOME server in the private desktop fixture, requiring the new window to reuse the original XID. The old draft must refuse saving without losing its text; a fresh invocation must then save, render in Library and return focus. No user terminal is targeted and nothing is installed.
+
 `pnpm provider:gnome:desktop:test --foreground-shapes` checks a shell, an exec-replaced htop, and a child htop whose project differs from its parent shell. Each private fixture verifies its actual foreground process shape, exact project/branch save, painted Library and focus return. Shell profiles are disabled and htop displays only synthetic fixture PIDs.
 
 Requires the Rust toolchain above, Linux with pidfd support, GTK3/VTE development headers, GCC/pkg-config, Xvfb with X-Resource 1.2/xauth, GNOME Terminal, xdotool/xprop, Python with pidfd APIs and GI GTK3, and htop. Developers can set `LYN_GNOME_SDK_ROOT` to a local directory with packages extracted beneath `root/`; the test never installs system packages or modifies terminal profiles outside its temporary environment.

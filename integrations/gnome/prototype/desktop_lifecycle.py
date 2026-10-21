@@ -32,7 +32,7 @@ def read_generation(connection):
     return bytes(response[1:])
 
 
-def kill_owned_app(process, executable, runtime):
+def kill_owned_app(process, executable, runtime, *, expected_cwd=None):
     """Return the retained pidfd after SIGKILL/wait, or refuse before signalling."""
     runtime = Path(runtime)
     root = runtime.parent
@@ -57,7 +57,9 @@ def kill_owned_app(process, executable, runtime):
         assert (target / "exe").samefile(executable)
         assert int(before[1]) == os.getpid(), "App is not this controller's child"
         assert int(before[2]) == os.getpgrp() and int(before[3]) == os.getsid(0)
-        assert (target / "cwd").resolve(strict=True) == Path.cwd().resolve(strict=True)
+        expected_cwd = Path.cwd() if expected_cwd is None else Path(expected_cwd)
+        assert expected_cwd.is_absolute()
+        assert (target / "cwd").resolve(strict=True) == expected_cwd.resolve(strict=True)
         after = fields()
         assert all(before[index] == after[index] for index in (1, 2, 3, 4, 19))
         assert target.stat().st_uid == os.geteuid() and (target / "exe").samefile(executable)
