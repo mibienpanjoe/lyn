@@ -85,6 +85,37 @@ fn published_shutdown_releases_address_and_lock_even_with_retained_broker_owners
     assert!(!publication.exists());
 }
 
+#[test]
+fn fixture_generation_observes_one_idle_admitted_channel_without_reconnecting() {
+    let runtime = runtime();
+    let broker = NativeBroker::start_fixture(runtime.path()).unwrap();
+    assert_eq!(broker.fixture_generation(), None);
+    let mut stream = UnixStream::connect(runtime.path().join("lyn-gnome-v1.sock")).unwrap();
+    let generation = client_handshake(&mut stream);
+    wait_until(|| broker.shared.channels.lock().unwrap().len() == 1);
+    assert_eq!(broker.fixture_generation(), Some(generation));
+    assert_eq!(broker.fixture_generation(), Some(generation));
+    let slot = broker
+        .shared
+        .channels
+        .lock()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    let busy = slot.lock().unwrap();
+    assert_eq!(
+        broker.fixture_generation(),
+        None,
+        "observation must not queue"
+    );
+    drop(busy);
+    assert_eq!(broker.fixture_generation(), Some(generation));
+    broker.shutdown();
+    assert_eq!(broker.fixture_generation(), None);
+}
+
 fn client_handshake(stream: &mut UnixStream) -> uuid::Uuid {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))

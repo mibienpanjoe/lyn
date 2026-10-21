@@ -343,14 +343,26 @@ impl NativeBroker {
             invoked_us,
             crate::platform::x11_owner::local_owner,
             |pid, candidate, deadline| {
-                let pty = super::gnome_pty::inspect(pid, candidate.pty_number, deadline)?;
+                let pty = super::gnome_pty::inspect(pid, candidate.pty_number, deadline)
+                    .inspect_err(|error| {
+                        #[cfg(test)]
+                        eprintln!("native PTY inspection refused: {:?}", error.kind());
+                        #[cfg(not(test))]
+                        let _ = error;
+                    })?;
                 let group = super::gnome_process::inspect(
                     pid,
                     candidate.foreground_pgid,
                     pty.slave_device,
                     invocation,
                     deadline,
-                )?;
+                )
+                .inspect_err(|error| {
+                    #[cfg(test)]
+                    eprintln!("native process inspection refused: {:?}", error.kind());
+                    #[cfg(not(test))]
+                    let _ = error;
+                })?;
                 Ok((pty, group))
             },
         )?;
@@ -361,6 +373,8 @@ impl NativeBroker {
             .checked_add(super::gnome_protocol::REPLY_BUDGET_US)
             .ok_or(BrokerError::Unavailable)?;
         if super::gnome_channel::monotonic_us().map_err(BrokerError::Channel)? >= deadline {
+            #[cfg(test)]
+            eprintln!("native process lifetime fence exceeded deadline");
             return Err(BrokerError::Unavailable);
         }
         Ok(NativeProcessEvidence {
@@ -391,6 +405,8 @@ impl NativeBroker {
             .ok_or(BrokerError::Unavailable)?;
         let mut channel = slot.try_lock().map_err(|_| BrokerError::Busy)?;
         if channel.generation() != evidence.generation || !channel.revalidate_idle() {
+            #[cfg(test)]
+            eprintln!("native pre-inspection channel fence refused");
             return Err(BrokerError::Unavailable);
         }
         let before = inspect(evidence.server_pid, evidence.candidate, deadline)
@@ -401,6 +417,8 @@ impl NativeBroker {
             .map_err(|_| BrokerError::Unavailable)?
             != before
         {
+            #[cfg(test)]
+            eprintln!("native kernel snapshots differ");
             return Err(BrokerError::Unavailable);
         }
         // Re-query the frozen window under the ORIGINAL invocation fence.
@@ -408,6 +426,8 @@ impl NativeBroker {
             .query(window_id, invoked_us)
             .map_err(BrokerError::Channel)?;
         if confirmed != evidence.candidate || !channel.revalidate_idle() {
+            #[cfg(test)]
+            eprintln!("native post-inspection channel/candidate fence refused");
             return Err(BrokerError::Unavailable);
         }
         drop(channel);
@@ -415,6 +435,8 @@ impl NativeBroker {
             || !self.connection_is_current(&evidence)
             || super::gnome_channel::monotonic_us().map_err(BrokerError::Channel)? >= deadline
         {
+            #[cfg(test)]
+            eprintln!("native final owner/generation/deadline fence refused");
             return Err(BrokerError::Unavailable);
         }
         Ok((evidence, before))
@@ -492,6 +514,18 @@ impl NativeBroker {
                 candidate,
             })
             .map_err(BrokerError::Channel)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixture_generation(&self) -> Option<Uuid> {
+        let channels = self.shared.channels.lock().ok()?;
+        if channels.len() != 1 || self.shared.stopping.load(Ordering::Acquire) {
+            return None;
+        }
+        // Read only already-admitted local state, without a provider exchange,
+        // reconnection, source selection or blocking on a busy channel.
+        let channel = channels.values().next()?.try_lock().ok()?;
+        channel.is_open().then(|| channel.generation())
     }
 
     #[cfg(test)]

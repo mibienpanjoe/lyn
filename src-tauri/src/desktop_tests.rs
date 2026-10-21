@@ -160,14 +160,27 @@ fn real_gnome_desktop_entry() {
             stream
                 .set_read_timeout(Some(Duration::from_secs(45)))
                 .unwrap();
-            // At most one controlled reconnect followed by one clean exit.
+            // At most one generation observation, one controlled reconnect
+            // and one clean exit; the read-only diagnostic cannot admit peers.
             let mut reconnected = false;
-            for _ in 0..2 {
+            let mut observed = false;
+            for _ in 0..3 {
                 let mut request = [0];
                 if stream.read_exact(&mut request).is_err() {
                     break;
                 }
                 match request[0] {
+                    b'G' if !observed => {
+                        observed = true;
+                        use tauri::Manager;
+                        let broker = handle
+                            .state::<std::sync::Arc<crate::context::gnome_broker::NativeBroker>>();
+                        let generation = broker
+                            .fixture_generation()
+                            .expect("one idle admitted native channel required");
+                        stream.write_all(b"G").unwrap();
+                        stream.write_all(generation.as_bytes()).unwrap();
+                    }
                     b'X' => {
                         handle.exit(0);
                         break;
