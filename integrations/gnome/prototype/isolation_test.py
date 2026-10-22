@@ -7,11 +7,22 @@ import subprocess
 import sys
 import tempfile
 import time
+from unittest.mock import patch
+import xml.etree.ElementTree as ET
 
+import isolated_run
 from isolated_run import run_fixture
 
 
 def run():
+    def inspect_bus(command, environment):
+        config = Path(command[command.index("--config-file") + 1])
+        listeners = ET.fromstring(config.read_text()).findall("listen")
+        expected = "unix:path=" + str(Path(environment["XDG_RUNTIME_DIR"]) / "session-bus")
+        assert [node.text for node in listeners] == [expected], "Fixture must explicitly request its private filesystem bus"
+        return 0
+    with patch.object(isolated_run, "run_fixture", side_effect=inspect_bus):
+        assert isolated_run.main(["-", "-c", "pass"]) == 0
     code = """import json,os,subprocess,time
 child=subprocess.Popen(['/usr/bin/sleep','30'])
 print(json.dumps({'pids':[os.getpid(),child.pid],'group':os.getpgrp()}),flush=True)

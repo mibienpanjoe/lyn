@@ -48,7 +48,7 @@ def main(arguments):
         bus_config = root / "session.conf"
         bus_config.write_text(f"""<busconfig>
           <type>session</type>
-          <listen>unix:tmpdir={root / 'runtime'}</listen>
+          <listen>unix:path={root / 'runtime/session-bus'}</listen>
           <auth>EXTERNAL</auth>
           <policy context="default">
             <allow user="*"/>
