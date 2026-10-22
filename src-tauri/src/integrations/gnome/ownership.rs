@@ -94,13 +94,33 @@ impl Receipt {
     }
 
     pub(super) fn reopen(&self, directory: &ManagedDirectory) -> io::Result<OwnedFile> {
+        self.reopen_at(directory, &self.name, true)
+    }
+
+    /// Only a validated private install journal may use this relocation path.
+    /// Rename changes ctime; inode, parent, owner, mode, size and digest remain
+    /// mandatory. This is not a kernel lifetime proof or generic authorization.
+    pub(super) fn reopen_after_rename(
+        &self,
+        directory: &ManagedDirectory,
+        destination: &str,
+    ) -> io::Result<OwnedFile> {
+        self.reopen_at(directory, destination, destination == self.name)
+    }
+
+    fn reopen_at(
+        &self,
+        directory: &ManagedDirectory,
+        destination: &str,
+        check_ctime: bool,
+    ) -> io::Result<OwnedFile> {
         self.validate()?;
         directory.check()?;
         let parent = directory.directory.metadata()?;
         if (parent.dev(), parent.ino()) != (self.directory_device, self.directory_inode) {
             return Err(refused());
         }
-        let name = basename(&self.name)?;
+        let name = basename(destination)?;
         let mut file = directory.open(&name, libc::O_RDONLY)?;
         let check_metadata = |file: &std::fs::File| -> io::Result<()> {
             let metadata = file.metadata()?;
@@ -111,8 +131,8 @@ impl Receipt {
                 || metadata.len() != self.length
                 || metadata.dev() != self.device
                 || metadata.ino() != self.inode
-                || metadata.ctime() != self.ctime
-                || metadata.ctime_nsec() != self.ctime_nsec
+                || (check_ctime
+                    && (metadata.ctime() != self.ctime || metadata.ctime_nsec() != self.ctime_nsec))
             {
                 return Err(refused());
             }

@@ -1,6 +1,7 @@
 //! Private synchronous activation-file transaction. Never reloads a manager or
 //! restarts GNOME. Drop releases the lock, never silently removes files.
 
+mod recovery;
 mod update;
 
 use super::{
@@ -48,6 +49,8 @@ pub(super) struct ActivationTransaction<'a> {
     files: Vec<(Place, OwnedFile)>,
     stages: Vec<(Place, StagedFile)>,
     update: Option<update::PendingUpdate>,
+    #[cfg(test)]
+    stop_after: Option<(u8, bool)>,
 }
 
 fn refused() -> io::Error {
@@ -68,6 +71,7 @@ impl<'a> ActivationTransaction<'a> {
         let lock = InstallationLock::acquire(state)?;
         state.require_absent(LAUNCHER)?;
         state.require_absent(MANIFEST)?;
+        state.require_absent(recovery::PENDING_INSTALL)?;
         drop_ins.require_absent(DROP_IN)?;
         Ok(Self {
             state,
@@ -78,6 +82,8 @@ impl<'a> ActivationTransaction<'a> {
             files: Vec::new(),
             stages: Vec::new(),
             update: None,
+            #[cfg(test)]
+            stop_after: None,
         })
     }
 
@@ -86,6 +92,7 @@ impl<'a> ActivationTransaction<'a> {
         drop_ins: &'a ManagedDirectory,
     ) -> io::Result<Self> {
         let lock = InstallationLock::acquire(state)?;
+        recovery::recover_pending(state, drop_ins, &lock)?;
         let manifest_file = state.read_state(MANIFEST)?;
         let manifest: Manifest =
             serde_json::from_slice(&manifest_file.content).map_err(|_| refused())?;
@@ -111,6 +118,8 @@ impl<'a> ActivationTransaction<'a> {
             ],
             stages: Vec::new(),
             update: None,
+            #[cfg(test)]
+            stop_after: None,
         })
     }
 
@@ -158,15 +167,7 @@ impl<'a> ActivationTransaction<'a> {
         }
         self.phase = Phase::Partial;
         let rendered = self.rendered.take().ok_or_else(refused)?;
-        self.publish(Place::State, LAUNCHER, rendered.launcher.as_bytes(), true)?;
-        self.publish(Place::DropIns, DROP_IN, rendered.drop_in.as_bytes(), false)?;
-        let manifest = Manifest {
-            version: 1,
-            launcher: Receipt::record(self.state, &self.files[0].1)?,
-            drop_in: Receipt::record(self.drop_ins, &self.files[1].1)?,
-        };
-        let bytes = serde_json::to_vec(&manifest).map_err(io::Error::other)?;
-        self.publish(Place::State, MANIFEST, &bytes, false)?;
+        self.apply_journaled(rendered)?;
         self.phase = Phase::Complete;
         Ok(())
     }

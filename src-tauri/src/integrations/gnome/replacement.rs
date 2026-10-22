@@ -1,7 +1,7 @@
 //! Atomic swaps between two verified owned activation files. The old bytes
 //! remain named and pinned until the surrounding transaction commits.
 
-use super::managed::{ManagedDirectory, OwnedFile};
+use super::managed::{ManagedDirectory, OwnedFile, basename};
 use std::{io, os::fd::AsRawFd};
 
 /// Physical exchange succeeded. A durability error must not be confused with
@@ -11,6 +11,31 @@ pub(super) struct Exchanged {
 }
 
 impl ManagedDirectory {
+    pub(super) fn move_to_unoccupied(
+        &self,
+        file: &mut OwnedFile,
+        destination: &str,
+    ) -> io::Result<Exchanged> {
+        let destination = basename(destination)?;
+        self.verify(file)?;
+        if unsafe {
+            libc::renameat2(
+                self.directory.as_raw_fd(),
+                file.name.as_ptr(),
+                self.directory.as_raw_fd(),
+                destination.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        file.name = destination;
+        Ok(Exchanged {
+            durability: self.sync_directory(),
+        })
+    }
+
     /// Both files must be in this directory, of the same executable/data role,
     /// and currently unchanged. The installer holds its lock across this call.
     pub(super) fn exchange(
