@@ -242,6 +242,14 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     print("Native prototype SHA256:", hashlib.sha256(module.read_bytes()).hexdigest(), flush=True)
     if arguments.source_lifetimes:
         subprocess.run([sys.executable, str(root / "source_lifetime_controller_test.py")], check=True)
+        reachability = destination / "fontconfig-reachability-sanitized"
+        fontconfig_flags = shlex.split(subprocess.check_output(
+            ["pkg-config", "--cflags", "--libs", "fontconfig"], text=True))
+        subprocess.run(["gcc", "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+                        "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                        str(root / "fontconfig_reachability_test.c"), "-o", str(reachability),
+                        *fontconfig_flags], check=True)
+        subprocess.run([str(reachability)], env=lifetime_environment(os.environ), check=True, timeout=3)
         lifetime_results = []
         for source in ("source_lifetime_baseline.c", "source_lifetime_test.c"):
             instrumented = destination / (Path(source).stem + "-sanitized")
