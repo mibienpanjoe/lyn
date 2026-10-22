@@ -213,6 +213,16 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                     "-o", str(traversal_fixture), *flags], check=True)
     subprocess.run([sys.executable, str(root / "isolated_run.py"), str(sdk) if sdk else "-",
                     str(root / "traversal_test.py"), str(traversal_fixture), str(sdk) if sdk else "-"], check=True)
+    if arguments.native_safety:
+        instrumented = destination / "traversal-sanitized"
+        subprocess.run(["gcc", "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+                        "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                        "-fstack-protector-strong", str(root / "traversal_test.c"),
+                        *[str(root.parent / file) for file in ("wire.c", "native_channel.c", "native_discovery.c")],
+                        "-o", str(instrumented), *flags], check=True)
+        subprocess.run([sys.executable, str(root / "isolated_run.py"), str(sdk) if sdk else "-",
+                        str(root / "traversal_test.py"), str(instrumented), str(sdk) if sdk else "-"],
+                       env=sanitizer_environment(os.environ), check=True)
     subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-fstack-protector-strong", str(root / "wire_test.c"),
                     str(root.parent / "wire.c"), "-o", str(wire_test)], check=True)
