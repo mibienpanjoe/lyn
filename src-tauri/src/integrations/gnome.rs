@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+mod directories;
+mod lock;
 mod managed;
 
 #[derive(Debug, PartialEq, Eq)]

@@ -95,7 +95,7 @@ impl ManagedDirectory {
         Ok(directory)
     }
 
-    fn check(&self) -> io::Result<()> {
+    pub(super) fn check(&self) -> io::Result<()> {
         let metadata = self.directory.metadata()?;
         if !metadata.is_dir()
             || metadata.uid() != unsafe { libc::geteuid() }
@@ -106,7 +106,7 @@ impl ManagedDirectory {
         Ok(())
     }
 
-    fn open(&self, name: &CString, flags: i32) -> io::Result<File> {
+    pub(super) fn open(&self, name: &CString, flags: i32) -> io::Result<File> {
         // Every operation is anchored at the retained directory, not a path
         // that can be redirected by renaming an ancestor. Never follow leaves.
         let fd = unsafe {
@@ -123,7 +123,7 @@ impl ManagedDirectory {
         Ok(unsafe { File::from_raw_fd(fd) })
     }
 
-    fn same_entry(&self, name: &CString, file: &File) -> io::Result<()> {
+    pub(super) fn same_entry(&self, name: &CString, file: &File) -> io::Result<()> {
         let mut current = std::mem::MaybeUninit::<libc::stat>::uninit();
         let result = unsafe {
             libc::fstatat(
