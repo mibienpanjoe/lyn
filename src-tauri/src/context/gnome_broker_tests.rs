@@ -526,6 +526,58 @@ fn reconnect_during_post_query_owner_check_cannot_return_retired_evidence() {
     first.join().unwrap();
 }
 
+#[test]
+fn missing_initial_owner_never_sends_a_native_query() {
+    let runtime = runtime();
+    let broker = NativeBroker::start_fixture(runtime.path()).unwrap();
+    let mut client = UnixStream::connect(runtime.path().join("lyn-gnome-v1.sock")).unwrap();
+    client_handshake(&mut client);
+    wait_until(|| broker.shared.channels.lock().unwrap().len() == 1);
+    let mut checks = 0;
+    let result = broker.query_window_with(77, monotonic_us().unwrap(), |_| {
+        checks += 1;
+        None
+    });
+    assert_eq!(result, Err(BrokerError::Unavailable));
+    assert_eq!(checks, 1);
+    client.set_nonblocking(true).unwrap();
+    let mut byte = [0];
+    assert_eq!(
+        client.read(&mut byte).unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    drop(broker);
+}
+
+#[test]
+fn changed_final_owner_refuses_evidence_without_poisoning_the_channel() {
+    let runtime = runtime();
+    let broker = NativeBroker::start_fixture(runtime.path()).unwrap();
+    let path = runtime.path().join("lyn-gnome-v1.sock");
+    let worker = thread::spawn(move || {
+        let mut client = UnixStream::connect(path).unwrap();
+        client_handshake(&mut client);
+        answer(&mut client);
+        answer(&mut client);
+        assert_closed(&mut client);
+    });
+    wait_until(|| broker.shared.channels.lock().unwrap().len() == 1);
+    let mut checks = 0;
+    let result = broker.query_window_with(77, monotonic_us().unwrap(), |_| {
+        checks += 1;
+        (checks == 1).then_some(std::process::id())
+    });
+    assert_eq!(result, Err(BrokerError::Unavailable));
+    assert_eq!(checks, 2);
+    assert!(
+        broker
+            .query(std::process::id(), 88, monotonic_us().unwrap())
+            .is_ok()
+    );
+    drop(broker);
+    worker.join().unwrap();
+}
+
 impl FixtureChildren {
     fn spawn(&mut self, path: &std::path::Path) -> u32 {
         let child = std::process::Command::new(std::env::current_exe().unwrap())

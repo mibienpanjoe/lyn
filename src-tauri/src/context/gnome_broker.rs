@@ -306,9 +306,23 @@ impl NativeBroker {
         invoked_us: u64,
         mut owner: impl FnMut(u32) -> Option<u32>,
     ) -> Result<NativeEvidence, BrokerError> {
-        let pid = owner(window_id).ok_or(BrokerError::Unavailable)?;
-        let evidence = self.query(pid, window_id, invoked_us)?;
-        if owner(window_id) != Some(pid) || !self.connection_is_current(&evidence) {
+        let pid = owner(window_id).ok_or_else(|| {
+            #[cfg(test)]
+            eprintln!(r#"{{"check":"native_window_query_refused","stage":"initial_owner"}}"#);
+            BrokerError::Unavailable
+        })?;
+        let evidence = self.query(pid, window_id, invoked_us).inspect_err(|_| {
+            #[cfg(test)]
+            eprintln!(r#"{{"check":"native_window_query_refused","stage":"native_exchange"}}"#);
+        })?;
+        if owner(window_id) != Some(pid) {
+            #[cfg(test)]
+            eprintln!(r#"{{"check":"native_window_query_refused","stage":"final_owner"}}"#);
+            return Err(BrokerError::Unavailable);
+        }
+        if !self.connection_is_current(&evidence) {
+            #[cfg(test)]
+            eprintln!(r#"{{"check":"native_window_query_refused","stage":"final_channel"}}"#);
             return Err(BrokerError::Unavailable);
         }
         Ok(evidence)
