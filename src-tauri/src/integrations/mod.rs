@@ -1,5 +1,8 @@
 //! Management, status detection, and 1-click installation of local context integrations.
 
+#[cfg(target_os = "linux")]
+pub(crate) mod gnome;
+
 use std::{
     fs,
     path::{Path, PathBuf},
