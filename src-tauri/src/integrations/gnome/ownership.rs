@@ -46,31 +46,11 @@ impl Receipt {
     }
 
     pub(super) fn load(state: &ManagedDirectory, name: &str) -> io::Result<Self> {
-        state.check()?;
-        let name = basename(name)?;
-        let mut file = state.open(&name, libc::O_RDONLY)?;
-        let original = file.metadata()?;
-        if !original.is_file()
-            || original.uid() != unsafe { libc::geteuid() }
-            || original.mode() & 0o7777 != 0o600
-            || original.nlink() != 1
-            || original.len() > MAX_CONTENT as u64
-        {
-            return Err(refused());
-        }
-        let mut bytes = Vec::new();
-        (&mut file)
-            .take((MAX_CONTENT + 1) as u64)
-            .read_to_end(&mut bytes)?;
-        let final_metadata = file.metadata()?;
-        if final_metadata.len() != original.len()
-            || final_metadata.ctime() != original.ctime()
-            || final_metadata.ctime_nsec() != original.ctime_nsec()
-        {
-            return Err(refused());
-        }
-        state.same_entry(&name, &file)?;
-        Self::decode(&bytes)
+        Self::decode(&state.read_state(name)?.content)
+    }
+
+    pub(super) fn is_for(&self, name: &str, mode: u32) -> bool {
+        self.name == name && self.mode == mode
     }
 
     fn validate(&self) -> io::Result<()> {

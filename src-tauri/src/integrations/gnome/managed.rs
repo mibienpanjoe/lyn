@@ -83,6 +83,68 @@ pub(super) fn basename(name: &str) -> io::Result<CString> {
 }
 
 impl ManagedDirectory {
+    pub(super) fn require_absent(&self, name: &str) -> io::Result<()> {
+        self.check()?;
+        let name = basename(name)?;
+        let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+        if unsafe {
+            libc::fstatat(
+                self.directory.as_raw_fd(),
+                name.as_ptr(),
+                metadata.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } == 0
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "activation target occupied",
+            ));
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::NotFound {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+
+    /// Read a private bounded installer state file, retaining its ownership
+    /// descriptor. Schema/role validation remains the caller's responsibility.
+    pub(super) fn read_state(&self, name: &str) -> io::Result<OwnedFile> {
+        self.check()?;
+        let name = basename(name)?;
+        let mut file = self.open(&name, libc::O_RDONLY)?;
+        let original = file.metadata()?;
+        if !original.is_file()
+            || original.uid() != unsafe { libc::geteuid() }
+            || original.mode() & 0o7777 != 0o600
+            || original.nlink() != 1
+            || original.len() > MAX_CONTENT as u64
+        {
+            return Err(refused());
+        }
+        let mut content = Vec::new();
+        (&mut file)
+            .take((MAX_CONTENT + 1) as u64)
+            .read_to_end(&mut content)?;
+        let final_metadata = file.metadata()?;
+        if final_metadata.len() != original.len()
+            || content.len() as u64 != original.len()
+            || final_metadata.ctime() != original.ctime()
+            || final_metadata.ctime_nsec() != original.ctime_nsec()
+        {
+            return Err(refused());
+        }
+        self.same_entry(&name, &file)?;
+        Ok(OwnedFile {
+            file,
+            name,
+            content,
+            mode: 0o600,
+        })
+    }
+
     /// Caller must have securely resolved the ancestry of this directory. A
     /// supplied descriptor cannot establish whether its original path was safe.
     pub(super) fn from_directory(directory: File) -> io::Result<Self> {
