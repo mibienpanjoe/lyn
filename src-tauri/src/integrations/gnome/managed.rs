@@ -12,10 +12,10 @@ use std::{
     },
 };
 
-const MAX_CONTENT: usize = 16 * 1024;
+pub(super) const MAX_CONTENT: usize = 16 * 1024;
 
 pub(super) struct ManagedDirectory {
-    directory: File,
+    pub(super) directory: File,
     #[cfg(test)]
     fault: std::cell::Cell<Fault>,
 }
@@ -58,10 +58,10 @@ pub(super) struct StagedFile {
 /// reuse from making a replacement appear owned. No implicit uninstall on drop.
 #[derive(Debug)]
 pub(super) struct OwnedFile {
-    file: File,
-    name: CString,
-    content: Vec<u8>,
-    mode: u32,
+    pub(super) file: File,
+    pub(super) name: CString,
+    pub(super) content: Vec<u8>,
+    pub(super) mode: u32,
 }
 
 fn refused() -> io::Error {
@@ -71,7 +71,7 @@ fn refused() -> io::Error {
     )
 }
 
-fn basename(name: &str) -> io::Result<CString> {
+pub(super) fn basename(name: &str) -> io::Result<CString> {
     if name.is_empty() || matches!(name, "." | "..") || name.contains('/') || name.len() > 255 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -248,6 +248,12 @@ impl ManagedDirectory {
     /// The higher-level installer must serialize Lyn operations; this is not an
     /// atomic compare-and-unlink against a malicious same-uid concurrent writer.
     pub(super) fn remove(&self, owned: &OwnedFile) -> io::Result<()> {
+        self.verify(owned)?;
+        self.unlink(&owned.name)?;
+        self.sync_directory()
+    }
+
+    pub(super) fn verify(&self, owned: &OwnedFile) -> io::Result<()> {
         self.check()?;
         self.same_entry(&owned.name, &owned.file)?;
         let mut current = self.open(&owned.name, libc::O_RDONLY)?;
@@ -271,9 +277,7 @@ impl ManagedDirectory {
         if bytes != owned.content {
             return Err(refused());
         }
-        self.same_entry(&owned.name, &owned.file)?;
-        self.unlink(&owned.name)?;
-        self.sync_directory()
+        self.same_entry(&owned.name, &owned.file)
     }
 }
 

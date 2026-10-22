@@ -5,6 +5,7 @@ use std::path::Path;
 mod directories;
 mod lock;
 mod managed;
+mod ownership;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ActivationError {
