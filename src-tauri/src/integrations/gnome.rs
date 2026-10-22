@@ -6,6 +6,7 @@ mod directories;
 mod lock;
 mod managed;
 mod ownership;
+mod replacement;
 mod transaction;
 
 #[derive(Debug, PartialEq, Eq)]

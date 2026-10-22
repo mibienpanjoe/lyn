@@ -1,6 +1,8 @@
 //! Private synchronous activation-file transaction. Never reloads a manager or
 //! restarts GNOME. Drop releases the lock, never silently removes files.
 
+mod update;
+
 use super::{
     RenderedActivation,
     lock::InstallationLock,
@@ -33,6 +35,7 @@ enum Phase {
     New,
     Partial,
     Complete,
+    Updating,
     Removed,
 }
 
@@ -44,6 +47,7 @@ pub(super) struct ActivationTransaction<'a> {
     phase: Phase,
     files: Vec<(Place, OwnedFile)>,
     stages: Vec<(Place, StagedFile)>,
+    update: Option<update::PendingUpdate>,
 }
 
 fn refused() -> io::Error {
@@ -73,6 +77,7 @@ impl<'a> ActivationTransaction<'a> {
             phase: Phase::New,
             files: Vec::new(),
             stages: Vec::new(),
+            update: None,
         })
     }
 
@@ -105,6 +110,7 @@ impl<'a> ActivationTransaction<'a> {
                 (Place::State, manifest_file),
             ],
             stages: Vec::new(),
+            update: None,
         })
     }
 
@@ -169,6 +175,9 @@ impl<'a> ActivationTransaction<'a> {
     /// their ownership lease, except when the pinned inode is already unlinked.
     /// This is explicit process-local rollback, not crash recovery or update.
     pub(super) fn rollback(&mut self) -> io::Result<()> {
+        if self.update.is_some() {
+            return Err(refused());
+        }
         self.lock.check()?;
         for (place, file) in &self.files {
             self.directory(*place).verify(file)?;
@@ -203,7 +212,7 @@ mod tests {
     use super::*;
     use std::{fs, os::unix::fs::PermissionsExt};
 
-    fn fixture() -> (
+    pub(super) fn fixture() -> (
         tempfile::TempDir,
         ManagedDirectory,
         ManagedDirectory,

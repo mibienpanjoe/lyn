@@ -213,12 +213,21 @@ impl ManagedDirectory {
         Ok(())
     }
 
-    fn sync_directory(&self) -> io::Result<()> {
+    pub(super) fn sync_directory(&self) -> io::Result<()> {
         #[cfg(test)]
         if self.fault.get() == Fault::DirectorySync {
             return Err(io::Error::other("injected directory sync failure"));
         }
         self.directory.sync_all()
+    }
+
+    #[cfg(test)]
+    pub(super) fn fail_directory_sync(&self, fail: bool) {
+        self.fault.set(if fail {
+            Fault::DirectorySync
+        } else {
+            Fault::None
+        });
     }
 
     pub(super) fn discard_stage(&self, stage: &StagedFile) -> io::Result<()> {
