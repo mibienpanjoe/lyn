@@ -66,8 +66,23 @@ static void pty_changed(GObject *object, GParamSpec *property, gpointer data)
     topology_changed(GTK_WIDGET(object), data);
 }
 
+static gboolean runtime_compatible(void)
+{
+    /* Deliberately closed to the reference stack exercised by the native and
+     * desktop suites. A new library patch needs its own acceptance evidence;
+     * equal ABI/SONAME alone does not attest terminal widget behavior. */
+    return GTK_MAJOR_VERSION == 3 && GTK_MINOR_VERSION == 24 && GTK_MICRO_VERSION == 33
+        && VTE_MAJOR_VERSION == 0 && VTE_MINOR_VERSION == 68 && VTE_MICRO_VERSION == 0
+        && gtk_get_major_version() == 3 && gtk_get_minor_version() == 24
+        && gtk_get_micro_version() == 33
+        && vte_get_major_version() == 0 && vte_get_minor_version() == 68
+        && vte_get_micro_version() == 0;
+}
+
 G_MODULE_EXPORT const gchar *g_module_check_init(GModule *module)
 {
+    if (!runtime_compatible())
+        return "Lyn native prototype: unverified GTK/VTE version";
     module_path = g_strdup(g_module_name(module));
     /* GTK callbacks must remain valid even if settings remove the module. */
     g_module_make_resident(module);
@@ -309,6 +324,8 @@ G_MODULE_EXPORT void gtk_module_init(gint *argc, gchar ***argv)
 {
     (void)argc;
     (void)argv;
+    if (!runtime_compatible())
+        return;
     static gboolean initialized = FALSE;
     if (initialized)
         return;

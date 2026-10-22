@@ -156,6 +156,18 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
     lifecycle_test = destination / "channel-lifecycle-test"
     discovery_library = destination / "libnative-discovery-test.so"
     discovery_channel_test = destination / "discovery-channel-test"
+    compatibility_test = destination / "compatibility-test"
+    refused_module = destination / "librefused-compatibility-test.so"
+    subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                    "-DLYN_GNOME_TEST_REFUSED_MODULE", "-fPIC", "-shared",
+                    "-fstack-protector-strong", str(root / "compatibility_test.c"),
+                    *[str(root.parent / file) for file in ("wire.c", "native_channel.c", "native_discovery.c")],
+                    "-o", str(refused_module), *flags], check=True)
+    subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+                    "-fstack-protector-strong", str(root / "compatibility_test.c"),
+                    *[str(root.parent / file) for file in ("wire.c", "native_channel.c", "native_discovery.c")],
+                    "-o", str(compatibility_test), *flags], check=True)
+    subprocess.run([str(compatibility_test), str(refused_module)], check=True, timeout=3)
     subprocess.run(["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
                     "-fPIC", "-fstack-protector-strong", "-shared",
                     str(root.parent / "native_discovery.c"),
