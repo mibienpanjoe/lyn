@@ -18,6 +18,7 @@ static guint64 next_source;
 
 #define MAX_WIDGETS 2048
 #define MAX_DEPTH 32
+#define MAX_SNAPSHOT_BYTES 6000
 
 #ifdef LYN_GNOME_TEST_METRICS
 typedef struct { guint64 count, total_us, max_us; } CallbackMetrics;
@@ -144,7 +145,8 @@ static void collect(GtkWidget *widget, gpointer data)
     Snapshot *snapshot = data;
     if (snapshot->incomplete) return;
     GString *frame = snapshot->frame;
-    if (++snapshot->visits > MAX_WIDGETS || snapshot->depth >= MAX_DEPTH || frame->len > 6000) {
+    if (++snapshot->visits > MAX_WIDGETS || snapshot->depth >= MAX_DEPTH
+        || frame->len > MAX_SNAPSHOT_BYTES - 2) {
         snapshot->incomplete = TRUE;
         return;
     }
@@ -262,7 +264,7 @@ static gboolean snapshot(gpointer data)
         collect(GTK_WIDGET(item->data), &observation);
     g_list_free(windows);
     /* Never publish a partially enumerated set as exact evidence. */
-    if (!observation.incomplete && frame->len <= 6000) {
+    if (!observation.incomplete && frame->len <= MAX_SNAPSHOT_BYTES - 2) {
         g_string_append(frame, "]}");
         publish(frame->str, frame->len);
     }
