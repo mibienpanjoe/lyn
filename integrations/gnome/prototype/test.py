@@ -45,7 +45,11 @@ parser.add_argument("--reconnect-cycles", type=int,
                     help="repeat real GNOME/Rust broker reconnects (1 to 20, native mode only)")
 parser.add_argument("--reconnect-discovery", action="store_true",
                     help="use fresh published broker endpoints for the reconnect series")
+parser.add_argument("--event-storm", action="store_true",
+                    help="exercise 200 private GNOME tab switches concurrent with metadata queries")
 arguments = parser.parse_args()
+if arguments.event_storm and arguments.desktop:
+    parser.error("--event-storm requires native mode")
 if arguments.reconnect_discovery and arguments.desktop:
     parser.error("--reconnect-discovery requires native mode")
 if arguments.reconnect_cycles is not None and (arguments.desktop or not 1 <= arguments.reconnect_cycles <= 20):
@@ -209,7 +213,7 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                         "-fPIC", "-fstack-protector-strong", "-shared", str(root / source),
                         *extra_sources, "-o", str(output), *flags], check=True)
     print("Native prototype SHA256:", hashlib.sha256(module.read_bytes()).hexdigest(), flush=True)
-    if arguments.native_metrics:
+    if arguments.native_metrics or arguments.event_storm:
         subprocess.run([sys.executable, str(root / "resource_controller_test.py")], check=True)
         extra_sources = [str(root.parent / file) for file in ("wire.c", "native_channel.c", "native_discovery.c")]
         metrics_test = destination / "module-metrics-test"
@@ -222,8 +226,13 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                         "-DLYN_GNOME_TEST_METRICS", "-fPIC", "-fstack-protector-strong", "-shared",
                         str(root / "module.c"), *extra_sources, "-o", str(metrics_module), *flags], check=True)
         print("Metrics prototype SHA256:", hashlib.sha256(metrics_module.read_bytes()).hexdigest(), flush=True)
-        subprocess.run([sys.executable, str(root / "isolated_run.py"), str(sdk) if sdk else "-",
-                        str(root / "resource_test.py"), str(metrics_module), str(sdk) if sdk else "-"], check=True)
+        if arguments.native_metrics:
+            subprocess.run([sys.executable, str(root / "isolated_run.py"), str(sdk) if sdk else "-",
+                            str(root / "resource_test.py"), str(metrics_module), str(sdk) if sdk else "-"], check=True)
+        if arguments.event_storm:
+            subprocess.run([sys.executable, str(root / "event_storm_controller_test.py")], check=True)
+            subprocess.run([sys.executable, str(root / "isolated_run.py"), str(sdk) if sdk else "-",
+                            str(root / "event_storm_test.py"), str(metrics_module), str(sdk) if sdk else "-"], check=True)
     if desktop:
         fixture_args = [str(module), str(probe), str(sdk) if sdk else "-"]
         modes = [["--probe"], []] + [["--concurrent-start"] for _ in range(arguments.startup_pairs)]
