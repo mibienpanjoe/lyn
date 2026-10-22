@@ -118,6 +118,8 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 `pnpm provider:gnome:test` compiles an experimental GTK3/VTE module and the current Rust test harness. It tests real GNOME Terminal windows, tabs, TUI identity, and native module-to-Rust broker exchanges on private Xvfb/D-Bus, including late broker startup and reconnection with a fresh generation. Channel start/stop tests check FD release and cancellation of retry. It does not install anything or enable native automatic context in your daily terminal.
 
+The prototype currently refuses library versions outside its tested GTK 3.24.33 / VTE 0.68.0 reference stack. Matching library numbers alone do not establish installed compatibility; see the [version boundary](docs/gnome_native_protocol.md#boundary-and-lifecycle).
+
 The backend suite also saves synthetic PNG/WAV captures and checks media preservation through native generation loss and manual context correction. This does not exercise the desktop media controls or microphone; see the [native coverage and limits](docs/gnome_native_protocol.md#capture-integration-and-continuity).
 
 `pnpm provider:gnome:test --pid-reuse` additionally reuses a real PID inside a disposable user/PID/mount namespace and requires the old pidfd-backed peer to remain refused. This optional kernel test needs `/usr/bin/unshare` with unprivileged user namespaces enabled, runs only as an ordinary non-root user, and never writes the host PID counter. It is not GNOME window-ID reuse or installed-package acceptance.
