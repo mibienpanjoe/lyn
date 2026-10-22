@@ -74,9 +74,33 @@ static gboolean read_frame(gint fd, GIOCondition condition, gpointer data)
     (void)data;
     if (condition & (G_IO_HUP | G_IO_ERR | G_IO_NVAL)) { stop(); return G_SOURCE_REMOVE; }
     // At most one bounded frame per dispatch; GLib re-arms readable data.
-    ssize_t count = recv(fd, incoming+received, LYN_FRAME_BYTES-received, 0);
+    union { struct cmsghdr align; uint8_t bytes[CMSG_SPACE(8 * sizeof(int))]; } control = {0};
+    struct iovec buffer = {.iov_base = incoming + received, .iov_len = LYN_FRAME_BYTES - received};
+    struct msghdr message = {.msg_iov = &buffer, .msg_iovlen = 1,
+                            .msg_control = control.bytes, .msg_controllen = sizeof(control.bytes)};
+    ssize_t count = recvmsg(fd, &message, MSG_CMSG_CLOEXEC);
     if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
         return G_SOURCE_CONTINUE;
+    if (count >= 0) {
+        /* Kernel-validated SCM_RIGHTS entries own receiver-side duplicates.
+         * Close every delivered fd before refusal; Linux closes any excess
+         * rights truncated beyond this bounded control buffer. Never use them. */
+        for (struct cmsghdr *header = CMSG_FIRSTHDR(&message); header;
+             header = CMSG_NXTHDR(&message, header)) {
+            if (header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS
+                || header->cmsg_len < CMSG_LEN(0)) continue;
+            size_t bytes = header->cmsg_len - CMSG_LEN(0);
+            for (size_t offset = 0; offset + sizeof(int) <= bytes; offset += sizeof(int)) {
+                int received_fd;
+                memcpy(&received_fd, CMSG_DATA(header) + offset, sizeof(received_fd));
+                close(received_fd);
+            }
+        }
+        if (message.msg_controllen || (message.msg_flags & (MSG_TRUNC | MSG_CTRUNC))) {
+            stop();
+            return G_SOURCE_REMOVE;
+        }
+    }
     if (count <= 0) { stop(); return G_SOURCE_REMOVE; }
     if (!received) partial_at = g_get_monotonic_time();
     received += (size_t)count;

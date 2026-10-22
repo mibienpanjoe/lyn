@@ -12,6 +12,7 @@ static gint64 fixture_monotonic(void)
 #include "../native_channel.c"
 #undef g_get_monotonic_time
 #include <assert.h>
+#include <fcntl.h>
 
 static guint ticks, queries;
 
@@ -88,6 +89,61 @@ static int connect_peer(int listener, const char *path, bool admit)
     return peer;
 }
 
+static guint descriptors(void)
+{
+    GDir *directory = g_dir_open("/proc/self/fd", 0, NULL);
+    assert(directory);
+    guint count = 0;
+    while (g_dir_read_name(directory)) count++;
+    g_dir_close(directory);
+    return count;
+}
+
+static void ancillary_refused(int listener, const char *path, bool admitted, bool fragmented, guint count)
+{
+    int peer = connect_peer(listener, path, admitted);
+    int pair[2];
+    assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0);
+    guint before = descriptors(), old_queries = queries;
+    LynFrame frame = {.kind = admitted ? LYN_QUERY : LYN_BIND};
+    frame.generation[0] = 1;
+    if (admitted) {
+        frame.request[0] = 1;
+        frame.window = 42;
+        frame.at_us = g_get_monotonic_time();
+    }
+    uint8_t bytes[LYN_FRAME_BYTES];
+    assert(lyn_frame_encode(&frame, bytes));
+    size_t offset = fragmented ? 7 : 0;
+    if (offset) {
+        assert(send(peer, bytes, offset, MSG_NOSIGNAL) == (ssize_t)offset);
+        gint64 until = g_get_monotonic_time() + 100000;
+        while (!received && g_get_monotonic_time() < until) pump();
+        assert(received == offset && channel >= 0);
+    }
+    union { struct cmsghdr align; uint8_t bytes[CMSG_SPACE(16 * sizeof(int))]; } control = {0};
+    struct iovec buffer = {.iov_base = bytes + offset, .iov_len = sizeof(bytes) - offset};
+    struct msghdr message = {.msg_iov = &buffer, .msg_iovlen = 1,
+                            .msg_control = control.bytes, .msg_controllen = CMSG_SPACE(count * sizeof(int))};
+    assert(count && count <= 16);
+    struct cmsghdr *header = CMSG_FIRSTHDR(&message);
+    header->cmsg_level = SOL_SOCKET;
+    header->cmsg_type = SCM_RIGHTS;
+    header->cmsg_len = CMSG_LEN(count * sizeof(int));
+    for (guint index = 0; index < count; index++)
+        memcpy(CMSG_DATA(header) + index * sizeof(int), &pair[0], sizeof(int));
+    assert(sendmsg(peer, &message, MSG_NOSIGNAL) == (ssize_t)buffer.iov_len);
+    gint64 until = g_get_monotonic_time() + 100000;
+    while (channel >= 0 && g_get_monotonic_time() < until) pump();
+    assert(channel == -1 && !reader && !writer && !timer && retry_source);
+    assert(queries == old_queries && descriptors() == before - 1);
+    assert(fcntl(pair[0], F_GETFD) >= 0); /* Sender retains its own borrowed original. */
+    lyn_native_stop();
+    close(pair[0]);
+    close(pair[1]);
+    close(peer);
+}
+
 int main(int argc, char **argv)
 {
     assert(argc == 2);
@@ -99,6 +155,13 @@ int main(int argc, char **argv)
     assert(listener >= 0 && bind(listener, (struct sockaddr *)&address, sizeof(address)) == 0);
     assert(listen(listener, 1) == 0);
     guint beat = g_timeout_add(1, heartbeat, NULL);
+
+    for (guint count = 1; count <= 16; count *= 16) {
+        ancillary_refused(listener, path, false, false, count);
+        ancillary_refused(listener, path, true, false, count);
+        ancillary_refused(listener, path, true, true, count);
+    }
+    g_print("PASS: ancillary rights refused in Bind/full/fragmented Query; 1/16 descriptors closed without FD growth\n");
 
     int peer = connect_peer(listener, path, false);
     closed_within(650000); /* Silent peer, original 500ms handshake. */
