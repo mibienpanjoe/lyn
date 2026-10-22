@@ -111,18 +111,8 @@ static void remove_own_module(const char *variable)
     g_strfreev(parts);
 }
 
-static gboolean observe(GtkWidget *widget, LynFrame *result)
+static TerminalIdentity *terminal_identity(GtkWidget *widget)
 {
-    VtePty *pty = vte_terminal_get_pty(VTE_TERMINAL(widget));
-    GtkWidget *top = gtk_widget_get_toplevel(widget);
-    GdkWindow *native = gtk_widget_get_window(top);
-    if (!pty || !native || !GDK_IS_X11_WINDOW(native))
-        return FALSE;
-    int fd = vte_pty_get_fd(pty);
-    unsigned int number;
-    pid_t foreground = tcgetpgrp(fd);
-    if (foreground <= 0 || ioctl(fd, TIOCGPTN, &number) != 0)
-        return FALSE;
     TerminalIdentity *source = g_object_get_data(G_OBJECT(widget), "lyn-spike-source");
     if (!source) {
         source = g_new0(TerminalIdentity, 1);
@@ -135,6 +125,22 @@ static gboolean observe(GtkWidget *widget, LynFrame *result)
         g_signal_connect_after(widget, "hierarchy-changed", G_CALLBACK(hierarchy_changed), source);
         g_signal_connect_after(widget, "notify::pty", G_CALLBACK(pty_changed), source);
     }
+    return source;
+}
+
+static gboolean observe(GtkWidget *widget, LynFrame *result)
+{
+    VtePty *pty = vte_terminal_get_pty(VTE_TERMINAL(widget));
+    GtkWidget *top = gtk_widget_get_toplevel(widget);
+    GdkWindow *native = gtk_widget_get_window(top);
+    if (!pty || !native || !GDK_IS_X11_WINDOW(native))
+        return FALSE;
+    int fd = vte_pty_get_fd(pty);
+    unsigned int number;
+    pid_t foreground = tcgetpgrp(fd);
+    if (foreground <= 0 || ioctl(fd, TIOCGPTN, &number) != 0)
+        return FALSE;
+    TerminalIdentity *source = terminal_identity(widget);
     result->window = gdk_x11_window_get_xid(native);
     result->pty = number;
     result->pgid = foreground;
