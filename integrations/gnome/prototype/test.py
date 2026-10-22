@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 from sanitizer_environment import sanitizer_environment
+from source_lifetime_test import lifetime_environment
 
 
 root = Path(__file__).resolve().parent
@@ -47,7 +48,11 @@ parser.add_argument("--reconnect-discovery", action="store_true",
                     help="use fresh published broker endpoints for the reconnect series")
 parser.add_argument("--event-storm", action="store_true",
                     help="exercise 200 private GNOME tab switches concurrent with metadata queries")
+parser.add_argument("--source-lifetimes", action="store_true",
+                    help="diagnose real VTE source lifetimes under sanitizers, including a no-Lyn baseline")
 arguments = parser.parse_args()
+if arguments.source_lifetimes and arguments.desktop:
+    parser.error("--source-lifetimes requires native mode")
 if arguments.event_storm and arguments.desktop:
     parser.error("--event-storm requires native mode")
 if arguments.reconnect_discovery and arguments.desktop:
@@ -235,6 +240,26 @@ with tempfile.TemporaryDirectory(prefix="lyn-gnome-build-") as directory:
                         "-fPIC", "-fstack-protector-strong", "-shared", str(root / source),
                         *extra_sources, "-o", str(output), *flags], check=True)
     print("Native prototype SHA256:", hashlib.sha256(module.read_bytes()).hexdigest(), flush=True)
+    if arguments.source_lifetimes:
+        subprocess.run([sys.executable, str(root / "source_lifetime_controller_test.py")], check=True)
+        lifetime_results = []
+        for source in ("source_lifetime_baseline.c", "source_lifetime_test.c"):
+            instrumented = destination / (Path(source).stem + "-sanitized")
+            sources = [str(root / source)]
+            if source == "source_lifetime_test.c":
+                sources.extend(str(root.parent / file) for file in ("wire.c", "native_channel.c", "native_discovery.c"))
+            subprocess.run(["gcc", "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+                            "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                            "-fstack-protector-strong", *sources, "-o", str(instrumented), *flags], check=True)
+            # Run each independent comparison once even if the baseline fails;
+            # retain every failure. Equal reports are never a sanitizer PASS.
+            result = subprocess.run([sys.executable, str(root / "isolated_run.py"), str(sdk) if sdk else "-",
+                                     str(root / "source_lifetime_test.py"), str(instrumented), str(sdk) if sdk else "-"],
+                                    env=lifetime_environment(os.environ), check=False)
+            lifetime_results.append({"source": source, "exitCode": result.returncode})
+        print(json.dumps({"check": "vte_source_lifetimes", "results": lifetime_results}), flush=True)
+        if any(result["exitCode"] != 0 for result in lifetime_results):
+            raise SystemExit("VTE source lifetime sanitizer acceptance incomplete; comparison failures retained")
     if arguments.native_metrics or arguments.event_storm:
         subprocess.run([sys.executable, str(root / "resource_controller_test.py")], check=True)
         extra_sources = [str(root.parent / file) for file in ("wire.c", "native_channel.c", "native_discovery.c")]

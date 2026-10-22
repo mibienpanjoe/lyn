@@ -128,6 +128,8 @@ The backend suite also saves synthetic PNG/WAV captures and checks media preserv
 
 `pnpm provider:gnome:test --native-safety` adds ASan/UBSan transport, lifecycle, discovery and real-GTK traversal fixtures with leak detection enabled (requires GCC sanitizer runtimes). Ordinary runs also test silent peers, partial input and saturated private sockets, checking exact native deadline boundaries separately from real-time non-blocking behavior. This does not instrument the GNOME-loaded module or establish full GTK/memory safety.
 
+`pnpm provider:gnome:test --source-lifetimes` is a separate, strict sanitizer diagnostic for 100 mapped VTE widget lifetimes, with and without Lyn. It currently fails on Fontconfig reports in both cases; matching reports do not count as memory acceptance. See the [diagnostic scope and limitations](docs/gnome_native_protocol.md#isolated-desktop-fixture).
+
 `pnpm provider:gnome:test --native-metrics` compares short CPU/RSS observations from separate private two-window GNOME servers, without and with a test-instrumented module, then sends 100 metadata queries. Callback-body count/total/max are reported separately as cumulative measurements. This is not an exact module-overhead benchmark, prolonged stability test or installed acceptance.
 
 `pnpm provider:gnome:test --event-storm` exercises 200 private GNOME tab switches concurrently with bounded metadata queries, reporting CPU ticks, sampled RSS, callback bodies and before/after FD counts. It does not capture notes or establish installed acceptance; see the [coverage limits](docs/gnome_native_protocol.md#capture-integration-and-continuity).
