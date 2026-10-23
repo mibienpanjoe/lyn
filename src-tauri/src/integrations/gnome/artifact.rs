@@ -3,7 +3,7 @@
 #![allow(dead_code)] // Installer consumes this boundary in the next increment.
 
 #[path = "../../../native_artifact.rs"]
-mod format;
+pub(super) mod format;
 
 pub(crate) struct Artifact {
     pub(crate) manifest: format::Manifest,

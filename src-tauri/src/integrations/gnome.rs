@@ -6,6 +6,7 @@ pub(crate) mod artifact;
 mod directories;
 mod lock;
 mod managed;
+mod module_store;
 mod ownership;
 mod replacement;
 mod service;
@@ -76,7 +77,7 @@ mod tests {
 
     #[test]
     fn native_activation_fixture_entry() {
-        use std::{fs, os::unix::fs::MetadataExt};
+        use std::{fs, io::Read, os::unix::fs::MetadataExt};
         let Some(root) = std::env::var_os("LYN_PRIVATE_NATIVE_ACTIVATION_ROOT") else {
             return;
         };
@@ -102,7 +103,38 @@ mod tests {
         let state_path = root.join("state");
         let state = directories::open_private(&state_path, true).unwrap();
         let target = directories::open_drop_ins(&root.join("drop-ins"), true).unwrap();
-        let rendered = render_activation(module, &state_path.join("launcher-v1")).unwrap();
+        // Test-only bundle path comes from the guarded controller. Production
+        // obtains these same validated bytes only from artifact::embedded().
+        let mut bytes = Vec::new();
+        fs::File::open(module)
+            .unwrap()
+            .take((artifact::format::MAX_MODULE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .unwrap();
+        let mut manifest = Vec::new();
+        fs::File::open(
+            module
+                .parent()
+                .unwrap()
+                .join(artifact::format::MANIFEST_NAME),
+        )
+        .unwrap()
+        .take((artifact::format::MAX_MANIFEST_BYTES + 1) as u64)
+        .read_to_end(&mut manifest)
+        .unwrap();
+        let artifact = artifact::Artifact {
+            manifest: artifact::format::validate(&manifest, &bytes).unwrap(),
+            bytes: bytes.leak(),
+        };
+        let modules_path = state_path.join("modules");
+        let modules = directories::open_private(&modules_path, true).unwrap();
+        let store = module_store::ModuleStore::open(&modules).unwrap();
+        let stored = store.retain(&artifact).unwrap();
+        let module_path = modules_path
+            .join(&artifact.manifest.sha256)
+            .join(artifact::format::MODULE_NAME);
+        store.verify(&stored, &artifact).unwrap();
+        let rendered = render_activation(&module_path, &state_path.join("launcher-v1")).unwrap();
         let mut transaction =
             transaction::ActivationTransaction::begin(&state, &target, rendered).unwrap();
         transaction.apply().unwrap();

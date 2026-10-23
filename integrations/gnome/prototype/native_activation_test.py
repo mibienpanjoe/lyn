@@ -1,4 +1,4 @@
-"""Actual generated wrapper -> native module -> admitted broker -> backend save."""
+"""Stored native bundle -> generated wrapper -> admitted broker -> backend save."""
 
 import json
 import os
@@ -31,6 +31,10 @@ def run(module, preserved, executable, sdk):
                                    LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(module))
         subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_activation_fixture_entry",
                         "--test-threads=1"], env=fixture_environment, check=True, timeout=8)
+        import hashlib
+        stored_module = root / "state/modules" / hashlib.sha256(module.read_bytes()).hexdigest() / module.name
+        assert stored_module.read_bytes() == module.read_bytes()
+        assert stored_module.stat().st_mode & 0o7777 == 0o400
         broker = RustProbe(root, executable, published=True)
         server = None
         pin = None
@@ -46,7 +50,7 @@ def run(module, preserved, executable, sdk):
                                                  env=environment, text=True, timeout=3).strip().strip("'")
             profile = f"org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:{profile_id}/"
             command = shlex.join(["/usr/bin/python3", str(Path(__file__).with_name("native_child_test.py")),
-                                  str(module), str(preserved), str(root / "child.sock")])
+                                  str(stored_module), str(preserved), str(root / "child.sock")])
             for key, value in (("use-custom-command", "true"), ("custom-command", command)):
                 subprocess.run(["gsettings", "set", profile, key, value], env=environment, check=True, timeout=3)
             server = subprocess.Popen([str(root / "state/launcher-v1"), f"--app-id={app_id}"], env=environment,
@@ -56,7 +60,7 @@ def run(module, preserved, executable, sdk):
                                  expected_cwd=Path.home())
             broker.handshake(server)
             maps = Path(f"/proc/{server.pid}/maps").read_text()
-            assert str(module) in maps and str(preserved) in maps
+            assert str(stored_module) in maps and str(module) not in maps and str(preserved) in maps
             client = "/usr/bin/gnome-terminal.real" if Path("/usr/bin/gnome-terminal.real").is_file() else "gnome-terminal"
             subprocess.run([client, f"--app-id={app_id}", "--window", "--title=Lyn Native Activation",
                             f"--working-directory={project}", "--", "/usr/bin/sleep", "40"], check=True, timeout=5)

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 
-from build import ROOT, build, module_flags
+from build import ROOT, build_bundle, module_flags
 
 
 def main():
@@ -17,8 +17,9 @@ def main():
     flags = module_flags(sdk)
     with tempfile.TemporaryDirectory(prefix="lyn-native-build-") as directory:
         output = Path(directory)
-        module = output / "liblyn-gnome-native.so"
-        build(module, sdk)
+        bundle = output / "bundle"
+        build_bundle(bundle, sdk)
+        module = bundle / "liblyn-gnome-native.so"
         preserved = output / "libexisting-module.so"
         common = ["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-fstack-protector-strong"]
         subprocess.run([*common, "-fPIC", "-shared", str(ROOT / "prototype/preserved_module.c"),
