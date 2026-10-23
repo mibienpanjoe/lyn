@@ -3,6 +3,7 @@
 use std::path::Path;
 
 pub(crate) mod artifact;
+mod coordinator;
 mod directories;
 mod lock;
 mod managed;
@@ -129,34 +130,15 @@ mod tests {
 
     #[test]
     fn native_activation_fixture_entry() {
-        use std::{fs, io::Read, os::unix::fs::MetadataExt};
+        use std::{fs, io::Read};
         let Some(root) = std::env::var_os("LYN_PRIVATE_NATIVE_ACTIVATION_ROOT") else {
             return;
         };
         let root = Path::new(&root);
-        let metadata = fs::symlink_metadata(root).unwrap();
-        assert!(root.is_absolute() && root.parent() == Some(std::env::temp_dir().as_path()));
-        assert!(
-            root.file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .starts_with("lyn-na-")
-        );
-        assert!(
-            metadata.is_dir()
-                && metadata.uid() == unsafe { libc::geteuid() }
-                && metadata.mode() & 0o7777 == 0o700
-        );
-        assert_eq!(root.canonicalize().unwrap(), root);
+        require_private_native_bus(root);
         let module = std::env::var_os("LYN_PRIVATE_NATIVE_ACTIVATION_MODULE").unwrap();
         let module = Path::new(&module);
         assert!(module.is_absolute() && module.is_file());
-        let state_path = root.join("state");
-        let state = directories::open_private(&state_path, true).unwrap();
-        let target =
-            directories::open_drop_ins(&root.join("units/gnome-terminal-server.service.d"), true)
-                .unwrap();
         // Test-only bundle path comes from the guarded controller. Production
         // obtains these same validated bytes only from artifact::embedded().
         let mut bytes = Vec::new();
@@ -180,34 +162,15 @@ mod tests {
             manifest: artifact::format::validate(&manifest, &bytes).unwrap(),
             bytes: bytes.leak(),
         };
-        let modules_path = state_path.join("modules");
-        let modules = directories::open_private(&modules_path, true).unwrap();
-        let store = module_store::ModuleStore::open(&modules).unwrap();
-        let stored = store.retain(&artifact).unwrap();
-        let module_path = modules_path
-            .join(&artifact.manifest.sha256)
-            .join(artifact::format::MODULE_NAME);
-        store.verify(&stored, &artifact).unwrap();
-        let rendered = render_activation(&module_path, &state_path.join("launcher-v1")).unwrap();
-        let mut transaction =
-            transaction::ActivationTransaction::begin(&state, &target, rendered).unwrap();
-        transaction.apply().unwrap();
-        assert_eq!(
-            transaction::inspect_activation_files(Some(&state), Some(&target)),
-            transaction::ActivationFilesState::Owned
-        );
+        let result = coordinator::prepare_private(root, &artifact).unwrap();
+        assert_eq!(result.definition, service::DefinitionState::NeedsReload);
     }
 
-    #[test]
-    fn native_managed_service_fixture_entry() {
+    fn require_private_native_bus(root: &Path) {
         use std::{
             fs,
             os::unix::fs::{FileTypeExt, MetadataExt},
         };
-        let Some(root) = std::env::var_os("LYN_PRIVATE_NATIVE_ACTIVATION_ROOT") else {
-            return;
-        };
-        let root = Path::new(&root);
         let runtime = std::env::var_os("XDG_RUNTIME_DIR").unwrap();
         let runtime = Path::new(&runtime);
         for (path, prefix) in [
@@ -243,6 +206,15 @@ mod tests {
         assert!(metadata.file_type().is_socket() && metadata.uid() == unsafe { libc::geteuid() });
         let address = std::env::var("DBUS_SESSION_BUS_ADDRESS").unwrap();
         assert!(private_managed_bus_address(&address, &bus));
+    }
+
+    #[test]
+    fn native_managed_service_fixture_entry() {
+        let Some(root) = std::env::var_os("LYN_PRIVATE_NATIVE_ACTIVATION_ROOT") else {
+            return;
+        };
+        let root = Path::new(&root);
+        require_private_native_bus(root);
         let owned = service::OwnedActivation::open(
             &root.join("state"),
             &root.join("units/gnome-terminal-server.service.d"),

@@ -47,7 +47,7 @@ def run(root, mode, ready, sdk):
         raise RuntimeError("Only the exact private fixture bus is permitted")
     if root.parent != Path("/tmp") or not root.name.startswith("lyn-na-") or ready.parent != root:
         raise RuntimeError("Expected the isolated activation root")
-    assert mode in ("loaded", "pending", "changing")
+    assert mode in ("stock", "loaded", "pending", "changing")
     unit = "gnome-terminal-server.service"
     unit_path = "/org/freedesktop/systemd1/unit/gnome_2dterminal_2dserver_2eservice"
     manager = "org.freedesktop.systemd1.Manager"
@@ -56,11 +56,11 @@ def run(root, mode, ready, sdk):
     server = "/usr/libexec/gnome-terminal-server"
     launcher = str(root / "state/launcher-v1")
     drop_in = str(root / "units" / f"{unit}.d/90-lyn-native.conf")
-    executable = server if mode == "pending" else launcher
+    executable = server if mode in ("stock", "pending") else launcher
     properties = {
         "LoadState": GLib.Variant("s", "loaded"),
         "FragmentPath": GLib.Variant("s", f"/usr/lib/systemd/user/{unit}"),
-        "DropInPaths": GLib.Variant("as", [] if mode == "pending" else [drop_in]),
+        "DropInPaths": GLib.Variant("as", [] if mode in ("stock", "pending") else [drop_in]),
         "NeedDaemonReload": GLib.Variant("b", mode == "pending"),
         "Transient": GLib.Variant("b", False),
         "Names": GLib.Variant("as", [unit]),

@@ -351,16 +351,34 @@ pub(super) fn inspect_unmodified_service() -> Result<()> {
 }
 
 fn inspect_address(address: &str) -> Result<()> {
-    inspect_address_for(address, None).map(|_| ())
+    inspect_address_for(address, None, None).map(|_| ())
+}
+
+fn target_is_searched(paths: &[String], target: &std::path::Path) -> bool {
+    paths
+        .iter()
+        .filter(|root| std::path::Path::new(root).join(format!("{UNIT}.d")) == target)
+        .count()
+        == 1
+}
+
+pub(super) fn inspect_unmodified_service_at(target: &std::path::Path) -> Result<()> {
+    let address =
+        std::env::var("DBUS_SESSION_BUS_ADDRESS").map_err(|_| ServiceRefusal::Unavailable)?;
+    inspect_address_for(&address, None, Some(target)).map(|_| ())
 }
 
 pub(super) fn inspect_owned_service(owned: &OwnedActivation) -> Result<DefinitionState> {
     let address =
         std::env::var("DBUS_SESSION_BUS_ADDRESS").map_err(|_| ServiceRefusal::Unavailable)?;
-    inspect_address_for(&address, Some(owned))
+    inspect_address_for(&address, Some(owned), None)
 }
 
-fn inspect_address_for(address: &str, owned: Option<&OwnedActivation>) -> Result<DefinitionState> {
+fn inspect_address_for(
+    address: &str,
+    owned: Option<&OwnedActivation>,
+    required_target: Option<&std::path::Path>,
+) -> Result<DefinitionState> {
     if address.len() > 4096 || !address.starts_with("unix:path=/") || address.contains(';') {
         return Err(ServiceRefusal::Unavailable);
     }
@@ -409,6 +427,9 @@ fn inspect_address_for(address: &str, owned: Option<&OwnedActivation>) -> Result
     };
     let vendor = TrustedFile::open(fragment)?;
     let paths = unit_paths(&connection, &budget, &manager)?;
+    if required_target.is_some_and(|target| !target_is_searched(&paths, target)) {
+        return Err(ServiceRefusal::Unsupported);
+    }
     let vendor_inode = (vendor.metadata.dev(), vendor.metadata.ino());
     let disk = overrides::inspect_for(&paths, vendor_inode, allowed.as_ref())?;
     let executable = TrustedFile::open(SERVER)?;
@@ -458,6 +479,23 @@ fn inspect_address_for(address: &str, owned: Option<&OwnedActivation>) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_install_target_must_be_in_the_actual_lookup_roots_once() {
+        let roots = vec!["/private/units".to_owned()];
+        let target = std::path::Path::new("/private/units/gnome-terminal-server.service.d");
+        assert!(target_is_searched(&roots, target));
+        assert!(!target_is_searched(&[], target));
+        assert!(!target_is_searched(&["/other/units".into()], target));
+        assert!(!target_is_searched(
+            &[roots[0].clone(), roots[0].clone()],
+            target
+        ));
+        assert!(!target_is_searched(
+            &roots,
+            std::path::Path::new("/private/units/gnome-.service.d")
+        ));
+    }
 
     fn reference() -> Properties {
         let mut properties = BTreeMap::new();

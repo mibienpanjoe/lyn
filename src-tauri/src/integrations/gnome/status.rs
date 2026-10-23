@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-fn locations(
+pub(super) fn locations(
     home: &Path,
     data: Option<&OsStr>,
     config: Option<&OsStr>,

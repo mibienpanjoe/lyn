@@ -14,7 +14,10 @@ use std::{
     path::{Component, Path},
 };
 
-use super::{activation_path, managed::ManagedDirectory};
+use super::{
+    activation_path,
+    managed::{ManagedDirectory, basename},
+};
 
 fn check_ancestor(directory: &File) -> io::Result<()> {
     let metadata = directory.metadata()?;
@@ -40,6 +43,36 @@ fn check_ancestor(directory: &File) -> io::Result<()> {
 /// Never chmod or remove an existing directory to make it pass validation.
 pub(super) fn open_private(path: &Path, create: bool) -> io::Result<ManagedDirectory> {
     ManagedDirectory::from_directory(open_directory(path, create)?)
+}
+
+/// Resolve a child from the retained private parent, never its mutable pathname.
+pub(super) fn open_private_child(
+    parent: &ManagedDirectory,
+    name: &str,
+    create: bool,
+) -> io::Result<ManagedDirectory> {
+    parent.check_private()?;
+    let name = basename(name)?;
+    let open = || parent.open(&name, libc::O_RDONLY | libc::O_DIRECTORY);
+    let file = match open() {
+        Ok(file) => file,
+        Err(error) if create && error.kind() == io::ErrorKind::NotFound => {
+            if unsafe { libc::mkdirat(parent.directory.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+                let error = io::Error::last_os_error();
+                if error.kind() != io::ErrorKind::AlreadyExists {
+                    return Err(error);
+                }
+            }
+            let file = open()?;
+            parent.sync_directory()?;
+            file
+        }
+        Err(error) => return Err(error),
+    };
+    let child = ManagedDirectory::from_directory(file)?;
+    parent.check_private()?;
+    parent.same_entry(&name, &child.directory)?;
+    Ok(child)
 }
 
 /// Same ancestry checks, but a protected user-owned final directory may keep
@@ -121,6 +154,25 @@ mod tests {
         fs,
         os::unix::fs::{PermissionsExt, symlink},
     };
+
+    #[test]
+    fn child_creation_stays_on_the_pinned_parent_after_path_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let path = root.path().join("state");
+        let parent = open_private(&path, true).unwrap();
+        fs::rename(&path, root.path().join("original")).unwrap();
+        fs::create_dir(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        open_private_child(&parent, "modules", true).unwrap();
+        assert!(root.path().join("original/modules").is_dir());
+        assert_eq!(fs::read_dir(&path).unwrap().count(), 0);
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), root.path().join("original/redirect")).unwrap();
+        assert!(open_private_child(&parent, "redirect", true).is_err());
+        assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+        assert!(open_private_child(&parent, "../escape", true).is_err());
+    }
 
     #[test]
     fn private_tree_can_be_created_and_reopened_without_changing_existing_modes() {

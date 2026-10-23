@@ -1,6 +1,7 @@
 """Stored native bundle -> generated wrapper -> admitted broker -> backend save."""
 
 import json
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import re
@@ -19,32 +20,38 @@ from resource_test import stop_server
 from rust_probe import RustProbe
 
 
+@contextmanager
+def simulated_manager(root, mode, sdk, environment):
+    ready = root / f"manager-{mode}.sock"
+    with socket.socket(socket.AF_UNIX) as listener:
+        listener.bind(str(ready))
+        ready.chmod(0o600)
+        listener.listen(1)
+        listener.settimeout(3)
+        process = subprocess.Popen(["/usr/bin/python3", str(Path(__file__).with_name("managed_service_fixture.py")),
+                                    str(root), mode, str(ready), str(sdk) if sdk else "-"], env=environment)
+        try:
+            channel, _ = listener.accept()
+            with channel:
+                channel.settimeout(1)
+                assert channel.recv(1) == b"R"
+            yield
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3)
+
+
 def check_managed_service(root, executable, sdk, environment):
     for mode in ("pending", "loaded", "changing"):
-        ready = root / f"manager-{mode}.sock"
-        with socket.socket(socket.AF_UNIX) as listener:
-            listener.bind(str(ready))
-            ready.chmod(0o600)
-            listener.listen(1)
-            listener.settimeout(3)
-            process = subprocess.Popen(["/usr/bin/python3", str(Path(__file__).with_name("managed_service_fixture.py")),
-                                        str(root), mode, str(ready), str(sdk) if sdk else "-"], env=environment)
-            try:
-                channel, _ = listener.accept()
-                with channel:
-                    channel.settimeout(1)
-                    assert channel.recv(1) == b"R"
-                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_managed_service_fixture_entry",
-                                "--test-threads=1"], env=dict(environment, LYN_PRIVATE_MANAGED_DEFINITION=mode),
-                               check=True, timeout=4)
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=3)
+        with simulated_manager(root, mode, sdk, environment):
+            subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_managed_service_fixture_entry",
+                            "--test-threads=1"], env=dict(environment, LYN_PRIVATE_MANAGED_DEFINITION=mode),
+                           check=True, timeout=4)
     print("PASS: private simulated manager API distinguishes pending/loaded definitions and refuses changed properties; no service action", flush=True)
 
 
@@ -58,8 +65,9 @@ def run(module, preserved, executable, sdk):
         project = repositories(root, ("alpha",))[0]
         fixture_environment = dict(os.environ, LYN_PRIVATE_NATIVE_ACTIVATION_ROOT=str(root),
                                    LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(module))
-        subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_activation_fixture_entry",
-                        "--test-threads=1"], env=fixture_environment, check=True, timeout=8)
+        with simulated_manager(root, "stock", sdk, fixture_environment):
+            subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_activation_fixture_entry",
+                            "--test-threads=1"], env=fixture_environment, check=True, timeout=8)
         import hashlib
         stored_module = root / "state/modules" / hashlib.sha256(module.read_bytes()).hexdigest() / module.name
         assert stored_module.read_bytes() == module.read_bytes()
