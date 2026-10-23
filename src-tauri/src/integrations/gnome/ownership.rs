@@ -47,9 +47,12 @@ impl Receipt {
     }
 
     pub(super) fn same_payload_identity(&self, other: &Self) -> bool {
+        self.name == other.name && self.same_renamed_payload(other)
+    }
+
+    pub(super) fn same_renamed_payload(&self, other: &Self) -> bool {
         self.version == other.version
             && self.same_inode(other)
-            && self.name == other.name
             && self.mode == other.mode
             && self.length == other.length
             && self.sha256 == other.sha256

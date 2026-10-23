@@ -82,6 +82,7 @@ impl<'a> ActivationTransaction<'a> {
         state.require_absent(recovery::PENDING_INSTALL)?;
         state.require_absent(update::CLEANUP_PENDING)?;
         state.require_absent(update::PRECOMMIT_PENDING)?;
+        state.require_absent(update::COMPENSATION_PENDING)?;
         for name in update::EXCHANGE_NAMES {
             state.require_absent(name)?;
         }
@@ -108,6 +109,7 @@ impl<'a> ActivationTransaction<'a> {
         if pending(state, recovery::PENDING_INSTALL)? {
             if pending(state, update::CLEANUP_PENDING)?
                 || pending(state, update::PRECOMMIT_PENDING)?
+                || pending(state, update::COMPENSATION_PENDING)?
             {
                 return Err(refused());
             }

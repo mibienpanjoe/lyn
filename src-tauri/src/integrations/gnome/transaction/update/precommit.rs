@@ -1,6 +1,8 @@
 //! Persistent refusal marker: prepared does not mean committed after restart.
 
+mod compensation;
 mod early;
+pub(in crate::integrations::gnome::transaction) use compensation::COMPENSATION_PENDING;
 pub(in crate::integrations::gnome::transaction) use early::recover_early;
 
 pub(in crate::integrations::gnome::transaction) const EXCHANGE_NAMES: [&str; 3] = [
@@ -100,6 +102,7 @@ impl ActivationTransaction<'_> {
     }
 
     fn retire_exchanges(&mut self) -> io::Result<()> {
+        self.retire_compensation()?;
         for role in (0..3).rev() {
             self.lock.check()?;
             let update = self.update.as_mut().ok_or_else(refused)?;

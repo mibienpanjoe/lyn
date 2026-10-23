@@ -92,6 +92,7 @@ fn validate_manifest(
 impl ActivationTransaction<'_> {
     pub(super) fn prepare_cleanup_record(&mut self) -> io::Result<()> {
         self.lock.check()?;
+        self.state.require_absent(super::COMPENSATION_PENDING)?;
         if self.files.len() != 3 {
             return Err(refused());
         }
@@ -220,6 +221,7 @@ pub(in crate::integrations::gnome::transaction) fn recover_cleanup(
     };
     let snapshot: CleanupRecord =
         serde_json::from_slice(&journal.content).map_err(|_| refused())?;
+    state.require_absent(super::COMPENSATION_PENDING)?;
     snapshot.validate()?;
     // Hold all current inodes and preflight every extant backup before removing
     // any. Missing backups are allowed only under this durable cleanup decision.

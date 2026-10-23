@@ -1,7 +1,9 @@
 //! Inverse replay for recorded exchanges before explicit update commitment.
 
 use super::super::super::{DROP_IN, LAUNCHER, MANIFEST, Manifest, refused};
-use super::{EXCHANGE_NAMES, ExchangeRecord, PRECOMMIT_PENDING, PreparedUpdate};
+use super::{
+    COMPENSATION_PENDING, EXCHANGE_NAMES, ExchangeRecord, PRECOMMIT_PENDING, PreparedUpdate,
+};
 use crate::integrations::gnome::{
     lock::InstallationLock,
     managed::{ManagedDirectory, OwnedFile, PublishFailure},
@@ -131,14 +133,19 @@ fn manifest_nodes(
     state: &ManagedDirectory,
     prepared: &PreparedUpdate,
     exchange: Option<&ExchangeRecord>,
+    compensation: Option<&ExchangeRecord>,
     already_canonical: bool,
     undo_name: &str,
-) -> io::Result<(Option<OwnedFile>, Option<OwnedFile>)> {
+) -> io::Result<(Option<OwnedFile>, Option<OwnedFile>, Option<OwnedFile>)> {
     let mut original = None;
     let mut replacement = None;
+    let mut restored = None;
     let mut names = vec![MANIFEST, undo_name];
     if let Some(exchange) = exchange {
         names.push(exchange.candidate.filename());
+    }
+    if let Some(compensation) = compensation {
+        names.push(compensation.candidate.filename());
     }
     for name in names {
         if name == MANIFEST && already_canonical {
@@ -157,10 +164,20 @@ fn manifest_nodes(
                 return Err(refused());
             }
         } else if name != undo_name {
-            let exchange = exchange.ok_or_else(refused)?;
-            let file = exchange.candidate.reopen_exchange_slot(state, name)?;
-            if replacement.replace(file).is_some() {
-                return Err(refused());
+            if let Some(file) = exchange
+                .and_then(|exchange| exchange.candidate.reopen_exchange_slot(state, name).ok())
+            {
+                if replacement.replace(file).is_some() {
+                    return Err(refused());
+                }
+            } else {
+                let file = compensation
+                    .ok_or_else(refused)?
+                    .candidate
+                    .reopen_exchange_slot(state, name)?;
+                if restored.replace(file).is_some() {
+                    return Err(refused());
+                }
             }
         } else {
             return Err(refused());
@@ -169,7 +186,7 @@ fn manifest_nodes(
     if !already_canonical && original.is_none() {
         return Err(refused());
     }
-    Ok((original, replacement))
+    Ok((original, replacement, restored))
 }
 
 pub(in crate::integrations::gnome::transaction) fn recover_early(
@@ -179,6 +196,7 @@ pub(in crate::integrations::gnome::transaction) fn recover_early(
 ) -> io::Result<()> {
     lock.check()?;
     let Some(header) = optional_state(state, PRECOMMIT_PENDING)? else {
+        state.require_absent(COMPENSATION_PENDING)?;
         for name in EXCHANGE_NAMES {
             state.require_absent(name)?;
         }
@@ -217,6 +235,24 @@ pub(in crate::integrations::gnome::transaction) fn recover_early(
     }
     let current = optional_state(state, MANIFEST)?;
     let manifest_exchange = exchanges[2].as_ref().map(|entry| &entry.1);
+    let compensation = if let Some(file) = optional_state(state, COMPENSATION_PENDING)? {
+        let body: ExchangeRecord = serde_json::from_slice(&file.content).map_err(|_| refused())?;
+        super::compensation::validate(state, &body, &prepared, manifest_exchange)?;
+        Some((file, body))
+    } else {
+        None
+    };
+    if let Some((_, body)) = &compensation {
+        // With compensation authority, content alone cannot authorize an
+        // unknown active inode. Both permissible active identities are logged.
+        if body
+            .candidate
+            .reopen_exchange_slot(state, MANIFEST)
+            .is_err()
+        {
+            body.previous.reopen_exchange_slot(state, MANIFEST)?;
+        }
+    }
     let restored = restored_receipts(
         state,
         target,
@@ -238,7 +274,7 @@ pub(in crate::integrations::gnome::transaction) fn recover_early(
         restored.as_ref().map(|receipts| &receipts[1]),
         DROP_IN,
     )?;
-    let already_canonical = if !launcher.swapped && !drop_in.swapped {
+    let mut already_canonical = if !launcher.swapped && !drop_in.swapped {
         if let Some(file) = &current {
             file.content == canonical(state, target, &launcher.original, &drop_in.original)?
         } else {
@@ -247,19 +283,63 @@ pub(in crate::integrations::gnome::transaction) fn recover_early(
     } else {
         false
     };
+    if let Some((_, body)) = &compensation {
+        if launcher.swapped || drop_in.swapped {
+            return Err(refused());
+        }
+        already_canonical = body.candidate.reopen_exchange_slot(state, MANIFEST).is_ok();
+        if already_canonical
+            && current.as_ref().ok_or_else(refused)?.content
+                != canonical(state, target, &launcher.original, &drop_in.original)?
+        {
+            return Err(refused());
+        }
+    }
     let undo_name = format!(".lyn-undo-{}-manifest", prepared.nonce);
-    let (mut original_manifest, mut replacement_manifest) = manifest_nodes(
-        state,
-        &prepared,
-        manifest_exchange,
-        already_canonical,
-        &undo_name,
-    )?;
+    let (mut original_manifest, mut replacement_manifest, mut compensation_manifest) =
+        manifest_nodes(
+            state,
+            &prepared,
+            manifest_exchange,
+            compensation.as_ref().map(|entry| &entry.1),
+            already_canonical,
+            &undo_name,
+        )?;
     state.verify(&header)?;
     for (file, _) in exchanges.iter().flatten() {
         state.verify(file)?;
     }
+    if let Some((file, _)) = &compensation {
+        state.verify(file)?;
+    }
+    if compensation.is_some() && !already_canonical {
+        let candidate = compensation_manifest.as_ref().ok_or_else(refused)?;
+        if candidate.content != canonical(state, target, &launcher.original, &drop_in.original)? {
+            return Err(refused());
+        }
+    }
     state.sync_directory()?;
+    if compensation.is_some() && !already_canonical {
+        let previous = if original_manifest
+            .as_ref()
+            .is_some_and(|file| file.name.to_bytes() == MANIFEST.as_bytes())
+        {
+            original_manifest.as_mut().ok_or_else(refused)?
+        } else {
+            replacement_manifest.as_mut().ok_or_else(refused)?
+        };
+        lock.check()?;
+        state
+            .exchange(
+                previous,
+                compensation_manifest.as_mut().ok_or_else(refused)?,
+            )?
+            .durability?;
+        // The recorded candidate is now the active canonical manifest; no
+        // unjournaled manifest publication is needed during recovery.
+        compensation_manifest = None;
+        already_canonical = true;
+    }
     for (directory, slot) in [(target, &mut drop_in), (state, &mut launcher)] {
         lock.check()?;
         if slot.swapped {
@@ -312,6 +392,12 @@ pub(in crate::integrations::gnome::transaction) fn recover_early(
     state.sync_directory()?;
     target.sync_directory()?;
     let mut copies = Vec::new();
+    if let Some(file) = compensation_manifest {
+        if file.name.to_bytes() == MANIFEST.as_bytes() {
+            return Err(refused());
+        }
+        copies.push((state, file));
+    }
     if let Some(file) = launcher.replacement {
         copies.push((state, file));
     }
@@ -339,6 +425,10 @@ pub(in crate::integrations::gnome::transaction) fn recover_early(
     }
     state.sync_directory()?;
     target.sync_directory()?;
+    if let Some((file, _)) = compensation {
+        lock.check()?;
+        state.remove(&file)?;
+    }
     for (file, _) in exchanges.into_iter().flatten().rev() {
         lock.check()?;
         state.remove(&file)?;

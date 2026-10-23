@@ -3,7 +3,9 @@
 mod cleanup;
 mod precommit;
 pub(super) use cleanup::{CLEANUP_PENDING, recover_cleanup};
-pub(super) use precommit::{EXCHANGE_NAMES, PRECOMMIT_PENDING, recover_early};
+pub(super) use precommit::{
+    COMPENSATION_PENDING, EXCHANGE_NAMES, PRECOMMIT_PENDING, recover_early,
+};
 
 use super::super::{
     RenderedActivation,
@@ -31,6 +33,7 @@ pub(super) struct PendingUpdate {
     precommit_record: Option<OwnedFile>,
     precommit_retired: bool,
     exchange_records: [Option<OwnedFile>; 3],
+    compensation_record: Option<OwnedFile>,
     rolling_back: bool,
 }
 
@@ -41,6 +44,11 @@ impl ActivationTransaction<'_> {
             self.directory(*place).verify(file)?;
         }
         if let Some(update) = &self.update {
+            if let Some(record) = &update.compensation_record {
+                self.state.verify(record)?;
+            } else {
+                self.state.require_absent(COMPENSATION_PENDING)?;
+            }
             if let Some(record) = &update.precommit_record {
                 self.state.verify(record)?;
             }
@@ -102,9 +110,36 @@ impl ActivationTransaction<'_> {
         bytes: &[u8],
         executable: bool,
     ) -> io::Result<()> {
-        self.candidate(place, bytes, executable)?;
-        if !self.update.as_ref().ok_or_else(refused)?.rolling_back {
+        let compensating = self.update.as_ref().ok_or_else(refused)?.rolling_back;
+        if compensating && role != 2 {
+            return Err(refused());
+        }
+        if compensating
+            && self
+                .update
+                .as_ref()
+                .ok_or_else(refused)?
+                .compensation_record
+                .is_some()
+        {
+            self.check_compensation_candidate(bytes)?;
+            self.state.sync_directory()?;
+        } else {
+            self.candidate(place, bytes, executable)?;
+            if compensating {
+                self.record_compensation()?;
+            }
+        }
+        if !compensating {
             self.record_exchange(role, place)?;
+            #[cfg(test)]
+            if role == 2 {
+                self.precommit_checkpoint(11)?;
+            }
+        }
+        #[cfg(test)]
+        if compensating {
+            self.precommit_checkpoint(9)?;
         }
         let directory = match place {
             Place::State => self.state,
@@ -120,6 +155,10 @@ impl ActivationTransaction<'_> {
             place,
             file: previous,
         });
+        #[cfg(test)]
+        if compensating {
+            self.precommit_checkpoint(10)?;
+        }
         // Record the physical effect before reporting a durability failure.
         exchanged.durability
     }
@@ -147,6 +186,7 @@ impl ActivationTransaction<'_> {
         self.preflight_update()?;
         self.state.require_absent(CLEANUP_PENDING)?;
         self.state.require_absent(PRECOMMIT_PENDING)?;
+        self.state.require_absent(COMPENSATION_PENDING)?;
         for name in EXCHANGE_NAMES {
             self.state.require_absent(name)?;
         }
@@ -242,6 +282,12 @@ impl ActivationTransaction<'_> {
             .is_some_and(|update| update.precommit_record.is_none())
         {
             self.state.require_absent(PRECOMMIT_PENDING)?;
+            // Failed preparation cannot have changed any active role.
+            self.clean_candidates()?;
+            self.sync_update_directories()?;
+            self.update = None;
+            self.phase = Phase::Complete;
+            return Ok(());
         }
         self.update.as_mut().ok_or_else(refused)?.ready = false;
         self.update.as_mut().ok_or_else(refused)?.rolling_back = true;
@@ -269,7 +315,15 @@ impl ActivationTransaction<'_> {
                 exchanged.durability?;
             }
         }
-        self.clean_candidates()?;
+        if self
+            .update
+            .as_ref()
+            .ok_or_else(refused)?
+            .compensation_record
+            .is_none()
+        {
+            self.clean_candidates()?;
+        }
         if !self.update.as_ref().ok_or_else(refused)?.manifest_refreshed {
             let bytes = self.manifest_bytes()?;
             let result = self.replace_role(2, Place::State, &bytes, false);
