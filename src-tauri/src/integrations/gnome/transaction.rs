@@ -299,4 +299,39 @@ mod tests {
             b"user edit"
         );
     }
+
+    #[test]
+    fn protected_0755_drop_ins_support_install_update_resume_and_uninstall() {
+        let (root, state, target, rendered) = fixture();
+        let target_path = root.path().join("drop-ins");
+        drop(target);
+        fs::set_permissions(&target_path, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(
+            target_path.join("user.conf"),
+            b"[Service]\nEnvironment=KEEP=1\n",
+        )
+        .unwrap();
+        let target = super::super::directories::open_drop_ins(&target_path, false).unwrap();
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        let new = super::super::render_activation(
+            &root.path().join("native-v2.so"),
+            &root.path().join("state").join(LAUNCHER),
+        )
+        .unwrap();
+        transaction.update(new).unwrap();
+        transaction.finish_update().unwrap();
+        drop(transaction);
+        let mut reopened = ActivationTransaction::resume(&state, &target).unwrap();
+        reopened.rollback().unwrap();
+        assert_eq!(
+            fs::metadata(&target_path).unwrap().permissions().mode() & 0o7777,
+            0o755
+        );
+        assert_eq!(
+            fs::read(target_path.join("user.conf")).unwrap(),
+            b"[Service]\nEnvironment=KEEP=1\n"
+        );
+        assert_eq!(fs::read_dir(target_path).unwrap().count(), 1);
+    }
 }

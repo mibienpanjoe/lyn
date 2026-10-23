@@ -40,6 +40,7 @@ impl Receipt {
         state: &ManagedDirectory,
         name: &str,
     ) -> Result<OwnedFile, PublishFailure> {
+        state.check_private()?;
         self.validate()?;
         let bytes = serde_json::to_vec(self).map_err(io::Error::other)?;
         state.publish(name, &bytes, false)

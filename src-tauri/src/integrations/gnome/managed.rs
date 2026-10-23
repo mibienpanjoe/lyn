@@ -1,4 +1,4 @@
-//! Descriptor-relative files for a private activation directory.
+//! Descriptor-relative files for private state or protected activation directories.
 //! Not an installer: ancestor validation, persistent ownership and transaction
 //! locking belong to the caller before these primitives can be exposed.
 
@@ -16,6 +16,7 @@ pub(super) const MAX_CONTENT: usize = 16 * 1024;
 
 pub(super) struct ManagedDirectory {
     pub(super) directory: File,
+    expected_mode: u32,
     #[cfg(test)]
     fault: std::cell::Cell<Fault>,
 }
@@ -112,7 +113,7 @@ impl ManagedDirectory {
     /// Read a private bounded installer state file, retaining its ownership
     /// descriptor. Schema/role validation remains the caller's responsibility.
     pub(super) fn read_state(&self, name: &str) -> io::Result<OwnedFile> {
-        self.check()?;
+        self.check_private()?;
         let name = basename(name)?;
         let mut file = self.open(&name, libc::O_RDONLY)?;
         let original = file.metadata()?;
@@ -148,8 +149,23 @@ impl ManagedDirectory {
     /// Caller must have securely resolved the ancestry of this directory. A
     /// supplied descriptor cannot establish whether its original path was safe.
     pub(super) fn from_directory(directory: File) -> io::Result<Self> {
+        Self::from_mode(directory, 0o700)
+    }
+
+    /// Existing user-owned systemd drop-in directories may be readable by
+    /// others. Never accept group/other write or special permission bits.
+    pub(super) fn from_drop_in_directory(directory: File) -> io::Result<Self> {
+        let mode = directory.metadata()?.mode() & 0o7777;
+        if mode & 0o700 != 0o700 || mode & 0o7022 != 0 {
+            return Err(refused());
+        }
+        Self::from_mode(directory, mode)
+    }
+
+    fn from_mode(directory: File, expected_mode: u32) -> io::Result<Self> {
         let directory = Self {
             directory,
+            expected_mode,
             #[cfg(test)]
             fault: std::cell::Cell::new(Fault::None),
         };
@@ -161,8 +177,16 @@ impl ManagedDirectory {
         let metadata = self.directory.metadata()?;
         if !metadata.is_dir()
             || metadata.uid() != unsafe { libc::geteuid() }
-            || metadata.mode() & 0o7777 != 0o700
+            || metadata.mode() & 0o7777 != self.expected_mode
         {
+            return Err(refused());
+        }
+        Ok(())
+    }
+
+    pub(super) fn check_private(&self) -> io::Result<()> {
+        self.check()?;
+        if self.expected_mode != 0o700 {
             return Err(refused());
         }
         Ok(())

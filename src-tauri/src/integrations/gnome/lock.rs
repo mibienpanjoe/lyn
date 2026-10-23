@@ -32,7 +32,7 @@ fn check_file(file: &File) -> io::Result<()> {
 
 impl<'a> InstallationLock<'a> {
     pub(super) fn acquire(directory: &'a ManagedDirectory) -> io::Result<Self> {
-        directory.check()?;
+        directory.check_private()?;
         let file = directory.open(&LOCK_NAME.to_owned(), libc::O_CREAT | libc::O_RDWR)?;
         check_file(&file)?;
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
@@ -44,7 +44,7 @@ impl<'a> InstallationLock<'a> {
     }
 
     pub(super) fn check(&self) -> io::Result<()> {
-        self.directory.check()?;
+        self.directory.check_private()?;
         check_file(&self.file)?;
         self.directory.same_entry(&LOCK_NAME.to_owned(), &self.file)
     }

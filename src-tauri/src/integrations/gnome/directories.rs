@@ -39,6 +39,16 @@ fn check_ancestor(directory: &File) -> io::Result<()> {
 /// the final directory must already be private or be newly created mode0700.
 /// Never chmod or remove an existing directory to make it pass validation.
 pub(super) fn open_private(path: &Path, create: bool) -> io::Result<ManagedDirectory> {
+    ManagedDirectory::from_directory(open_directory(path, create)?)
+}
+
+/// Same ancestry checks, but a protected user-owned final directory may keep
+/// its existing read/search permissions. Newly created directories stay0700.
+pub(super) fn open_drop_ins(path: &Path, create: bool) -> io::Result<ManagedDirectory> {
+    ManagedDirectory::from_drop_in_directory(open_directory(path, create)?)
+}
+
+fn open_directory(path: &Path, create: bool) -> io::Result<File> {
     activation_path(path)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid activation directory"))?;
     let components: Vec<_> = path.components().collect();
@@ -101,7 +111,7 @@ pub(super) fn open_private(path: &Path, create: bool) -> io::Result<ManagedDirec
         };
         directory = next;
     }
-    ManagedDirectory::from_directory(directory)
+    Ok(directory)
 }
 
 #[cfg(test)]
@@ -153,5 +163,52 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    #[test]
+    fn protected_drop_in_directory_preserves_0755_but_cannot_be_private_state() {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(root.path().join("user.conf"), b"user settings").unwrap();
+        let directory = open_drop_ins(root.path(), false).unwrap();
+        assert!(open_private(root.path(), false).is_err());
+        let owned = directory.publish("probe", b"owned", false).unwrap();
+        assert!(directory.read_state("probe").is_err());
+        let receipt = super::super::ownership::Receipt::record(&directory, &owned).unwrap();
+        assert!(receipt.store(&directory, "receipt.json").is_err());
+        assert!(!root.path().join("receipt.json").exists());
+        assert!(super::super::lock::InstallationLock::acquire(&directory).is_err());
+        assert!(!root.path().join(".installation.lock").exists());
+        directory.remove(&owned).unwrap();
+        assert_eq!(
+            fs::metadata(root.path()).unwrap().permissions().mode() & 0o7777,
+            0o755
+        );
+        assert_eq!(
+            fs::read(root.path().join("user.conf")).unwrap(),
+            b"user settings"
+        );
+    }
+
+    #[test]
+    fn drop_in_directory_refuses_unsafe_modes_links_and_later_permission_changes() {
+        let root = tempfile::tempdir().unwrap();
+        for mode in [0o777, 0o775, 0o770, 0o1755, 0o2755, 0o4755, 0o600] {
+            fs::set_permissions(root.path(), fs::Permissions::from_mode(mode)).unwrap();
+            assert!(open_drop_ins(root.path(), false).is_err(), "{mode:o}");
+            assert_eq!(
+                fs::metadata(root.path()).unwrap().permissions().mode() & 0o7777,
+                mode
+            );
+        }
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let directory = open_drop_ins(root.path(), false).unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o750)).unwrap();
+        assert!(directory.publish("probe", b"never", false).is_err());
+        let parent = tempfile::tempdir().unwrap();
+        fs::set_permissions(parent.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        symlink(root.path(), parent.path().join("redirect")).unwrap();
+        assert!(open_drop_ins(&parent.path().join("redirect"), false).is_err());
+        assert!(!root.path().join("probe").exists());
     }
 }
