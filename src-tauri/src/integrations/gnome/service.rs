@@ -1,5 +1,7 @@
 //! Read-only service compatibility. Never starts, stops or reloads a service.
 
+mod overrides;
+
 use gio::{
     glib::{self, variant::ToVariant},
     prelude::*,
@@ -20,12 +22,13 @@ const BUS: &str = "org.gnome.Terminal";
 const MANAGER: &str = "org.freedesktop.systemd1";
 const UNIT_IFACE: &str = "org.freedesktop.systemd1.Unit";
 const SERVICE_IFACE: &str = "org.freedesktop.systemd1.Service";
-const PROPERTIES: [(&str, &str); 11] = [
+const PROPERTIES: [(&str, &str); 12] = [
     (UNIT_IFACE, "LoadState"),
     (UNIT_IFACE, "FragmentPath"),
     (UNIT_IFACE, "DropInPaths"),
     (UNIT_IFACE, "NeedDaemonReload"),
     (UNIT_IFACE, "Transient"),
+    (UNIT_IFACE, "Names"),
     (SERVICE_IFACE, "Type"),
     (SERVICE_IFACE, "BusName"),
     (SERVICE_IFACE, "ExecStart"),
@@ -62,6 +65,7 @@ fn policy(properties: &Properties) -> Result<String> {
         .contains(&fragment.as_str())
         || value::<bool>(properties, "NeedDaemonReload")?
         || value::<bool>(properties, "Transient")?
+        || value::<Vec<String>>(properties, "Names")? != [UNIT]
         || !value::<Vec<String>>(properties, "DropInPaths")?.is_empty()
         || value::<String>(properties, "Type")? != "dbus"
         || value::<String>(properties, "BusName")? != BUS
@@ -201,6 +205,28 @@ fn properties(
     Ok(properties)
 }
 
+fn unit_paths(
+    connection: &gio::DBusConnection,
+    budget: &Budget,
+    owner: &str,
+) -> Result<Vec<String>> {
+    let reply = call(
+        connection,
+        budget,
+        owner,
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        ("org.freedesktop.systemd1.Manager", "UnitPath").to_variant(),
+    )?;
+    let (value,) = reply
+        .get::<(glib::Variant,)>()
+        .ok_or(ServiceRefusal::Unsupported)?;
+    value
+        .get::<Vec<String>>()
+        .ok_or(ServiceRefusal::Unsupported)
+}
+
 struct TrustedFile {
     file: File,
     path: &'static str,
@@ -334,6 +360,9 @@ fn inspect_address(address: &str) -> Result<()> {
         _ => return Err(ServiceRefusal::Unsupported),
     };
     let vendor = TrustedFile::open(fragment)?;
+    let paths = unit_paths(&connection, &budget, &manager)?;
+    let vendor_inode = (vendor.metadata.dev(), vendor.metadata.ino());
+    let disk = overrides::inspect(&paths, vendor_inode)?;
     let executable = TrustedFile::open(SERVER)?;
     if executable.metadata.mode() & 0o111 == 0 || executable.metadata.mode() & 0o6000 != 0 {
         return Err(ServiceRefusal::Unsupported);
@@ -349,6 +378,7 @@ fn inspect_address(address: &str) -> Result<()> {
         return Err(ServiceRefusal::Unsupported);
     }
     if first != properties(&connection, &budget, &manager, path.as_str())?
+        || paths != unit_paths(&connection, &budget, &manager)?
         || manager != owner(&connection, &budget)?
     {
         return Err(ServiceRefusal::Changed);
@@ -356,6 +386,7 @@ fn inspect_address(address: &str) -> Result<()> {
     vendor.recheck()?;
     executable.recheck()?;
     activation.recheck()?;
+    disk.recheck(&paths, vendor_inode)?;
     budget.remaining()?;
     Ok(())
 }
@@ -379,6 +410,7 @@ mod tests {
         }
         properties.insert("NeedDaemonReload", false.to_variant());
         properties.insert("Transient", false.to_variant());
+        properties.insert("Names", vec![UNIT.to_owned()].to_variant());
         properties.insert("DropInPaths", Vec::<String>::new().to_variant());
         properties.insert(
             "ExecStart",
@@ -433,6 +465,10 @@ mod tests {
             ("Type", "simple".to_variant()),
             ("BusName", "org.example.Other".to_variant()),
             ("Transient", true.to_variant()),
+            (
+                "Names",
+                vec![UNIT.to_owned(), "custom.service".to_owned()].to_variant(),
+            ),
             ("NeedDaemonReload", true.to_variant()),
             (
                 "DropInPaths",
