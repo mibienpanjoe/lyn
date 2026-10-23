@@ -3,7 +3,7 @@
 mod cleanup;
 mod precommit;
 pub(super) use cleanup::{CLEANUP_PENDING, recover_cleanup};
-pub(super) use precommit::PRECOMMIT_PENDING;
+pub(super) use precommit::{EXCHANGE_NAMES, PRECOMMIT_PENDING, recover_early};
 
 use super::super::{
     RenderedActivation,
@@ -30,6 +30,7 @@ pub(super) struct PendingUpdate {
     cleanup_record_retired: bool,
     precommit_record: Option<OwnedFile>,
     precommit_retired: bool,
+    exchange_records: [Option<OwnedFile>; 2],
 }
 
 impl ActivationTransaction<'_> {
@@ -41,6 +42,13 @@ impl ActivationTransaction<'_> {
         if let Some(update) = &self.update {
             if let Some(record) = &update.precommit_record {
                 self.state.verify(record)?;
+            }
+            for (role, record) in update.exchange_records.iter().enumerate() {
+                if let Some(record) = record {
+                    self.state.verify(record)?;
+                } else {
+                    self.state.require_absent(EXCHANGE_NAMES[role])?;
+                }
             }
             for backup in &update.backups {
                 self.directory(backup.place).verify(&backup.file)?;
@@ -94,6 +102,9 @@ impl ActivationTransaction<'_> {
         executable: bool,
     ) -> io::Result<()> {
         self.candidate(place, bytes, executable)?;
+        if role < 2 {
+            self.record_exchange(role, place)?;
+        }
         let directory = match place {
             Place::State => self.state,
             Place::DropIns => self.drop_ins,
@@ -135,11 +146,20 @@ impl ActivationTransaction<'_> {
         self.preflight_update()?;
         self.state.require_absent(CLEANUP_PENDING)?;
         self.state.require_absent(PRECOMMIT_PENDING)?;
+        for name in EXCHANGE_NAMES {
+            self.state.require_absent(name)?;
+        }
         self.update = Some(PendingUpdate::default());
         self.phase = Phase::Updating;
         self.prepare_precommit()?;
+        #[cfg(test)]
+        self.precommit_checkpoint(5)?;
         self.replace_role(0, Place::State, rendered.launcher.as_bytes(), true)?;
+        #[cfg(test)]
+        self.precommit_checkpoint(6)?;
         self.replace_role(1, Place::DropIns, rendered.drop_in.as_bytes(), false)?;
+        #[cfg(test)]
+        self.precommit_checkpoint(7)?;
         let bytes = self.manifest_bytes()?;
         self.replace_role(2, Place::State, &bytes, false)?;
         self.update.as_mut().ok_or_else(refused)?.ready = true;

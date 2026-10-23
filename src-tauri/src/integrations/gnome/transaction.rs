@@ -82,6 +82,9 @@ impl<'a> ActivationTransaction<'a> {
         state.require_absent(recovery::PENDING_INSTALL)?;
         state.require_absent(update::CLEANUP_PENDING)?;
         state.require_absent(update::PRECOMMIT_PENDING)?;
+        for name in update::EXCHANGE_NAMES {
+            state.require_absent(name)?;
+        }
         drop_ins.require_absent(DROP_IN)?;
         Ok(Self {
             state,
@@ -102,16 +105,20 @@ impl<'a> ActivationTransaction<'a> {
         drop_ins: &'a ManagedDirectory,
     ) -> io::Result<Self> {
         let lock = InstallationLock::acquire(state)?;
-        if pending(state, recovery::PENDING_INSTALL)?
-            && (pending(state, update::CLEANUP_PENDING)?
-                || pending(state, update::PRECOMMIT_PENDING)?)
-        {
-            return Err(refused());
+        if pending(state, recovery::PENDING_INSTALL)? {
+            if pending(state, update::CLEANUP_PENDING)?
+                || pending(state, update::PRECOMMIT_PENDING)?
+            {
+                return Err(refused());
+            }
+            for name in update::EXCHANGE_NAMES {
+                state.require_absent(name)?;
+            }
         }
         recovery::recover_pending(state, drop_ins, &lock)?;
         update::recover_cleanup(state, drop_ins, &lock)?;
-        // No automatic acceptance of an update which never crossed the explicit
-        // commit boundary. Full pre-commit recovery remains unimplemented.
+        update::recover_early(state, drop_ins, &lock)?;
+        // Later update phases remain unresolved rather than implicitly committed.
         state.require_absent(update::PRECOMMIT_PENDING)?;
         let manifest_file = state.read_state(MANIFEST)?;
         let manifest: Manifest =

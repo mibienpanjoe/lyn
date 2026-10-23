@@ -1,7 +1,7 @@
 //! Persistent authority for cleanup after an explicitly committed update.
 
 use super::super::{ActivationTransaction, DROP_IN, LAUNCHER, MANIFEST, Manifest, Place, refused};
-use super::PRECOMMIT_PENDING;
+use super::{EXCHANGE_NAMES, PRECOMMIT_PENDING};
 use crate::integrations::gnome::{
     lock::InstallationLock,
     managed::{ManagedDirectory, OwnedFile, PublishFailure},
@@ -29,9 +29,11 @@ struct CleanupRecord {
     backups: FileSet,
     #[serde(default)]
     precommit: Option<Receipt>,
+    #[serde(default)]
+    exchanges: [Option<Receipt>; 2],
 }
 
-fn candidate(receipt: &Receipt, mode: u32) -> bool {
+pub(super) fn candidate(receipt: &Receipt, mode: u32) -> bool {
     let name = receipt.filename();
     receipt.is_for(name, mode)
         && name.strip_prefix(".lyn-update-").is_some_and(|suffix| {
@@ -57,6 +59,13 @@ impl CleanupRecord {
                 .is_some_and(|receipt| !receipt.is_for(PRECOMMIT_PENDING, 0o600))
         {
             return Err(refused());
+        }
+        for (role, receipt) in self.exchanges.iter().enumerate() {
+            if receipt.as_ref().is_some_and(|receipt| {
+                self.precommit.is_none() || !receipt.is_for(EXCHANGE_NAMES[role], 0o600)
+            }) {
+                return Err(refused());
+            }
         }
         Ok(())
     }
@@ -101,6 +110,16 @@ impl ActivationTransaction<'_> {
                 self.state,
                 update.precommit_record.as_ref().ok_or_else(refused)?,
             )?),
+            exchanges: [
+                Some(Receipt::record(
+                    self.state,
+                    update.exchange_records[0].as_ref().ok_or_else(refused)?,
+                )?),
+                Some(Receipt::record(
+                    self.state,
+                    update.exchange_records[1].as_ref().ok_or_else(refused)?,
+                )?),
+            ],
         };
         snapshot.validate()?;
         let bytes = serde_json::to_vec(&snapshot).map_err(io::Error::other)?;
@@ -203,6 +222,18 @@ pub(in crate::integrations::gnome::transaction) fn recover_cleanup(
         None
     };
     let mut backups: Vec<(&ManagedDirectory, OwnedFile)> = Vec::new();
+    let mut exchange_records = Vec::new();
+    for (role, receipt) in snapshot.exchanges.iter().enumerate() {
+        if let Some(receipt) = receipt {
+            match receipt.reopen(state) {
+                Ok(file) => exchange_records.push(file),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        } else {
+            state.require_absent(EXCHANGE_NAMES[role])?;
+        }
+    }
     for (directory, receipt) in [
         (state, &snapshot.backups.manifest),
         (drop_ins, &snapshot.backups.drop_in),
@@ -224,6 +255,10 @@ pub(in crate::integrations::gnome::transaction) fn recover_cleanup(
     }
     state.sync_directory()?;
     drop_ins.sync_directory()?;
+    for record in exchange_records.into_iter().rev() {
+        lock.check()?;
+        state.remove(&record)?;
+    }
     if let Some(precommit) = precommit {
         lock.check()?;
         state.remove(&precommit)?;
@@ -454,7 +489,7 @@ mod tests {
         transaction.clean_backups().unwrap();
         drop(transaction);
         // First flush makes the intent durable; the second precedes retirement.
-        state.fail_directory_sync_after(3);
+        state.fail_directory_sync_after(5);
         assert!(ActivationTransaction::resume(&state, &target).is_err());
         assert!(!root.path().join("state").join(CLEANUP_PENDING).exists());
         assert!(ActivationTransaction::resume(&state, &target).is_err());

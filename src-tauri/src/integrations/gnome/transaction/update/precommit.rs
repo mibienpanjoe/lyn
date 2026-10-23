@@ -1,5 +1,13 @@
 //! Persistent refusal marker: prepared does not mean committed after restart.
 
+mod early;
+pub(in crate::integrations::gnome::transaction) use early::recover_early;
+
+pub(in crate::integrations::gnome::transaction) const EXCHANGE_NAMES: [&str; 2] = [
+    "update-launcher-exchange-v1.json",
+    "update-drop-in-exchange-v1.json",
+];
+
 pub(in crate::integrations::gnome::transaction) const PRECOMMIT_PENDING: &str =
     "update-precommit-pending-v1.json";
 
@@ -18,7 +26,94 @@ struct PreparedUpdate {
     previous_manifest: Receipt,
 }
 
+impl PreparedUpdate {
+    fn validate(&self) -> io::Result<()> {
+        self.previous_launcher.validate()?;
+        self.previous_drop_in.validate()?;
+        self.previous_manifest.validate()?;
+        if self.version != 1
+            || !self.previous_launcher.is_for(super::super::LAUNCHER, 0o700)
+            || !self.previous_drop_in.is_for(super::super::DROP_IN, 0o600)
+            || !self.previous_manifest.is_for(super::super::MANIFEST, 0o600)
+        {
+            return Err(refused());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExchangeRecord {
+    version: u8,
+    role: u8,
+    precommit: Receipt,
+    previous: Receipt,
+    candidate: Receipt,
+}
+
 impl ActivationTransaction<'_> {
+    pub(super) fn record_exchange(&mut self, role: usize, place: Place) -> io::Result<()> {
+        self.lock.check()?;
+        self.state.require_absent(EXCHANGE_NAMES[role])?;
+        let update = self.update.as_ref().ok_or_else(refused)?;
+        let header = update.precommit_record.as_ref().ok_or_else(refused)?;
+        let candidate = &update.candidates.last().ok_or_else(refused)?.1;
+        let body = ExchangeRecord {
+            version: 1,
+            role: role as u8,
+            precommit: Receipt::record(self.state, header)?,
+            previous: Receipt::record(self.directory(place), &self.files[role].1)?,
+            candidate: Receipt::record(self.directory(place), candidate)?,
+        };
+        let prepared: PreparedUpdate =
+            serde_json::from_slice(&header.content).map_err(|_| refused())?;
+        prepared.validate()?;
+        let expected = if role == 0 {
+            &prepared.previous_launcher
+        } else {
+            &prepared.previous_drop_in
+        };
+        if &body.previous != expected {
+            return Err(refused());
+        }
+        let bytes = serde_json::to_vec(&body).map_err(io::Error::other)?;
+        let (record, result) = match self.state.publish(EXCHANGE_NAMES[role], &bytes, false) {
+            Ok(record) => (record, Ok(())),
+            Err(PublishFailure::Published { error, owned }) => (owned, Err(error)),
+            Err(PublishFailure::Unpublished(error)) => return Err(error),
+            Err(PublishFailure::Staged {
+                error,
+                cleanup_error,
+                stage,
+            }) => {
+                self.stages.push((Place::State, stage));
+                return Err(io::Error::other(format!(
+                    "{error}; staging cleanup failed: {cleanup_error}"
+                )));
+            }
+        };
+        self.update.as_mut().ok_or_else(refused)?.exchange_records[role] = Some(record);
+        result
+    }
+
+    fn retire_exchanges(&mut self) -> io::Result<()> {
+        for role in (0..2).rev() {
+            self.lock.check()?;
+            let update = self.update.as_mut().ok_or_else(refused)?;
+            if let Some(record) = &update.exchange_records[role] {
+                let result = self.state.remove(record);
+                if result.is_ok() || record.file.metadata()?.nlink() == 0 {
+                    update.exchange_records[role] = None;
+                }
+                result?;
+            } else {
+                self.state.require_absent(EXCHANGE_NAMES[role])?;
+                self.state.sync_directory()?;
+            }
+        }
+        Ok(())
+    }
     pub(super) fn prepare_precommit(&mut self) -> io::Result<()> {
         self.lock.check()?;
         self.state.require_absent(PRECOMMIT_PENDING)?;
@@ -50,6 +145,7 @@ impl ActivationTransaction<'_> {
     }
 
     pub(super) fn retire_precommit(&mut self) -> io::Result<()> {
+        self.retire_exchanges()?;
         self.lock.check()?;
         let update = self.update.as_mut().ok_or_else(refused)?;
         if update.precommit_retired || update.precommit_record.is_none() {
@@ -65,6 +161,19 @@ impl ActivationTransaction<'_> {
             update.precommit_retired = true;
         }
         result
+    }
+
+    #[cfg(test)]
+    pub(super) fn precommit_checkpoint(&self, checkpoint: u8) -> io::Result<()> {
+        if let Some((point, abrupt)) = self.stop_after {
+            if point == checkpoint {
+                if abrupt {
+                    std::process::exit(77);
+                }
+                return Err(io::Error::other("private early update checkpoint"));
+            }
+        }
+        Ok(())
     }
 }
 

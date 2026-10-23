@@ -11,7 +11,7 @@ use super::managed::{MAX_CONTENT, ManagedDirectory, OwnedFile, PublishFailure, b
 
 /// An integrity/ownership record, not a credential or kernel lifetime proof.
 /// Only read from a bounded, no-symlink, same-user private installer manifest.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Receipt {
     version: u8,
@@ -39,6 +39,22 @@ impl Receipt {
         &self.name
     }
 
+    pub(super) fn same_inode(&self, other: &Self) -> bool {
+        self.directory_device == other.directory_device
+            && self.directory_inode == other.directory_inode
+            && self.device == other.device
+            && self.inode == other.inode
+    }
+
+    pub(super) fn same_payload_identity(&self, other: &Self) -> bool {
+        self.version == other.version
+            && self.same_inode(other)
+            && self.name == other.name
+            && self.mode == other.mode
+            && self.length == other.length
+            && self.sha256 == other.sha256
+    }
+
     pub(super) fn store(
         &self,
         state: &ManagedDirectory,
@@ -58,7 +74,7 @@ impl Receipt {
         self.name == name && self.mode == mode
     }
 
-    fn validate(&self) -> io::Result<()> {
+    pub(super) fn validate(&self) -> io::Result<()> {
         basename(&self.name)?;
         if self.version != 1
             || ![0o600, 0o700].contains(&self.mode)
@@ -111,6 +127,17 @@ impl Receipt {
         destination: &str,
     ) -> io::Result<OwnedFile> {
         self.reopen_at(directory, destination, destination == self.name)
+    }
+
+    /// Only for a validated exchange intent's original/candidate slots. Both
+    /// rename directions change ctime; exact directory/inode/owner/mode/content
+    /// remain required. Ordinary reopening is deliberately unchanged.
+    pub(super) fn reopen_exchange_slot(
+        &self,
+        directory: &ManagedDirectory,
+        destination: &str,
+    ) -> io::Result<OwnedFile> {
+        self.reopen_at(directory, destination, false)
     }
 
     fn reopen_at(
