@@ -64,6 +64,13 @@ pub(in crate::integrations::gnome) struct PinnedActivation {
 }
 
 impl PinnedActivation {
+    pub(super) fn into_files(self) -> Vec<(super::Place, OwnedFile)> {
+        vec![
+            (super::Place::State, self.launcher),
+            (super::Place::DropIns, self.drop_in),
+            (super::Place::State, self.manifest),
+        ]
+    }
     pub(in crate::integrations::gnome) fn open(
         state: &ManagedDirectory,
         target: &ManagedDirectory,

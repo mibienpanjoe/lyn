@@ -128,14 +128,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn native_activation_fixture_entry() {
+    fn private_native_artifact() -> artifact::Artifact {
         use std::{fs, io::Read};
-        let Some(root) = std::env::var_os("LYN_PRIVATE_NATIVE_ACTIVATION_ROOT") else {
-            return;
-        };
-        let root = Path::new(&root);
-        require_private_native_bus(root);
         let module = std::env::var_os("LYN_PRIVATE_NATIVE_ACTIVATION_MODULE").unwrap();
         let module = Path::new(&module);
         assert!(module.is_absolute() && module.is_file());
@@ -158,12 +152,44 @@ mod tests {
         .take((artifact::format::MAX_MANIFEST_BYTES + 1) as u64)
         .read_to_end(&mut manifest)
         .unwrap();
-        let artifact = artifact::Artifact {
+        artifact::Artifact {
             manifest: artifact::format::validate(&manifest, &bytes).unwrap(),
             bytes: bytes.leak(),
+        }
+    }
+
+    #[test]
+    fn native_activation_fixture_entry() {
+        let Some(root) = std::env::var_os("LYN_PRIVATE_NATIVE_ACTIVATION_ROOT") else {
+            return;
         };
+        let root = Path::new(&root);
+        require_private_native_bus(root);
+        let artifact = private_native_artifact();
         let result = coordinator::prepare_private(root, &artifact).unwrap();
         assert_eq!(result.definition, service::DefinitionState::NeedsReload);
+    }
+
+    #[test]
+    fn native_lifecycle_fixture_entry() {
+        let Some(root) = std::env::var_os("LYN_PRIVATE_NATIVE_ACTIVATION_ROOT") else {
+            return;
+        };
+        let root = Path::new(&root);
+        require_private_native_bus(root);
+        match std::env::var("LYN_PRIVATE_NATIVE_FILE_ACTION")
+            .unwrap()
+            .as_str()
+        {
+            "update" => {
+                let result = coordinator::update_private(root, &private_native_artifact()).unwrap();
+                assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);
+            }
+            "remove" => {
+                coordinator::remove_private(root).unwrap();
+            }
+            _ => panic!("unknown private file action"),
+        }
     }
 
     fn require_private_native_bus(root: &Path) {

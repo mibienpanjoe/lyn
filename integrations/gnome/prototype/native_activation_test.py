@@ -3,6 +3,7 @@
 import json
 from contextlib import contextmanager
 import os
+import select
 from pathlib import Path
 import re
 import shlex
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 from desktop_isolation import require_owned_display
 from desktop_lifecycle import _pin_owned_app
@@ -22,7 +24,7 @@ from rust_probe import RustProbe
 
 @contextmanager
 def simulated_manager(root, mode, sdk, environment):
-    ready = root / f"manager-{mode}.sock"
+    ready = root / f"manager-{mode}-{uuid.uuid4().hex}.sock"
     with socket.socket(socket.AF_UNIX) as listener:
         listener.bind(str(ready))
         ready.chmod(0o600)
@@ -55,7 +57,7 @@ def check_managed_service(root, executable, sdk, environment):
     print("PASS: private simulated manager API distinguishes pending/loaded definitions and refuses changed properties; no service action", flush=True)
 
 
-def run(module, preserved, executable, sdk):
+def run(module, preserved, executable, sdk, updated_module):
     require_owned_display(sdk)
     private_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     assert private_runtime.name == "runtime" and private_runtime.parent.name.startswith("lyn-gnome-run-")
@@ -139,6 +141,65 @@ def run(module, preserved, executable, sdk):
             assert json.loads(payload) == {"childModuleAbsent": True, "existingModulePreserved": True,
                                            "moduleEnvironmentAbsent": True}, payload
             print("PASS: actual GTK new-tab child excludes Lyn and preserves the existing module", flush=True)
+            # The coordinator changes files; it must not restart our server.
+            action_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(updated_module),
+                                      LYN_PRIVATE_NATIVE_FILE_ACTION="update")
+            with simulated_manager(root, "loaded", sdk, action_environment):
+                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                "--test-threads=1"], env=action_environment, check=True, timeout=8)
+            import hashlib
+            updated_stored = root / "state/modules" / hashlib.sha256(updated_module.read_bytes()).hexdigest() / module.name
+            assert updated_stored != stored_module and updated_stored.read_bytes() == updated_module.read_bytes()
+            assert stored_module.read_bytes() == module.read_bytes()
+            poller = select.poll()
+            poller.register(pin, select.POLLIN)
+            assert not poller.poll(0) and server.poll() is None
+            maps = Path(f"/proc/{server.pid}/maps").read_text()
+            assert str(stored_module) in maps and str(updated_stored) not in maps
+            # Restart only this explicitly owned private fixture to prove the
+            # new file is loaded on a subsequent server start. No user service.
+            stop_server(server, pin)
+            server, pin = None, None
+            next_id = "org.lyn.NativeUpdated"
+            server = subprocess.Popen([str(root / "state/launcher-v1"), f"--app-id={next_id}"], env=environment,
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["gdbus", "wait", "--session", "--timeout", "5", next_id], check=True, timeout=6)
+            pin = _pin_owned_app(server, Path("/usr/libexec/gnome-terminal-server"), private_runtime,
+                                 expected_cwd=Path.home())
+            broker.handshake(server)
+            maps = Path(f"/proc/{server.pid}/maps").read_text()
+            assert str(updated_stored) in maps and str(stored_module) not in maps and str(preserved) in maps
+            subprocess.run([client, f"--app-id={next_id}", "--window", "--title=Lyn Native Updated",
+                            f"--working-directory={project}", "--", "/usr/bin/sleep", "40"], check=True, timeout=5)
+            deadline = time.monotonic() + 5
+            updated_window = None
+            while time.monotonic() < deadline:
+                windows = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^Lyn Native Updated$"],
+                                         capture_output=True, text=True, timeout=1).stdout.split()
+                if len(windows) == 1:
+                    updated_window = int(windows[0])
+                    break
+                assert server.poll() is None
+                time.sleep(.01)
+            assert updated_window is not None
+            time.sleep(.1)  # Same settled-widget contract as the first capture.
+            result = broker.capture_probe(updated_window, project)
+            assert result == {"status": "saved", "bodyMatches": True, "projectMatches": True,
+                              "branchMatches": True, "duplicateRefused": True, "captureCount": 1,
+                              "leaseReleased": True}, result
+            print("PASS: distinct real ELF update preserves the live old server; owned private relaunch loads the new digest and saves exactly", flush=True)
+            action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "remove"
+            with simulated_manager(root, "loaded", sdk, action_environment):
+                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                "--test-threads=1"], env=action_environment, check=True, timeout=8)
+            assert not (root / "state/launcher-v1").exists()
+            assert not (root / "state/installation-v1.json").exists()
+            assert not (root / "units/gnome-terminal-server.service.d/90-lyn-native.conf").exists()
+            assert stored_module.read_bytes() == module.read_bytes() and updated_stored.read_bytes() == updated_module.read_bytes()
+            poller = select.poll()
+            poller.register(pin, select.POLLIN)
+            assert not poller.poll(0) and server.poll() is None
+            print("PASS: activation removal retains both modules and does not restart or deactivate the live private server", flush=True)
         finally:
             child.close()
             if server is not None:
@@ -148,4 +209,5 @@ def run(module, preserved, executable, sdk):
 
 if __name__ == "__main__":
     run(*(Path(value).resolve(strict=True) for value in sys.argv[1:4]),
-        Path(sys.argv[4]).resolve(strict=True) if sys.argv[4] != "-" else None)
+        Path(sys.argv[4]).resolve(strict=True) if sys.argv[4] != "-" else None,
+        Path(sys.argv[5]).resolve(strict=True))

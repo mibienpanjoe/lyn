@@ -76,6 +76,28 @@ fn pending(directory: &ManagedDirectory, name: &str) -> io::Result<bool> {
 }
 
 impl<'a> ActivationTransaction<'a> {
+    /// Existing complete files only. Never recover an intent as a side effect.
+    pub(super) fn open_complete(
+        state: &'a ManagedDirectory,
+        drop_ins: &'a ManagedDirectory,
+    ) -> io::Result<Self> {
+        let lock = InstallationLock::acquire(state)?;
+        let files = PinnedActivation::open(state, drop_ins)?.into_files();
+        lock.check()?;
+        Ok(Self {
+            state,
+            drop_ins,
+            lock,
+            rendered: None,
+            phase: Phase::Complete,
+            files,
+            stages: Vec::new(),
+            update: None,
+            removal_record: None,
+            #[cfg(test)]
+            stop_after: None,
+        })
+    }
     /// The internal caller renders the launcher with state/launcher-v1 as its
     /// exact destination. No user payload or UI-provided path is accepted here.
     pub(super) fn begin(
@@ -269,6 +291,25 @@ impl<'a> ActivationTransaction<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lifecycle_complete_open_is_nonrecovering_and_keeps_pending_authority() {
+        let (_root, state, target, rendered) = fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        drop(transaction);
+        let opened = ActivationTransaction::open_complete(&state, &target).unwrap();
+        drop(opened);
+        let pending = state
+            .publish(
+                recovery::PENDING_INSTALL,
+                b"unknown pending authority",
+                false,
+            )
+            .unwrap();
+        assert!(ActivationTransaction::open_complete(&state, &target).is_err());
+        state.verify(&pending).unwrap();
+    }
     use std::{fs, os::unix::fs::PermissionsExt};
 
     pub(super) fn fixture() -> (

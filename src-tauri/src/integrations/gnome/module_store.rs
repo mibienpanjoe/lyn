@@ -1,6 +1,6 @@
 //! Atomic, immutable module versions. No service writes or automatic deletion.
 
-#![allow(dead_code)] // Consumed by the installation coordinator next.
+#![allow(dead_code)] // Some application consumers remain gated pending acceptance.
 
 use super::{
     artifact::{Artifact, format},
@@ -100,6 +100,38 @@ pub(super) struct StoredModule {
     directory: ManagedDirectory,
     module: File,
     record: OwnedFile,
+}
+
+pub(super) fn read_existing(root: &ManagedDirectory, digest: &str) -> io::Result<StoredModule> {
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(refused());
+    }
+    root.check_private()?;
+    let name = basename(digest)?;
+    let file = root.open(&name, libc::O_RDONLY | libc::O_DIRECTORY)?;
+    let stored = open_files(name, file)?;
+    verify_existing(root, &stored)?;
+    Ok(stored)
+}
+
+pub(super) fn verify_existing(root: &ManagedDirectory, stored: &StoredModule) -> io::Result<()> {
+    verify_stored(root, stored, None)
+}
+
+fn open_files(name: CString, file: File) -> io::Result<StoredModule> {
+    let directory = ManagedDirectory::from_directory(file)?;
+    let record = directory.read_state(RECORD)?;
+    let module = directory.open(&basename(format::MODULE_NAME)?, libc::O_RDONLY)?;
+    Ok(StoredModule {
+        name,
+        directory,
+        module,
+        record,
+    })
 }
 
 impl<'a> ModuleStore<'a> {
@@ -207,75 +239,77 @@ impl<'a> ModuleStore<'a> {
     }
 
     fn load(&self, name: CString, file: File, artifact: &Artifact) -> io::Result<StoredModule> {
-        let directory = ManagedDirectory::from_directory(file)?;
-        let record = directory.read_state(RECORD)?;
-        let module = directory.open(&basename(format::MODULE_NAME)?, libc::O_RDONLY)?;
-        let stored = StoredModule {
-            name,
-            directory,
-            module,
-            record,
-        };
+        let stored = open_files(name, file)?;
         self.verify(&stored, artifact)?;
         Ok(stored)
     }
 
     pub(super) fn verify(&self, stored: &StoredModule, artifact: &Artifact) -> io::Result<()> {
         self.lock.check()?;
-        self.root
-            .same_entry(&stored.name, &stored.directory.directory)?;
-        stored.directory.check_private()?;
-        if count_entries(&stored.directory, 2)? != 2 {
-            return Err(refused());
-        }
-        stored.directory.verify(&stored.record)?;
-        let record: Record =
-            serde_json::from_slice(&stored.record.content).map_err(|_| refused())?;
-        let parent = stored.directory.directory.metadata()?;
-        if record.version != 1
-            || record.manifest != artifact.manifest
-            || (parent.dev(), parent.ino()) != (record.directory_device, record.directory_inode)
-            || !(0..1_000_000_000).contains(&record.ctime_nsec)
+        verify_stored(self.root, stored, Some(artifact))?;
+        self.lock.check()
+    }
+}
+
+// The writer compares against the embedded candidate, while the read-only
+// existing-version path requires the published digest name and its own receipt.
+fn verify_stored(
+    root: &ManagedDirectory,
+    stored: &StoredModule,
+    expected: Option<&Artifact>,
+) -> io::Result<()> {
+    root.check_private()?;
+    root.same_entry(&stored.name, &stored.directory.directory)?;
+    stored.directory.check_private()?;
+    if count_entries(&stored.directory, 2)? != 2 {
+        return Err(refused());
+    }
+    stored.directory.verify(&stored.record)?;
+    let record: Record = serde_json::from_slice(&stored.record.content).map_err(|_| refused())?;
+    let parent = stored.directory.directory.metadata()?;
+    if record.version != 1
+        || expected.is_some_and(|artifact| record.manifest != artifact.manifest)
+        || (expected.is_none() && stored.name.to_bytes() != record.manifest.sha256.as_bytes())
+        || (parent.dev(), parent.ino()) != (record.directory_device, record.directory_inode)
+        || !(0..1_000_000_000).contains(&record.ctime_nsec)
+    {
+        return Err(refused());
+    }
+    let check_file = || -> io::Result<()> {
+        let metadata = stored.module.metadata()?;
+        if !metadata.is_file()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.nlink() != 1
+            || metadata.mode() & 0o7777 != 0o400
+            || metadata.len() != record.manifest.length as u64
+            || (
+                metadata.dev(),
+                metadata.ino(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+            ) != (record.device, record.inode, record.ctime, record.ctime_nsec)
         {
             return Err(refused());
         }
-        let check_file = || -> io::Result<()> {
-            let metadata = stored.module.metadata()?;
-            if !metadata.is_file()
-                || metadata.uid() != unsafe { libc::geteuid() }
-                || metadata.nlink() != 1
-                || metadata.mode() & 0o7777 != 0o400
-                || metadata.len() != record.manifest.length as u64
-                || (
-                    metadata.dev(),
-                    metadata.ino(),
-                    metadata.ctime(),
-                    metadata.ctime_nsec(),
-                ) != (record.device, record.inode, record.ctime, record.ctime_nsec)
-            {
-                return Err(refused());
-            }
-            stored
-                .directory
-                .same_entry(&basename(format::MODULE_NAME)?, &stored.module)
-        };
-        check_file()?;
-        let mut file = stored.module.try_clone()?;
-        file.rewind()?;
-        let mut bytes = Vec::new();
-        file.take((format::MAX_MODULE_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)?;
-        let manifest = serde_json::to_vec(&record.manifest).map_err(io::Error::other)?;
-        format::validate(&manifest, &bytes).map_err(|_| refused())?;
-        if bytes != artifact.bytes {
-            return Err(refused());
-        }
-        check_file()?;
-        stored.directory.verify(&stored.record)?;
-        self.root
-            .same_entry(&stored.name, &stored.directory.directory)?;
-        self.lock.check()
+        stored
+            .directory
+            .same_entry(&basename(format::MODULE_NAME)?, &stored.module)
+    };
+    check_file()?;
+    let mut file = stored.module.try_clone()?;
+    file.rewind()?;
+    let mut bytes = Vec::new();
+    file.take((format::MAX_MODULE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    let manifest = serde_json::to_vec(&record.manifest).map_err(io::Error::other)?;
+    format::validate(&manifest, &bytes).map_err(|_| refused())?;
+    if expected.is_some_and(|artifact| bytes != artifact.bytes) {
+        return Err(refused());
     }
+    check_file()?;
+    stored.directory.verify(&stored.record)?;
+    root.same_entry(&stored.name, &stored.directory.directory)?;
+    root.check_private()
 }
 
 #[cfg(test)]
@@ -310,6 +344,24 @@ mod tests {
             manifest,
             bytes: bytes.leak(),
         }
+    }
+
+    #[test]
+    fn lifecycle_reader_reopens_old_version_without_new_payload_or_writer_lock() {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let directory = super::super::directories::open_private(root.path(), false).unwrap();
+        let old = artifact(0);
+        let new = artifact(1);
+        let store = ModuleStore::open(&directory).unwrap();
+        store.retain(&old).unwrap();
+        store.retain(&new).unwrap();
+        let before = fs::read_dir(root.path()).unwrap().count();
+        // Writer lock intentionally remains held during both read operations.
+        let existing = read_existing(&directory, &old.manifest.sha256).unwrap();
+        verify_existing(&directory, &existing).unwrap();
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), before);
+        assert!(read_existing(&directory, "../escape").is_err());
     }
 
     #[test]

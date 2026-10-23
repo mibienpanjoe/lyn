@@ -1,9 +1,11 @@
 """Exercise native activation only in private Xvfb/D-Bus/XDG; install nothing."""
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 
@@ -21,6 +23,17 @@ def main():
         bundle = output / "bundle"
         build_bundle(bundle, sdk)
         module = bundle / "liblyn-gnome-native.so"
+        # A second real ELF with unchanged code, differing only by removal of
+        # the compiler .comment metadata, exercises a distinct immutable digest.
+        updated_bundle = output / "bundle-update"
+        shutil.copytree(bundle, updated_bundle)
+        updated_module = updated_bundle / module.name
+        subprocess.run(["objcopy", "--remove-section=.comment", str(updated_module)], check=True, timeout=3)
+        content = updated_module.read_bytes()
+        manifest = json.loads((updated_bundle / "manifest.json").read_text())
+        manifest.update(length=len(content), sha256=hashlib.sha256(content).hexdigest())
+        assert content != module.read_bytes(), "Expected a distinct metadata-only ELF variant"
+        (updated_bundle / "manifest.json").write_text(json.dumps(manifest) + "\n")
         preserved = output / "libexisting-module.so"
         common = ["gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-fstack-protector-strong"]
         subprocess.run([*common, "-fPIC", "-shared", str(ROOT / "prototype/preserved_module.c"),
@@ -48,7 +61,7 @@ def main():
         assert len(probes) == 1, "Expected the current Cargo library test executable"
         subprocess.run([sys.executable, str(ROOT / "prototype/isolated_run.py"), str(sdk) if sdk else "-",
                         str(ROOT / "prototype/native_activation_test.py"), str(module), str(preserved),
-                        probes[0], str(sdk) if sdk else "-"], check=True)
+                        probes[0], str(sdk) if sdk else "-", str(updated_module)], check=True)
 
 
 if __name__ == "__main__":
