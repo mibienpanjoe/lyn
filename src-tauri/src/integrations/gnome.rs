@@ -104,6 +104,10 @@ mod tests {
         let mut transaction =
             transaction::ActivationTransaction::begin(&state, &target, rendered).unwrap();
         transaction.apply().unwrap();
+        assert_eq!(
+            transaction::inspect_activation_files(Some(&state), Some(&target)),
+            transaction::ActivationFilesState::Owned
+        );
     }
 
     #[test]

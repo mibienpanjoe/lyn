@@ -1,9 +1,12 @@
 //! Private synchronous activation-file transaction. Never reloads a manager or
 //! restarts GNOME. Drop releases the lock, never silently removes files.
 
+mod inspection;
 mod recovery;
 mod removal;
 mod update;
+
+pub(super) use inspection::{ActivationFilesState, inspect_activation_files};
 
 use super::{
     RenderedActivation,

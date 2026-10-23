@@ -116,6 +116,69 @@ fn fixture_generation_observes_one_idle_admitted_channel_without_reconnecting() 
     assert_eq!(broker.fixture_generation(), None);
 }
 
+#[test]
+fn connection_status_requires_a_live_admitted_idle_channel_without_querying() {
+    let runtime = runtime();
+    let broker = NativeBroker::start_fixture(runtime.path()).unwrap();
+    assert_eq!(
+        broker.connection_status(),
+        NativeConnectionStatus::Disconnected
+    );
+    let registry_busy = broker.shared.channels.lock().unwrap();
+    assert_eq!(broker.connection_status(), NativeConnectionStatus::Busy);
+    drop(registry_busy);
+    let mut stream = UnixStream::connect(runtime.path().join("lyn-gnome-v1.sock")).unwrap();
+    client_handshake(&mut stream);
+    wait_until(|| broker.shared.channels.lock().unwrap().len() == 1);
+    assert_eq!(
+        broker.connection_status(),
+        NativeConnectionStatus::Connected
+    );
+    stream.set_nonblocking(true).unwrap();
+    assert_eq!(
+        stream.read(&mut [0; 1]).unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    let slot = broker
+        .shared
+        .channels
+        .lock()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    let busy = slot.lock().unwrap();
+    assert_eq!(broker.connection_status(), NativeConnectionStatus::Busy);
+    drop(busy);
+    drop(stream);
+    assert_eq!(
+        broker.connection_status(),
+        NativeConnectionStatus::Disconnected
+    );
+    broker.shutdown();
+    assert_eq!(
+        broker.connection_status(),
+        NativeConnectionStatus::Unavailable
+    );
+}
+
+#[test]
+fn unsolicited_peer_bytes_cannot_keep_connection_status_connected() {
+    let runtime = runtime();
+    let broker = NativeBroker::start_fixture(runtime.path()).unwrap();
+    let mut stream = UnixStream::connect(runtime.path().join("lyn-gnome-v1.sock")).unwrap();
+    client_handshake(&mut stream);
+    wait_until(|| broker.shared.channels.lock().unwrap().len() == 1);
+    stream.write_all(&Frame::Hello.encode()).unwrap();
+    assert_eq!(
+        broker.connection_status(),
+        NativeConnectionStatus::Disconnected
+    );
+    assert_closed(&mut stream);
+    broker.shutdown();
+}
+
 fn client_handshake(stream: &mut UnixStream) -> uuid::Uuid {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
@@ -653,6 +716,46 @@ fn real_distinct_peers_hit_capacity_and_a_dead_peer_releases_a_slot() {
     );
     drop(broker);
     for child in &mut children.0[1..] {
+        assert!(child.wait().unwrap().success());
+    }
+}
+
+#[test]
+fn poisoned_channel_is_unavailable_even_with_another_live_peer() {
+    let runtime = runtime();
+    let broker = NativeBroker::start_fixture(runtime.path()).unwrap();
+    let path = runtime.path().join("lyn-gnome-v1.sock");
+    let mut children = FixtureChildren(Vec::new());
+    let first = children.spawn(&path);
+    wait_until(|| broker.shared.channels.lock().unwrap().contains_key(&first));
+    let second = children.spawn(&path);
+    wait_until(|| broker.shared.channels.lock().unwrap().contains_key(&second));
+    assert_eq!(
+        broker.connection_status(),
+        NativeConnectionStatus::Connected
+    );
+    let slot = broker
+        .shared
+        .channels
+        .lock()
+        .unwrap()
+        .get(&first)
+        .unwrap()
+        .clone();
+    assert!(
+        thread::spawn(move || {
+            let _guard = slot.lock().unwrap();
+            panic!("private status poison fixture");
+        })
+        .join()
+        .is_err()
+    );
+    assert_eq!(
+        broker.connection_status(),
+        NativeConnectionStatus::Unavailable
+    );
+    broker.shutdown();
+    for child in &mut children.0 {
         assert!(child.wait().unwrap().success());
     }
 }

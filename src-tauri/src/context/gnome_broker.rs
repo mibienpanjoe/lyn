@@ -29,6 +29,16 @@ pub(crate) enum BrokerError {
     Channel(ChannelError),
 }
 
+/// Observation of at least one admitted transport, not foreground/source or
+/// capture proof. Busy means observation would queue behind a query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NativeConnectionStatus {
+    Connected,
+    Disconnected,
+    Busy,
+    Unavailable,
+}
+
 /// Correlated but still untrusted: window/PTY/process attestation is mandatory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct NativeEvidence {
@@ -182,6 +192,67 @@ struct BrokerEndpoint {
 }
 
 impl NativeBroker {
+    pub(crate) fn connection_status(&self) -> NativeConnectionStatus {
+        use std::sync::TryLockError;
+        if self.shared.stopping.load(Ordering::Acquire) {
+            return NativeConnectionStatus::Unavailable;
+        }
+        let snapshot: Vec<_> = match self.shared.channels.try_lock() {
+            Ok(channels) => channels
+                .iter()
+                .map(|(&pid, slot)| (pid, slot.clone()))
+                .collect(),
+            Err(TryLockError::WouldBlock) => return NativeConnectionStatus::Busy,
+            Err(TryLockError::Poisoned(_)) => return NativeConnectionStatus::Unavailable,
+        };
+        let mut status = NativeConnectionStatus::Disconnected;
+        let mut connected = false;
+        for (pid, slot) in snapshot {
+            let mut channel = match slot.try_lock() {
+                Ok(channel) => channel,
+                Err(TryLockError::WouldBlock) => {
+                    status = NativeConnectionStatus::Busy;
+                    continue;
+                }
+                Err(TryLockError::Poisoned(_)) => {
+                    return NativeConnectionStatus::Unavailable;
+                }
+            };
+            // Kernel/idle checks only: no provider request, reconnect, source
+            // selection or session mutation. No table mutex spans this I/O.
+            if !channel.revalidate_idle() {
+                continue;
+            }
+            let current = match self.shared.channels.try_lock() {
+                Ok(channels) => channels
+                    .get(&pid)
+                    .is_some_and(|current| Arc::ptr_eq(current, &slot)),
+                Err(TryLockError::WouldBlock) => {
+                    status = NativeConnectionStatus::Busy;
+                    continue;
+                }
+                Err(TryLockError::Poisoned(_)) => {
+                    return NativeConnectionStatus::Unavailable;
+                }
+            };
+            if self.shared.stopping.load(Ordering::Acquire) {
+                return NativeConnectionStatus::Unavailable;
+            }
+            if current {
+                connected = true;
+            } else {
+                status = NativeConnectionStatus::Busy;
+            }
+        }
+        if self.shared.stopping.load(Ordering::Acquire) {
+            NativeConnectionStatus::Unavailable
+        } else if connected {
+            NativeConnectionStatus::Connected
+        } else {
+            status
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn start(runtime: &Path) -> io::Result<Self> {
         Self::spawn(runtime, NativeChannel::connect)
