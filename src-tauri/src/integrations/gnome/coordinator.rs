@@ -7,7 +7,7 @@ use super::{
     directories,
     managed::ManagedDirectory,
     module_store::{self, ModuleStore, StoredModule},
-    render_activation,
+    render_activation, render_activation_with_previous,
     service::{self, DefinitionState, OwnedActivation, ServiceRefusal},
     status,
     transaction::{self, ActivationFilesState, ActivationTransaction},
@@ -36,6 +36,7 @@ pub(super) enum Cause {
     NoArtifact,
     InvalidLocation,
     Conflict,
+    StaleRevision,
     Service(ServiceRefusal),
     Io(io::Error),
 }
@@ -53,6 +54,99 @@ pub(super) struct Prepared {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Removed;
+
+#[derive(Debug)]
+pub(super) struct RollbackOffer {
+    pub(super) revision: String,
+}
+
+fn rollback_offer_at(paths: &Paths) -> Result<RollbackOffer, Failure> {
+    let active = ExistingActivation::open(paths)?;
+    let previous = active
+        .owned
+        .previous_module()
+        .ok_or_else(|| failure(Stage::Preflight, Cause::Conflict))?;
+    let target = PreviousModule::open_digest(paths, &active, previous)
+        .map_err(|error| failure(Stage::Preflight, Cause::Io(error)))?;
+    target
+        .recheck(paths, &active)
+        .map_err(|error| failure(Stage::Preflight, Cause::Io(error)))?;
+    let revision = active
+        .owned
+        .revision()
+        .map_err(|error| failure(Stage::Preflight, Cause::Io(error)))?;
+    Ok(RollbackOffer { revision })
+}
+
+fn require_revision(
+    active: &ExistingActivation,
+    expected: &str,
+    stage: Stage,
+) -> Result<(), Failure> {
+    if active
+        .owned
+        .revision()
+        .map_err(|error| failure(stage, Cause::Io(error)))?
+        != expected
+    {
+        return Err(failure(stage, Cause::StaleRevision));
+    }
+    Ok(())
+}
+
+fn rollback_at(
+    paths: &Paths,
+    expected_revision: &str,
+    service: &mut impl ServiceChecks,
+) -> Result<Prepared, Failure> {
+    let active = ExistingActivation::open(paths)?;
+    require_revision(&active, expected_revision, Stage::Preflight)?;
+    let previous = active
+        .owned
+        .previous_module()
+        .ok_or_else(|| failure(Stage::Preflight, Cause::Conflict))?;
+    let target = PreviousModule::open_digest(paths, &active, previous)
+        .map_err(|error| failure(Stage::Preflight, Cause::Io(error)))?;
+    owned_definition(service, &active.owned, Stage::Preflight)?;
+    let preparing = |error| failure(Stage::Preparing, Cause::Io(error));
+    let mut transaction =
+        ActivationTransaction::open_complete(&active.state, &active.target).map_err(preparing)?;
+    #[cfg(test)]
+    service.after_activation_lock();
+    active.recheck(paths).map_err(preparing)?;
+    require_revision(&active, expected_revision, Stage::Preparing)?;
+    target.recheck(paths, &active).map_err(preparing)?;
+    owned_definition(service, &active.owned, Stage::Applying)?;
+    let applying = |error| failure(Stage::Applying, Cause::Io(error));
+    active.recheck(paths).map_err(applying)?;
+    target.recheck(paths, &active).map_err(applying)?;
+    require_revision(&active, expected_revision, Stage::Applying)?;
+    let module_path = paths
+        .state
+        .join("modules")
+        .join(previous)
+        .join(artifact::format::MODULE_NAME);
+    let rendered = render_activation_with_previous(
+        &module_path,
+        &paths.state.join(transaction::LAUNCHER),
+        Some(active.owned.module_digest()),
+    )
+    .map_err(|_| failure(Stage::Applying, Cause::Conflict))?;
+    transaction.update(rendered).map_err(applying)?;
+    target.recheck(paths, &active).map_err(applying)?;
+    transaction.finish_update().map_err(applying)?;
+    let verifying = |error| failure(Stage::Verifying, Cause::Io(error));
+    let current = OwnedActivation::open(&paths.state, &paths.target).map_err(verifying)?;
+    if current.module_path() != module_path
+        || current.previous_module() != Some(active.owned.module_digest())
+    {
+        return Err(failure(Stage::Verifying, Cause::Conflict));
+    }
+    let definition = owned_definition(service, &current, Stage::Verifying)?;
+    target.recheck(paths, &active).map_err(verifying)?;
+    current.recheck().map_err(verifying)?;
+    Ok(Prepared { definition })
+}
 
 struct ExistingActivation {
     state: ManagedDirectory,
@@ -91,15 +185,12 @@ struct PreviousModule {
 
 impl PreviousModule {
     fn open(paths: &Paths, active: &ExistingActivation) -> io::Result<Self> {
+        Self::open_digest(paths, active, active.owned.module_digest())
+    }
+
+    fn open_digest(paths: &Paths, active: &ExistingActivation, digest: &str) -> io::Result<Self> {
         let directory = directories::open_private_child(&active.state, "modules", false)?;
         paths.recheck(&active.state, &active.target, &directory)?;
-        let digest = active
-            .owned
-            .module_path()
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| io::Error::other("invalid owned module reference"))?;
         let stored = module_store::read_existing(&directory, digest)?;
         Ok(Self { directory, stored })
     }
@@ -159,15 +250,21 @@ fn update_at(
         .join(&artifact.manifest.sha256)
         .join(artifact::format::MODULE_NAME);
     if active.owned.module_path() != module_path {
-        let rendered = render_activation(&module_path, &paths.state.join(transaction::LAUNCHER))
-            .map_err(|_| failure(Stage::Applying, Cause::InvalidLocation))?;
+        let rendered = render_activation_with_previous(
+            &module_path,
+            &paths.state.join(transaction::LAUNCHER),
+            Some(active.owned.module_digest()),
+        )
+        .map_err(|_| failure(Stage::Applying, Cause::InvalidLocation))?;
         transaction.update(rendered).map_err(applying)?;
         old.recheck(paths, &active).map_err(applying)?;
         store.verify(&candidate, artifact).map_err(applying)?;
         transaction.finish_update().map_err(applying)?;
         let verifying = |error| failure(Stage::Verifying, Cause::Io(error));
         let current = OwnedActivation::open(&paths.state, &paths.target).map_err(verifying)?;
-        if current.module_path() != module_path {
+        if current.module_path() != module_path
+            || current.previous_module() != Some(active.owned.module_digest())
+        {
             return Err(failure(Stage::Verifying, Cause::Conflict));
         }
         definition = owned_definition(service, &current, Stage::Verifying)?;
@@ -323,6 +420,21 @@ pub(super) fn prepare_update(home: &Path) -> Result<Prepared, Failure> {
     )
 }
 
+pub(super) fn rollback_offer(home: &Path) -> Result<RollbackOffer, Failure> {
+    rollback_offer_at(&Paths::from_home(home)?)
+}
+
+pub(super) fn rollback(home: &Path, expected_revision: &str) -> Result<Prepared, Failure> {
+    let paths = Paths::from_home(home)?;
+    rollback_at(
+        &paths,
+        expected_revision,
+        &mut RealService {
+            target: paths.target.clone(),
+        },
+    )
+}
+
 /// Only activation files are removed. No bundle is needed and retained module
 /// data is never opened, repaired or deleted as a side effect of removal.
 pub(super) fn remove(home: &Path) -> Result<Removed, Failure> {
@@ -442,6 +554,22 @@ pub(super) fn remove_private(root: &Path) -> Result<Removed, Failure> {
     };
     remove_at(
         &paths,
+        &mut RealService {
+            target: paths.target.clone(),
+        },
+    )
+}
+
+#[cfg(test)]
+pub(super) fn rollback_private(root: &Path) -> Result<Prepared, Failure> {
+    let paths = Paths {
+        state: root.join("state"),
+        target: root.join("units/gnome-terminal-server.service.d"),
+    };
+    let offer = rollback_offer_at(&paths)?;
+    rollback_at(
+        &paths,
+        &offer.revision,
         &mut RealService {
             target: paths.target.clone(),
         },
@@ -569,6 +697,205 @@ mod tests {
                 .join(&artifact.manifest.sha256)
                 .join(artifact::format::MODULE_NAME);
             assert_eq!(fs::read(path).unwrap(), artifact.bytes);
+        }
+    }
+
+    #[test]
+    fn rollback_uses_persisted_previous_version_without_a_payload_selector() {
+        let (_root, paths) = fixture();
+        let original = artifact();
+        let updated = other_artifact();
+        let mut checks = Checks {
+            stock_calls: 0,
+            owned_calls: 0,
+            refuse_at: 0,
+        };
+        prepare_at(&paths, &original, &mut checks).unwrap();
+        update_at(&paths, &updated, &mut checks).unwrap();
+        let offer = rollback_offer_at(&paths).unwrap();
+        rollback_at(&paths, &offer.revision, &mut checks).unwrap();
+        let owned = OwnedActivation::open(&paths.state, &paths.target).unwrap();
+        assert_eq!(
+            owned.module_path(),
+            paths
+                .state
+                .join("modules")
+                .join(&original.manifest.sha256)
+                .join(artifact::format::MODULE_NAME)
+        );
+        assert_eq!(
+            owned.previous_module(),
+            Some(updated.manifest.sha256.as_str())
+        );
+    }
+
+    #[test]
+    fn rollback_rejects_duplicate_and_aba_requests_without_reversing_the_committed_result() {
+        let (_root, paths) = fixture();
+        let original = artifact();
+        let updated = other_artifact();
+        let mut checks = Checks {
+            stock_calls: 0,
+            owned_calls: 0,
+            refuse_at: 0,
+        };
+        prepare_at(&paths, &original, &mut checks).unwrap();
+        update_at(&paths, &updated, &mut checks).unwrap();
+        let old_offer = rollback_offer_at(&paths).unwrap();
+        rollback_at(&paths, &old_offer.revision, &mut checks).unwrap();
+        for repeat in [false, true] {
+            if repeat {
+                let fresh_offer = rollback_offer_at(&paths).unwrap();
+                rollback_at(&paths, &fresh_offer.revision, &mut checks).unwrap();
+                assert_eq!(
+                    OwnedActivation::open(&paths.state, &paths.target)
+                        .unwrap()
+                        .module_digest(),
+                    updated.manifest.sha256
+                );
+            }
+            let before = fs::read(paths.state.join(transaction::LAUNCHER)).unwrap();
+            let calls = (checks.stock_calls, checks.owned_calls);
+            assert!(matches!(
+                rollback_at(&paths, &old_offer.revision, &mut checks)
+                    .unwrap_err()
+                    .cause,
+                Cause::StaleRevision
+            ));
+            assert_eq!((checks.stock_calls, checks.owned_calls), calls);
+            assert_eq!(
+                fs::read(paths.state.join(transaction::LAUNCHER)).unwrap(),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn rollback_rejects_revision_changed_after_lock_before_commit() {
+        let (_root, paths) = fixture();
+        let mut checks = Checks {
+            stock_calls: 0,
+            owned_calls: 0,
+            refuse_at: 0,
+        };
+        prepare_at(&paths, &artifact(), &mut checks).unwrap();
+        update_at(&paths, &other_artifact(), &mut checks).unwrap();
+        let offer = rollback_offer_at(&paths).unwrap();
+        let before = fs::read(paths.state.join(transaction::LAUNCHER)).unwrap();
+        struct Touching<'a>(&'a Paths, &'a str);
+        impl ServiceChecks for Touching<'_> {
+            fn stock(&mut self) -> Result<(), ServiceRefusal> {
+                unreachable!()
+            }
+            fn owned(
+                &mut self,
+                owned: &OwnedActivation,
+            ) -> Result<DefinitionState, ServiceRefusal> {
+                owned.recheck().unwrap();
+                Ok(DefinitionState::NeedsReload)
+            }
+            fn after_activation_lock(&mut self) {
+                let path = self.0.state.join("installation-v1.json");
+                fs::write(&path, fs::read(&path).unwrap()).unwrap();
+                assert_ne!(
+                    OwnedActivation::open(&self.0.state, &self.0.target)
+                        .unwrap()
+                        .revision()
+                        .unwrap(),
+                    self.1
+                );
+            }
+        }
+        let error = rollback_at(
+            &paths,
+            &offer.revision,
+            &mut Touching(&paths, &offer.revision),
+        )
+        .unwrap_err();
+        assert!(matches!(error.cause, Cause::StaleRevision));
+        assert_eq!(
+            fs::read(paths.state.join(transaction::LAUNCHER)).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn rollback_keeps_history_on_idempotent_update_and_can_restore_over_bad_current_data() {
+        let (_root, paths) = fixture();
+        let original = artifact();
+        let updated = other_artifact();
+        let mut checks = Checks {
+            stock_calls: 0,
+            owned_calls: 0,
+            refuse_at: 0,
+        };
+        prepare_at(&paths, &original, &mut checks).unwrap();
+        update_at(&paths, &updated, &mut checks).unwrap();
+        let before = fs::read(paths.state.join(transaction::LAUNCHER)).unwrap();
+        update_at(&paths, &updated, &mut checks).unwrap();
+        assert_eq!(
+            fs::read(paths.state.join(transaction::LAUNCHER)).unwrap(),
+            before
+        );
+        let current = paths
+            .state
+            .join("modules")
+            .join(&updated.manifest.sha256)
+            .join(artifact::format::MODULE_NAME);
+        fs::set_permissions(&current, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&current, b"modified current module").unwrap();
+        let offer = rollback_offer_at(&paths).unwrap();
+        rollback_at(&paths, &offer.revision, &mut checks).unwrap();
+        assert_eq!(fs::read(current).unwrap(), b"modified current module");
+        assert_eq!(
+            OwnedActivation::open(&paths.state, &paths.target)
+                .unwrap()
+                .module_digest(),
+            original.manifest.sha256
+        );
+    }
+
+    #[test]
+    fn rollback_refuses_absent_history_bad_target_and_pending_state_before_service_calls() {
+        for kind in ["no-history", "bad-target", "pending"] {
+            let (_root, paths) = fixture();
+            let original = artifact();
+            let updated = other_artifact();
+            let mut checks = Checks {
+                stock_calls: 0,
+                owned_calls: 0,
+                refuse_at: 0,
+            };
+            prepare_at(&paths, &original, &mut checks).unwrap();
+            if kind != "no-history" {
+                update_at(&paths, &updated, &mut checks).unwrap();
+            }
+            if kind == "bad-target" {
+                let old = paths
+                    .state
+                    .join("modules")
+                    .join(&original.manifest.sha256)
+                    .join(artifact::format::MODULE_NAME);
+                fs::set_permissions(&old, fs::Permissions::from_mode(0o600)).unwrap();
+                fs::write(old, b"changed rollback target").unwrap();
+            }
+            if kind == "pending" {
+                fs::write(paths.state.join("installation-pending-v1.json"), b"pending").unwrap();
+            }
+            let before = fs::read(paths.state.join(transaction::LAUNCHER)).unwrap();
+            let calls = (checks.stock_calls, checks.owned_calls);
+            let revision = OwnedActivation::open(&paths.state, &paths.target)
+                .and_then(|owned| owned.revision())
+                .unwrap_or_default();
+            assert!(
+                rollback_at(&paths, &revision, &mut checks).is_err(),
+                "{kind}"
+            );
+            assert_eq!((checks.stock_calls, checks.owned_calls), calls);
+            assert_eq!(
+                fs::read(paths.state.join(transaction::LAUNCHER)).unwrap(),
+                before
+            );
         }
     }
 

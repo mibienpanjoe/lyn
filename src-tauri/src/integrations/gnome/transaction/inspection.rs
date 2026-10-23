@@ -64,6 +64,23 @@ pub(in crate::integrations::gnome) struct PinnedActivation {
 }
 
 impl PinnedActivation {
+    pub(in crate::integrations::gnome) fn revision(&self) -> io::Result<String> {
+        use sha2::{Digest, Sha256};
+        use std::os::unix::fs::MetadataExt;
+        let metadata = self.manifest.file.metadata()?;
+        let mut hash = Sha256::new();
+        hash.update(b"lyn-native-activation-revision-v1\0");
+        hash.update(metadata.dev().to_le_bytes());
+        hash.update(metadata.ino().to_le_bytes());
+        hash.update(metadata.ctime().to_le_bytes());
+        hash.update(metadata.ctime_nsec().to_le_bytes());
+        hash.update(&self.manifest.content);
+        Ok(hash
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect())
+    }
     pub(super) fn into_files(self) -> Vec<(super::Place, OwnedFile)> {
         vec![
             (super::Place::State, self.launcher),

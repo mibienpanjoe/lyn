@@ -17,6 +17,7 @@ mod transaction;
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ActivationError {
     InvalidPath,
+    InvalidPreviousModule,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -71,10 +72,70 @@ pub(crate) fn render_activation(
     })
 }
 
+const PREVIOUS_MODULE_PREFIX: &str = "# Lyn previous module: ";
+
+fn render_activation_with_previous(
+    module: &Path,
+    launcher: &Path,
+    previous: Option<&str>,
+) -> Result<RenderedActivation, ActivationError> {
+    let mut rendered = render_activation(module, launcher)?;
+    if let Some(previous) = previous {
+        if previous.len() != 64
+            || !previous
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || module
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                == Some(previous)
+        {
+            return Err(ActivationError::InvalidPreviousModule);
+        }
+        rendered
+            .launcher
+            .push_str(&format!("{PREVIOUS_MODULE_PREFIX}{previous}\n"));
+    }
+    Ok(rendered)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{ffi::OsString, os::unix::ffi::OsStringExt, path::Path};
+
+    #[test]
+    fn rollback_history_is_a_closed_factory_trailer() {
+        let module = Path::new(
+            "/private/modules/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/liblyn-gnome-native.so",
+        );
+        let previous = "a".repeat(64);
+        let rendered = render_activation_with_previous(
+            module,
+            Path::new("/private/launcher-v1"),
+            Some(&previous),
+        )
+        .unwrap();
+        assert!(rendered.launcher.ends_with(&format!(
+            "exec /usr/libexec/gnome-terminal-server \"$@\"\n{PREVIOUS_MODULE_PREFIX}{previous}\n"
+        )));
+        for invalid in ["../escape", "abc", &"A".repeat(64), &"b".repeat(64)] {
+            assert!(
+                render_activation_with_previous(
+                    module,
+                    Path::new("/private/launcher-v1"),
+                    Some(invalid)
+                )
+                .is_err()
+            );
+        }
+        assert_eq!(
+            render_activation_with_previous(module, Path::new("/private/launcher-v1"), None)
+                .unwrap(),
+            render_activation(module, Path::new("/private/launcher-v1")).unwrap()
+        );
+    }
 
     fn private_managed_bus_address(address: &str, bus: &Path) -> bool {
         let Some(path) = bus.to_str() else {
@@ -187,6 +248,10 @@ mod tests {
             }
             "remove" => {
                 coordinator::remove_private(root).unwrap();
+            }
+            "rollback" => {
+                let result = coordinator::rollback_private(root).unwrap();
+                assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);
             }
             _ => panic!("unknown private file action"),
         }

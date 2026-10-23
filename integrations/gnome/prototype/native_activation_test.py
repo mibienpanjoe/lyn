@@ -102,6 +102,32 @@ def run(module, preserved, executable, sdk, updated_module):
             maps = Path(f"/proc/{server.pid}/maps").read_text()
             assert str(stored_module) in maps and str(module) not in maps and str(preserved) in maps
             client = "/usr/bin/gnome-terminal.real" if Path("/usr/bin/gnome-terminal.real").is_file() else "gnome-terminal"
+            def launch_owned(app_id, title, expected, excluded):
+                process = subprocess.Popen([str(root / "state/launcher-v1"), f"--app-id={app_id}"], env=environment,
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                owned_pin = None
+                try:
+                    subprocess.run(["gdbus", "wait", "--session", "--timeout", "5", app_id], check=True, timeout=6)
+                    owned_pin = _pin_owned_app(process, Path("/usr/libexec/gnome-terminal-server"), private_runtime,
+                                               expected_cwd=Path.home())
+                    broker.handshake(process)
+                    maps = Path(f"/proc/{process.pid}/maps").read_text()
+                    assert str(expected) in maps and str(excluded) not in maps and str(preserved) in maps
+                    subprocess.run([client, f"--app-id={app_id}", "--window", f"--title={title}",
+                                    f"--working-directory={project}", "--", "/usr/bin/sleep", "40"], check=True, timeout=5)
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        windows = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", f"^{re.escape(title)}$"],
+                                                 capture_output=True, text=True, timeout=1).stdout.split()
+                        if len(windows) == 1:
+                            time.sleep(.1)  # Existing settled-widget contract.
+                            return process, owned_pin, int(windows[0])
+                        assert process.poll() is None
+                        time.sleep(.01)
+                    raise AssertionError("Private replacement window did not map")
+                except BaseException:
+                    stop_server(process, owned_pin)
+                    raise
             subprocess.run([client, f"--app-id={app_id}", "--window", "--title=Lyn Native Activation",
                             f"--working-directory={project}", "--", "/usr/bin/sleep", "40"], check=True, timeout=5)
             deadline = time.monotonic() + 5
@@ -160,34 +186,30 @@ def run(module, preserved, executable, sdk, updated_module):
             # new file is loaded on a subsequent server start. No user service.
             stop_server(server, pin)
             server, pin = None, None
-            next_id = "org.lyn.NativeUpdated"
-            server = subprocess.Popen([str(root / "state/launcher-v1"), f"--app-id={next_id}"], env=environment,
-                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["gdbus", "wait", "--session", "--timeout", "5", next_id], check=True, timeout=6)
-            pin = _pin_owned_app(server, Path("/usr/libexec/gnome-terminal-server"), private_runtime,
-                                 expected_cwd=Path.home())
-            broker.handshake(server)
-            maps = Path(f"/proc/{server.pid}/maps").read_text()
-            assert str(updated_stored) in maps and str(stored_module) not in maps and str(preserved) in maps
-            subprocess.run([client, f"--app-id={next_id}", "--window", "--title=Lyn Native Updated",
-                            f"--working-directory={project}", "--", "/usr/bin/sleep", "40"], check=True, timeout=5)
-            deadline = time.monotonic() + 5
-            updated_window = None
-            while time.monotonic() < deadline:
-                windows = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^Lyn Native Updated$"],
-                                         capture_output=True, text=True, timeout=1).stdout.split()
-                if len(windows) == 1:
-                    updated_window = int(windows[0])
-                    break
-                assert server.poll() is None
-                time.sleep(.01)
-            assert updated_window is not None
-            time.sleep(.1)  # Same settled-widget contract as the first capture.
+            server, pin, updated_window = launch_owned("org.lyn.NativeUpdated", "Lyn Native Updated", updated_stored, stored_module)
             result = broker.capture_probe(updated_window, project)
             assert result == {"status": "saved", "bodyMatches": True, "projectMatches": True,
                               "branchMatches": True, "duplicateRefused": True, "captureCount": 1,
                               "leaseReleased": True}, result
             print("PASS: distinct real ELF update preserves the live old server; owned private relaunch loads the new digest and saves exactly", flush=True)
+            action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "rollback"
+            # Rollback must use persisted ownership/history, never this input.
+            action_environment["LYN_PRIVATE_NATIVE_ACTIVATION_MODULE"] = str(root / "absent-bundle.so")
+            with simulated_manager(root, "loaded", sdk, action_environment):
+                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                "--test-threads=1"], env=action_environment, check=True, timeout=8)
+            poller = select.poll()
+            poller.register(pin, select.POLLIN)
+            assert not poller.poll(0) and server.poll() is None
+            assert str(updated_stored) in Path(f"/proc/{server.pid}/maps").read_text()
+            stop_server(server, pin)
+            server, pin = None, None
+            server, pin, restored_window = launch_owned("org.lyn.NativeRestored", "Lyn Native Restored", stored_module, updated_stored)
+            result = broker.capture_probe(restored_window, project)
+            assert result == {"status": "saved", "bodyMatches": True, "projectMatches": True,
+                              "branchMatches": True, "duplicateRefused": True, "captureCount": 1,
+                              "leaseReleased": True}, result
+            print("PASS: persisted-history rollback needs no artifact input, preserves the live server and loads/restores exact capture on owned relaunch", flush=True)
             action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "remove"
             with simulated_manager(root, "loaded", sdk, action_environment):
                 subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",

@@ -1,10 +1,11 @@
 //! Read-only authority for one factory-rendered, receipt-owned activation.
 
 use super::super::{
+    PREVIOUS_MODULE_PREFIX,
     artifact::format,
     directories,
     managed::ManagedDirectory,
-    render_activation,
+    render_activation_with_previous,
     transaction::{DROP_IN, LAUNCHER, PinnedActivation},
 };
 use std::{
@@ -22,6 +23,7 @@ pub(in crate::integrations::gnome) struct OwnedActivation {
     launcher_path: String,
     drop_in_path: String,
     module_path: PathBuf,
+    previous_module: Option<String>,
 }
 
 fn refused() -> io::Error {
@@ -53,8 +55,8 @@ impl OwnedActivation {
         // Decode only the factory's single-quoted literal, then require the
         // entire launcher and drop-in to round-trip byte for byte. This is not
         // a generic shell parser and never executes the supplied text.
-        let literal = std::str::from_utf8(&files.launcher.content)
-            .map_err(|_| refused())?
+        let text = std::str::from_utf8(&files.launcher.content).map_err(|_| refused())?;
+        let literal = text
             .lines()
             .nth(2)
             .and_then(|line| line.strip_prefix("lyn_module='"))
@@ -75,13 +77,22 @@ impl OwnedActivation {
         {
             return Err(refused());
         }
-        let rendered =
-            render_activation(&module_path, Path::new(&launcher_path)).map_err(|_| refused())?;
+        let previous_module = text
+            .lines()
+            .last()
+            .and_then(|line| line.strip_prefix(PREVIOUS_MODULE_PREFIX));
+        let rendered = render_activation_with_previous(
+            &module_path,
+            Path::new(&launcher_path),
+            previous_module,
+        )
+        .map_err(|_| refused())?;
         if rendered.launcher.as_bytes() != files.launcher.content
             || rendered.drop_in.as_bytes() != files.drop_in.content
         {
             return Err(refused());
         }
+        let previous_module = previous_module.map(str::to_owned);
         let result = Self {
             state_path: state_path.into(),
             target_path: target_path.into(),
@@ -91,6 +102,7 @@ impl OwnedActivation {
             launcher_path,
             drop_in_path,
             module_path,
+            previous_module,
         };
         result.recheck()?;
         Ok(result)
@@ -102,6 +114,25 @@ impl OwnedActivation {
 
     pub(in crate::integrations::gnome) fn module_path(&self) -> &Path {
         &self.module_path
+    }
+
+    pub(in crate::integrations::gnome) fn previous_module(&self) -> Option<&str> {
+        self.previous_module.as_deref()
+    }
+
+    pub(in crate::integrations::gnome) fn module_digest(&self) -> &str {
+        self.module_path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .expect("owned module reference was validated")
+    }
+
+    pub(in crate::integrations::gnome) fn revision(&self) -> io::Result<String> {
+        self.recheck()?;
+        let revision = self.files.revision()?;
+        self.recheck()?;
+        Ok(revision)
     }
 
     pub(super) fn drop_in_metadata(&self) -> io::Result<fs::Metadata> {
@@ -126,6 +157,7 @@ impl OwnedActivation {
 mod tests {
     use super::super::super::transaction::ActivationTransaction;
     use super::*;
+    use crate::integrations::gnome::render_activation;
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
@@ -183,6 +215,23 @@ mod tests {
         if kind == "extra-drop-in" {
             rendered.drop_in.push_str("# unexpected\n");
         }
+        if kind == "bad-history" {
+            rendered
+                .launcher
+                .push_str(&format!("{PREVIOUS_MODULE_PREFIX}../escape\n"));
+        }
+        if kind == "self-history" {
+            rendered
+                .launcher
+                .push_str(&format!("{PREVIOUS_MODULE_PREFIX}{}\n", "a".repeat(64)));
+        }
+        if kind == "duplicate-history" {
+            for _ in 0..2 {
+                rendered
+                    .launcher
+                    .push_str(&format!("{PREVIOUS_MODULE_PREFIX}{}\n", "b".repeat(64)));
+            }
+        }
         let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
         transaction.apply().unwrap();
         (state_path, target_path)
@@ -196,6 +245,9 @@ mod tests {
             "wrong-module-name",
             "extra-shell",
             "extra-drop-in",
+            "bad-history",
+            "self-history",
+            "duplicate-history",
         ] {
             let root = tempfile::tempdir().unwrap();
             fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
