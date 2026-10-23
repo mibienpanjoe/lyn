@@ -1,5 +1,8 @@
 //! Process-local reversible update. Persistent interruption recovery is separate.
 
+mod cleanup;
+pub(super) use cleanup::{CLEANUP_PENDING, recover_cleanup};
+
 use super::super::{
     RenderedActivation,
     managed::{OwnedFile, PublishFailure},
@@ -21,6 +24,8 @@ pub(super) struct PendingUpdate {
     ready: bool,
     committing: bool,
     manifest_refreshed: bool,
+    cleanup_record: Option<OwnedFile>,
+    cleanup_record_retired: bool,
 }
 
 impl ActivationTransaction<'_> {
@@ -121,6 +126,7 @@ impl ActivationTransaction<'_> {
             return Err(refused());
         }
         self.preflight_update()?;
+        self.state.require_absent(CLEANUP_PENDING)?;
         self.update = Some(PendingUpdate::default());
         self.phase = Phase::Updating;
         self.replace_role(0, Place::State, rendered.launcher.as_bytes(), true)?;
@@ -159,6 +165,11 @@ impl ActivationTransaction<'_> {
                 self.update.as_mut().ok_or_else(refused)?.backups.pop();
             }
             result?;
+            #[cfg(test)]
+            if self.update.as_ref().ok_or_else(refused)?.committing {
+                let remaining = self.update.as_ref().ok_or_else(refused)?.backups.len();
+                self.cleanup_checkpoint((4 - remaining) as u8)?;
+            }
         }
         Ok(())
     }
@@ -169,12 +180,14 @@ impl ActivationTransaction<'_> {
             return Err(refused());
         }
         self.preflight_update()?;
-        // Explicit irreversible boundary: from the first backup deletion on,
-        // a failure permits finishing cleanup, never restoring a partial past.
-        self.update.as_mut().ok_or_else(refused)?.committing = true;
+        // Persist the explicit irreversible decision before deleting backups.
+        self.prepare_cleanup_record()?;
+        #[cfg(test)]
+        self.cleanup_checkpoint(1)?;
         self.clean_candidates()?;
         self.clean_backups()?;
         self.sync_update_directories()?;
+        self.retire_cleanup_record()?;
         self.update = None;
         self.phase = Phase::Complete;
         Ok(())

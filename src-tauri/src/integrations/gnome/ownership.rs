@@ -35,6 +35,10 @@ fn refused() -> io::Error {
 }
 
 impl Receipt {
+    pub(super) fn filename(&self) -> &str {
+        &self.name
+    }
+
     pub(super) fn store(
         &self,
         state: &ManagedDirectory,

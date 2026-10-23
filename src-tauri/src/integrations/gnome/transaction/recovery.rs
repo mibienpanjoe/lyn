@@ -216,7 +216,7 @@ pub(super) fn recover_pending(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::super::{ActivationTransaction, DROP_IN, LAUNCHER, tests::fixture};
     use super::*;
     use std::{
@@ -279,6 +279,35 @@ mod tests {
         }
     }
 
+    pub(in crate::integrations::gnome::transaction) fn abrupt_exit(
+        root: &Path,
+        checkpoint: u8,
+        filter: &str,
+    ) {
+        let mut child = OwnedChild(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", filter, "--nocapture"])
+                .env("LYN_PRIVATE_INSTALL_RECOVERY_ROOT", root)
+                .env("LYN_PRIVATE_INSTALL_RECOVERY_POINT", checkpoint.to_string())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                assert_eq!(status.code(), Some(77));
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "private recovery child exceeded eight seconds"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
     fn four_abrupt_process_exits_recover_one_exact_installation_each() {
         for checkpoint in 1..=4 {
@@ -300,32 +329,11 @@ mod tests {
                 &state_path.join(LAUNCHER),
             )
             .unwrap();
-            let mut child = OwnedChild(
-                Command::new(std::env::current_exe().unwrap())
-                    .args([
-                        "--exact",
-                        "integrations::gnome::transaction::recovery::tests::abrupt_exit_child",
-                        "--nocapture",
-                    ])
-                    .env("LYN_PRIVATE_INSTALL_RECOVERY_ROOT", root.path())
-                    .env("LYN_PRIVATE_INSTALL_RECOVERY_POINT", checkpoint.to_string())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .unwrap(),
+            abrupt_exit(
+                root.path(),
+                checkpoint,
+                "integrations::gnome::transaction::recovery::tests::abrupt_exit_child",
             );
-            let deadline = Instant::now() + Duration::from_secs(8);
-            loop {
-                if let Some(status) = child.0.try_wait().unwrap() {
-                    assert_eq!(status.code(), Some(77));
-                    break;
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "private recovery child exceeded eight seconds"
-                );
-                std::thread::sleep(Duration::from_millis(5));
-            }
             let mut resumed = ActivationTransaction::resume(&state, &target).unwrap();
             assert_eq!(
                 fs::read_to_string(state_path.join(LAUNCHER)).unwrap(),

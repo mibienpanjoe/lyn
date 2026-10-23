@@ -60,6 +60,14 @@ fn refused() -> io::Error {
     )
 }
 
+fn pending(directory: &ManagedDirectory, name: &str) -> io::Result<bool> {
+    match directory.require_absent(name) {
+        Ok(()) => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
 impl<'a> ActivationTransaction<'a> {
     /// The internal caller renders the launcher with state/launcher-v1 as its
     /// exact destination. No user payload or UI-provided path is accepted here.
@@ -72,6 +80,7 @@ impl<'a> ActivationTransaction<'a> {
         state.require_absent(LAUNCHER)?;
         state.require_absent(MANIFEST)?;
         state.require_absent(recovery::PENDING_INSTALL)?;
+        state.require_absent(update::CLEANUP_PENDING)?;
         drop_ins.require_absent(DROP_IN)?;
         Ok(Self {
             state,
@@ -92,7 +101,11 @@ impl<'a> ActivationTransaction<'a> {
         drop_ins: &'a ManagedDirectory,
     ) -> io::Result<Self> {
         let lock = InstallationLock::acquire(state)?;
+        if pending(state, recovery::PENDING_INSTALL)? && pending(state, update::CLEANUP_PENDING)? {
+            return Err(refused());
+        }
         recovery::recover_pending(state, drop_ins, &lock)?;
+        update::recover_cleanup(state, drop_ins, &lock)?;
         let manifest_file = state.read_state(MANIFEST)?;
         let manifest: Manifest =
             serde_json::from_slice(&manifest_file.content).map_err(|_| refused())?;

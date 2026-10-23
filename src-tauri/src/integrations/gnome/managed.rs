@@ -27,6 +27,7 @@ enum Fault {
     None,
     StageCleanup,
     DirectorySync,
+    DirectorySyncAfter(usize),
 }
 
 #[derive(Debug)]
@@ -239,8 +240,14 @@ impl ManagedDirectory {
 
     pub(super) fn sync_directory(&self) -> io::Result<()> {
         #[cfg(test)]
-        if self.fault.get() == Fault::DirectorySync {
-            return Err(io::Error::other("injected directory sync failure"));
+        match self.fault.get() {
+            Fault::DirectorySync | Fault::DirectorySyncAfter(0) => {
+                return Err(io::Error::other("injected directory sync failure"));
+            }
+            Fault::DirectorySyncAfter(remaining) => {
+                self.fault.set(Fault::DirectorySyncAfter(remaining - 1))
+            }
+            _ => {}
         }
         self.directory.sync_all()
     }
@@ -252,6 +259,11 @@ impl ManagedDirectory {
         } else {
             Fault::None
         });
+    }
+
+    #[cfg(test)]
+    pub(super) fn fail_directory_sync_after(&self, successes: usize) {
+        self.fault.set(Fault::DirectorySyncAfter(successes));
     }
 
     pub(super) fn discard_stage(&self, stage: &StagedFile) -> io::Result<()> {
