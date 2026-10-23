@@ -1,4 +1,65 @@
+mod native_artifact;
+
+fn embed_native_bundle() {
+    use std::{fs, io::Read, path::Path};
+    println!("cargo:rustc-check-cfg=cfg(lyn_gnome_native_embedded)");
+    println!("cargo:rerun-if-env-changed=LYN_GNOME_NATIVE_BUNDLE");
+    println!("cargo:rerun-if-changed=native_artifact.rs");
+    let Some(directory) = std::env::var_os("LYN_GNOME_NATIVE_BUNDLE") else {
+        return;
+    };
+    println!("cargo:rerun-if-changed={}", Path::new(&directory).display());
+    assert_eq!(
+        std::env::var("TARGET").unwrap(),
+        native_artifact::TARGET,
+        "unsupported native bundle target"
+    );
+    let directory = Path::new(&directory)
+        .canonicalize()
+        .expect("native bundle directory unavailable");
+    let read = |name: &str, limit: usize| {
+        let path = directory.join(name);
+        println!("cargo:rerun-if-changed={}", path.display());
+        assert!(
+            fs::symlink_metadata(&path)
+                .expect("native bundle entry unavailable")
+                .is_file(),
+            "native bundle requires regular files without symlinks"
+        );
+        let file = fs::File::open(&path).expect("native bundle file unavailable");
+        let metadata = file.metadata().expect("native bundle metadata unavailable");
+        assert!(
+            metadata.is_file() && metadata.len() <= limit as u64,
+            "native bundle requires a bounded regular file"
+        );
+        let mut bytes = Vec::new();
+        file.take(limit as u64 + 1)
+            .read_to_end(&mut bytes)
+            .expect("native bundle read failed");
+        assert!(bytes.len() <= limit, "native bundle exceeds size limit");
+        bytes
+    };
+    let manifest = read(
+        native_artifact::MANIFEST_NAME,
+        native_artifact::MAX_MANIFEST_BYTES,
+    );
+    let module = read(
+        native_artifact::MODULE_NAME,
+        native_artifact::MAX_MODULE_BYTES,
+    );
+    native_artifact::validate(&manifest, &module).expect("native bundle refused");
+    let output = std::env::var_os("OUT_DIR").unwrap();
+    for (name, bytes) in [
+        (native_artifact::MODULE_NAME, module),
+        (native_artifact::MANIFEST_NAME, manifest),
+    ] {
+        fs::write(Path::new(&output).join(name), bytes).expect("native bundle output failed");
+    }
+    println!("cargo:rustc-cfg=lyn_gnome_native_embedded");
+}
+
 fn main() {
+    embed_native_bundle();
     // Listing commands enables generated allow-/deny- permissions and turns off
     // the default "every registered command is available to every window" behavior.
     // See https://v2.tauri.app/security/capabilities/

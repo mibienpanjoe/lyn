@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+pub(crate) mod artifact;
 mod directories;
 mod lock;
 mod managed;
