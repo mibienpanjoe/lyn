@@ -3,9 +3,10 @@
 mod early;
 pub(in crate::integrations::gnome::transaction) use early::recover_early;
 
-pub(in crate::integrations::gnome::transaction) const EXCHANGE_NAMES: [&str; 2] = [
+pub(in crate::integrations::gnome::transaction) const EXCHANGE_NAMES: [&str; 3] = [
     "update-launcher-exchange-v1.json",
     "update-drop-in-exchange-v1.json",
+    "update-manifest-exchange-v1.json",
 ];
 
 pub(in crate::integrations::gnome::transaction) const PRECOMMIT_PENDING: &str =
@@ -69,10 +70,11 @@ impl ActivationTransaction<'_> {
         let prepared: PreparedUpdate =
             serde_json::from_slice(&header.content).map_err(|_| refused())?;
         prepared.validate()?;
-        let expected = if role == 0 {
-            &prepared.previous_launcher
-        } else {
-            &prepared.previous_drop_in
+        let expected = match role {
+            0 => &prepared.previous_launcher,
+            1 => &prepared.previous_drop_in,
+            2 => &prepared.previous_manifest,
+            _ => return Err(refused()),
         };
         if &body.previous != expected {
             return Err(refused());
@@ -98,7 +100,7 @@ impl ActivationTransaction<'_> {
     }
 
     fn retire_exchanges(&mut self) -> io::Result<()> {
-        for role in (0..2).rev() {
+        for role in (0..3).rev() {
             self.lock.check()?;
             let update = self.update.as_mut().ok_or_else(refused)?;
             if let Some(record) = &update.exchange_records[role] {
@@ -186,6 +188,8 @@ mod tests {
     #[test]
     fn closing_a_prepared_update_must_not_implicitly_commit_it_on_resume() {
         let (root, state, target, initial) = fixture();
+        let old_launcher = initial.launcher.clone();
+        let old_drop_in = initial.drop_in.clone();
         let mut transaction = ActivationTransaction::begin(&state, &target, initial).unwrap();
         transaction.apply().unwrap();
         let updated = crate::integrations::gnome::render_activation(
@@ -195,17 +199,21 @@ mod tests {
         .unwrap();
         transaction.update(updated).unwrap();
         drop(transaction);
-        let before_state = fs::read_dir(root.path().join("state")).unwrap().count();
-        let before_target = fs::read_dir(root.path().join("drop-ins")).unwrap().count();
-        assert!(ActivationTransaction::resume(&state, &target).is_err());
+        let mut restored = ActivationTransaction::resume(&state, &target).unwrap();
         assert_eq!(
-            fs::read_dir(root.path().join("state")).unwrap().count(),
-            before_state
+            fs::read_to_string(root.path().join("state").join(LAUNCHER)).unwrap(),
+            old_launcher
         );
+        assert_eq!(
+            fs::read_to_string(root.path().join("drop-ins").join(DROP_IN)).unwrap(),
+            old_drop_in
+        );
+        assert_eq!(fs::read_dir(root.path().join("state")).unwrap().count(), 3);
         assert_eq!(
             fs::read_dir(root.path().join("drop-ins")).unwrap().count(),
-            before_target
+            1
         );
+        restored.rollback().unwrap();
     }
 
     #[test]

@@ -30,7 +30,7 @@ struct CleanupRecord {
     #[serde(default)]
     precommit: Option<Receipt>,
     #[serde(default)]
-    exchanges: [Option<Receipt>; 2],
+    exchanges: Vec<Option<Receipt>>,
 }
 
 pub(super) fn candidate(receipt: &Receipt, mode: u32) -> bool {
@@ -44,6 +44,7 @@ pub(super) fn candidate(receipt: &Receipt, mode: u32) -> bool {
 impl CleanupRecord {
     fn validate(&self) -> io::Result<()> {
         if self.version != 1
+            || ![0, 2, 3].contains(&self.exchanges.len())
             || !self.current.launcher.is_for(LAUNCHER, 0o700)
             || !self.current.drop_in.is_for(DROP_IN, 0o600)
             || !self.current.manifest.is_for(MANIFEST, 0o600)
@@ -71,9 +72,30 @@ impl CleanupRecord {
     }
 }
 
+fn validate_manifest(
+    state: &ManagedDirectory,
+    drop_ins: &ManagedDirectory,
+    file: &OwnedFile,
+) -> io::Result<()> {
+    let manifest: Manifest = serde_json::from_slice(&file.content).map_err(|_| refused())?;
+    if manifest.version != 1
+        || !manifest.launcher.is_for(LAUNCHER, 0o700)
+        || !manifest.drop_in.is_for(DROP_IN, 0o600)
+    {
+        return Err(refused());
+    }
+    let _launcher = manifest.launcher.reopen(state)?;
+    let _drop_in = manifest.drop_in.reopen(drop_ins)?;
+    Ok(())
+}
+
 impl ActivationTransaction<'_> {
     pub(super) fn prepare_cleanup_record(&mut self) -> io::Result<()> {
         self.lock.check()?;
+        if self.files.len() != 3 {
+            return Err(refused());
+        }
+        validate_manifest(self.state, self.drop_ins, &self.files[2].1)?;
         let update = self.update.as_ref().ok_or_else(refused)?;
         if update.cleanup_record_retired {
             self.state.require_absent(CLEANUP_PENDING)?;
@@ -110,7 +132,7 @@ impl ActivationTransaction<'_> {
                 self.state,
                 update.precommit_record.as_ref().ok_or_else(refused)?,
             )?),
-            exchanges: [
+            exchanges: vec![
                 Some(Receipt::record(
                     self.state,
                     update.exchange_records[0].as_ref().ok_or_else(refused)?,
@@ -118,6 +140,10 @@ impl ActivationTransaction<'_> {
                 Some(Receipt::record(
                     self.state,
                     update.exchange_records[1].as_ref().ok_or_else(refused)?,
+                )?),
+                Some(Receipt::record(
+                    self.state,
+                    update.exchange_records[2].as_ref().ok_or_else(refused)?,
                 )?),
             ],
         };
@@ -200,16 +226,7 @@ pub(in crate::integrations::gnome::transaction) fn recover_cleanup(
     let _launcher = snapshot.current.launcher.reopen(state)?;
     let _drop_in = snapshot.current.drop_in.reopen(drop_ins)?;
     let manifest_file = snapshot.current.manifest.reopen(state)?;
-    let manifest: Manifest =
-        serde_json::from_slice(&manifest_file.content).map_err(|_| refused())?;
-    if manifest.version != 1
-        || !manifest.launcher.is_for(LAUNCHER, 0o700)
-        || !manifest.drop_in.is_for(DROP_IN, 0o600)
-    {
-        return Err(refused());
-    }
-    let _manifest_launcher = manifest.launcher.reopen(state)?;
-    let _manifest_drop_in = manifest.drop_in.reopen(drop_ins)?;
+    validate_manifest(state, drop_ins, &manifest_file)?;
     let precommit = if let Some(receipt) = &snapshot.precommit {
         match receipt.reopen(state) {
             Ok(file) => Some(file),
@@ -223,7 +240,8 @@ pub(in crate::integrations::gnome::transaction) fn recover_cleanup(
     };
     let mut backups: Vec<(&ManagedDirectory, OwnedFile)> = Vec::new();
     let mut exchange_records = Vec::new();
-    for (role, receipt) in snapshot.exchanges.iter().enumerate() {
+    for (role, name) in EXCHANGE_NAMES.into_iter().enumerate() {
+        let receipt = snapshot.exchanges.get(role).and_then(Option::as_ref);
         if let Some(receipt) = receipt {
             match receipt.reopen(state) {
                 Ok(file) => exchange_records.push(file),
@@ -231,7 +249,7 @@ pub(in crate::integrations::gnome::transaction) fn recover_cleanup(
                 Err(error) => return Err(error),
             }
         } else {
-            state.require_absent(EXCHANGE_NAMES[role])?;
+            state.require_absent(name)?;
         }
     }
     for (directory, receipt) in [
@@ -489,7 +507,7 @@ mod tests {
         transaction.clean_backups().unwrap();
         drop(transaction);
         // First flush makes the intent durable; the second precedes retirement.
-        state.fail_directory_sync_after(5);
+        state.fail_directory_sync_after(6);
         assert!(ActivationTransaction::resume(&state, &target).is_err());
         assert!(!root.path().join("state").join(CLEANUP_PENDING).exists());
         assert!(ActivationTransaction::resume(&state, &target).is_err());
@@ -524,5 +542,44 @@ mod tests {
         );
         state.fail_directory_sync(false);
         ActivationTransaction::resume(&state, &target).unwrap();
+    }
+
+    #[test]
+    fn live_finish_refuses_stale_embedded_receipts_before_backup_deletion() {
+        let (root, state, target, initial) = fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, initial).unwrap();
+        transaction.apply().unwrap();
+        let updated = render_activation(
+            &root.path().join("native-v2.so"),
+            &root.path().join("state").join(LAUNCHER),
+        )
+        .unwrap();
+        let launcher = updated.launcher.clone();
+        transaction.update(updated).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(root.path().join("state").join(LAUNCHER), launcher).unwrap();
+        let before_state = fs::read_dir(root.path().join("state")).unwrap().count();
+        let before_target = fs::read_dir(root.path().join("drop-ins")).unwrap().count();
+        assert!(transaction.finish_update().is_err());
+        assert_eq!(
+            fs::read_dir(root.path().join("state")).unwrap().count(),
+            before_state
+        );
+        assert_eq!(
+            fs::read_dir(root.path().join("drop-ins")).unwrap().count(),
+            before_target
+        );
+    }
+
+    #[test]
+    fn cleanup_preparation_without_installed_roles_refuses_without_panicking() {
+        let (root, state, target, initial) = fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, initial).unwrap();
+        assert!(transaction.prepare_cleanup_record().is_err());
+        assert_eq!(fs::read_dir(root.path().join("state")).unwrap().count(), 1);
+        assert_eq!(
+            fs::read_dir(root.path().join("drop-ins")).unwrap().count(),
+            0
+        );
     }
 }

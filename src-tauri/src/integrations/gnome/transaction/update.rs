@@ -30,7 +30,8 @@ pub(super) struct PendingUpdate {
     cleanup_record_retired: bool,
     precommit_record: Option<OwnedFile>,
     precommit_retired: bool,
-    exchange_records: [Option<OwnedFile>; 2],
+    exchange_records: [Option<OwnedFile>; 3],
+    rolling_back: bool,
 }
 
 impl ActivationTransaction<'_> {
@@ -102,7 +103,7 @@ impl ActivationTransaction<'_> {
         executable: bool,
     ) -> io::Result<()> {
         self.candidate(place, bytes, executable)?;
-        if role < 2 {
+        if !self.update.as_ref().ok_or_else(refused)?.rolling_back {
             self.record_exchange(role, place)?;
         }
         let directory = match place {
@@ -162,6 +163,8 @@ impl ActivationTransaction<'_> {
         self.precommit_checkpoint(7)?;
         let bytes = self.manifest_bytes()?;
         self.replace_role(2, Place::State, &bytes, false)?;
+        #[cfg(test)]
+        self.precommit_checkpoint(8)?;
         self.update.as_mut().ok_or_else(refused)?.ready = true;
         Ok(())
     }
@@ -241,6 +244,7 @@ impl ActivationTransaction<'_> {
             self.state.require_absent(PRECOMMIT_PENDING)?;
         }
         self.update.as_mut().ok_or_else(refused)?.ready = false;
+        self.update.as_mut().ok_or_else(refused)?.rolling_back = true;
         // Never restore an old manifest with receipts invalidated by rename.
         for backup in &mut self.update.as_mut().ok_or_else(refused)?.backups {
             if backup.role == Some(2) {

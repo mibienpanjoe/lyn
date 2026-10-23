@@ -1,4 +1,4 @@
-//! Inverse replay for the two exchanges before final manifest replacement.
+//! Inverse replay for recorded exchanges before explicit update commitment.
 
 use super::super::super::{DROP_IN, LAUNCHER, MANIFEST, Manifest, refused};
 use super::{EXCHANGE_NAMES, ExchangeRecord, PRECOMMIT_PENDING, PreparedUpdate};
@@ -90,14 +90,20 @@ fn restored_receipts(
     target: &ManagedDirectory,
     prepared: &PreparedUpdate,
     current: Option<&OwnedFile>,
+    manifest_exchange: Option<&ExchangeRecord>,
 ) -> io::Result<Option<[Receipt; 2]>> {
     let Some(current) = current else {
         return Ok(None);
     };
     let current_receipt = Receipt::record(state, current)?;
     if prepared.previous_manifest.same_inode(&current_receipt) {
-        // This slice only moves the original manifest away, never back here.
-        prepared.previous_manifest.reopen(state)?;
+        if manifest_exchange.is_some() {
+            prepared
+                .previous_manifest
+                .reopen_exchange_slot(state, MANIFEST)?;
+        } else {
+            prepared.previous_manifest.reopen(state)?;
+        }
         return Ok(None);
     }
     let Ok(manifest) = serde_json::from_slice::<Manifest>(&current.content) else {
@@ -121,6 +127,51 @@ fn restored_receipts(
     Ok(Some([manifest.launcher, manifest.drop_in]))
 }
 
+fn manifest_nodes(
+    state: &ManagedDirectory,
+    prepared: &PreparedUpdate,
+    exchange: Option<&ExchangeRecord>,
+    already_canonical: bool,
+    undo_name: &str,
+) -> io::Result<(Option<OwnedFile>, Option<OwnedFile>)> {
+    let mut original = None;
+    let mut replacement = None;
+    let mut names = vec![MANIFEST, undo_name];
+    if let Some(exchange) = exchange {
+        names.push(exchange.candidate.filename());
+    }
+    for name in names {
+        if name == MANIFEST && already_canonical {
+            continue;
+        }
+        if optional_state(state, name)?.is_none() {
+            continue;
+        }
+        let old = if name == MANIFEST && exchange.is_none() {
+            prepared.previous_manifest.reopen(state)
+        } else {
+            prepared.previous_manifest.reopen_exchange_slot(state, name)
+        };
+        if let Ok(file) = old {
+            if original.replace(file).is_some() {
+                return Err(refused());
+            }
+        } else if name != undo_name {
+            let exchange = exchange.ok_or_else(refused)?;
+            let file = exchange.candidate.reopen_exchange_slot(state, name)?;
+            if replacement.replace(file).is_some() {
+                return Err(refused());
+            }
+        } else {
+            return Err(refused());
+        }
+    }
+    if !already_canonical && original.is_none() {
+        return Err(refused());
+    }
+    Ok((original, replacement))
+}
+
 pub(in crate::integrations::gnome::transaction) fn recover_early(
     state: &ManagedDirectory,
     target: &ManagedDirectory,
@@ -141,10 +192,11 @@ pub(in crate::integrations::gnome::transaction) fn recover_early(
         let entry = if let Some(file) = optional_state(state, name)? {
             let body: ExchangeRecord =
                 serde_json::from_slice(&file.content).map_err(|_| refused())?;
-            let expected = if role == 0 {
-                &prepared.previous_launcher
-            } else {
-                &prepared.previous_drop_in
+            let expected = match role {
+                0 => &prepared.previous_launcher,
+                1 => &prepared.previous_drop_in,
+                2 => &prepared.previous_manifest,
+                _ => return Err(refused()),
             };
             let mode = if role == 0 { 0o700 } else { 0o600 };
             body.candidate.validate()?;
@@ -164,7 +216,14 @@ pub(in crate::integrations::gnome::transaction) fn recover_early(
         exchanges.push(entry);
     }
     let current = optional_state(state, MANIFEST)?;
-    let restored = restored_receipts(state, target, &prepared, current.as_ref())?;
+    let manifest_exchange = exchanges[2].as_ref().map(|entry| &entry.1);
+    let restored = restored_receipts(
+        state,
+        target,
+        &prepared,
+        current.as_ref(),
+        manifest_exchange,
+    )?;
     let mut launcher = load_slot(
         state,
         &prepared.previous_launcher,
@@ -189,26 +248,13 @@ pub(in crate::integrations::gnome::transaction) fn recover_early(
         false
     };
     let undo_name = format!(".lyn-undo-{}-manifest", prepared.nonce);
-    let mut saved_manifest = match prepared
-        .previous_manifest
-        .reopen_exchange_slot(state, &undo_name)
-    {
-        Ok(file) => Some(file),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error),
-    };
-    // Beyond this slice the manifest may have been exchanged without an intent
-    // we understand. Refuse before restoring either role, never half-undo it.
-    let mut original_manifest = if !already_canonical && current.is_some() {
-        Some(prepared.previous_manifest.reopen(state)?)
-    } else {
-        None
-    };
-    if (original_manifest.is_some() && saved_manifest.is_some())
-        || (!already_canonical && original_manifest.is_none() && saved_manifest.is_none())
-    {
-        return Err(refused());
-    }
+    let (mut original_manifest, mut replacement_manifest) = manifest_nodes(
+        state,
+        &prepared,
+        manifest_exchange,
+        already_canonical,
+        &undo_name,
+    )?;
     state.verify(&header)?;
     for (file, _) in exchanges.iter().flatten() {
         state.verify(file)?;
@@ -228,12 +274,23 @@ pub(in crate::integrations::gnome::transaction) fn recover_early(
     }
     let bytes = canonical(state, target, &launcher.original, &drop_in.original)?;
     if !already_canonical {
-        if let Some(mut file) = original_manifest.take() {
+        if let Some(new) = &mut replacement_manifest {
+            if new.name.to_bytes() == MANIFEST.as_bytes() {
+                lock.check()?;
+                let old = original_manifest.as_mut().ok_or_else(refused)?;
+                let candidate_name = manifest_exchange.ok_or_else(refused)?.candidate.filename();
+                if old.name.to_bytes() == candidate_name.as_bytes() {
+                    state.exchange(old, new)?.durability?;
+                } else {
+                    state.move_to_unoccupied(new, candidate_name)?.durability?;
+                }
+            }
+        }
+        if let Some(file) = &mut original_manifest {
             lock.check()?;
-            state
-                .move_to_unoccupied(&mut file, &undo_name)?
-                .durability?;
-            saved_manifest = Some(file);
+            if file.name.to_bytes() != undo_name.as_bytes() {
+                state.move_to_unoccupied(file, &undo_name)?.durability?;
+            }
         }
         state.require_absent(MANIFEST)?;
         match state.publish(MANIFEST, &bytes, false) {
@@ -261,7 +318,16 @@ pub(in crate::integrations::gnome::transaction) fn recover_early(
     if let Some(file) = drop_in.replacement {
         copies.push((target, file));
     }
-    if let Some(file) = saved_manifest {
+    if let Some(file) = original_manifest {
+        if file.name.to_bytes() == MANIFEST.as_bytes() {
+            return Err(refused());
+        }
+        copies.push((state, file));
+    }
+    if let Some(file) = replacement_manifest {
+        if file.name.to_bytes() == MANIFEST.as_bytes() {
+            return Err(refused());
+        }
         copies.push((state, file));
     }
     for (directory, file) in &copies {
@@ -338,7 +404,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        assert!((5..=7).contains(&checkpoint));
+        assert!((5..=8).contains(&checkpoint));
         let state_path = root.join("state");
         let state =
             crate::integrations::gnome::directories::open_private(&state_path, false).unwrap();
@@ -363,9 +429,9 @@ mod tests {
     }
 
     #[test]
-    fn three_early_process_exits_restore_exact_old_files_and_keep_user_settings() {
+    fn four_precommit_process_exits_restore_exact_old_files_and_keep_user_settings() {
         use std::os::unix::fs::PermissionsExt;
-        for checkpoint in 5..=7 {
+        for checkpoint in 5..=8 {
             let root = tempfile::Builder::new()
                 .prefix("lyn-install-recovery-")
                 .tempdir()
@@ -564,5 +630,122 @@ mod tests {
         );
         assert_eq!(fs::read_dir(root.path().join("state")).unwrap().count(), 3);
         restored.rollback().unwrap();
+    }
+
+    #[test]
+    fn final_manifest_inverse_and_undo_sync_failures_can_resume_without_partial_commit() {
+        for successes in [3, 4] {
+            let (root, state, target, initial) = fixture();
+            let old_launcher = initial.launcher.clone();
+            let old_drop = initial.drop_in.clone();
+            let mut transaction = ActivationTransaction::begin(&state, &target, initial).unwrap();
+            transaction.apply().unwrap();
+            let updated = crate::integrations::gnome::render_activation(
+                &root.path().join("native-v2.so"),
+                &root.path().join("state").join(LAUNCHER),
+            )
+            .unwrap();
+            transaction.update(updated).unwrap();
+            drop(transaction);
+            state.fail_directory_sync_after(successes);
+            assert!(ActivationTransaction::resume(&state, &target).is_err());
+            assert_eq!(
+                fs::read_to_string(root.path().join("state").join(LAUNCHER)).unwrap(),
+                old_launcher
+            );
+            if successes == 4 {
+                assert!(
+                    !root
+                        .path()
+                        .join("state")
+                        .join(super::super::super::super::MANIFEST)
+                        .exists()
+                );
+            }
+            state.fail_directory_sync(false);
+            let mut restored = ActivationTransaction::resume(&state, &target).unwrap();
+            assert_eq!(
+                fs::read_to_string(root.path().join("state").join(LAUNCHER)).unwrap(),
+                old_launcher
+            );
+            assert_eq!(
+                fs::read_to_string(root.path().join("drop-ins").join(DROP_IN)).unwrap(),
+                old_drop
+            );
+            assert_eq!(fs::read_dir(root.path().join("state")).unwrap().count(), 3);
+            restored.rollback().unwrap();
+        }
+    }
+
+    #[test]
+    fn legacy_missing_manifest_intent_refuses_before_restoring_other_roles() {
+        let (root, state, target, initial) = fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, initial).unwrap();
+        transaction.apply().unwrap();
+        let updated = crate::integrations::gnome::render_activation(
+            &root.path().join("native-v2.so"),
+            &root.path().join("state").join(LAUNCHER),
+        )
+        .unwrap();
+        let new_launcher = updated.launcher.clone();
+        let new_drop = updated.drop_in.clone();
+        transaction.update(updated).unwrap();
+        drop(transaction);
+        fs::remove_file(
+            root.path()
+                .join("state")
+                .join(super::super::EXCHANGE_NAMES[2]),
+        )
+        .unwrap();
+        let before_state = fs::read_dir(root.path().join("state")).unwrap().count();
+        assert!(ActivationTransaction::resume(&state, &target).is_err());
+        assert_eq!(
+            fs::read_to_string(root.path().join("state").join(LAUNCHER)).unwrap(),
+            new_launcher
+        );
+        assert_eq!(
+            fs::read_to_string(root.path().join("drop-ins").join(DROP_IN)).unwrap(),
+            new_drop
+        );
+        assert_eq!(
+            fs::read_dir(root.path().join("state")).unwrap().count(),
+            before_state
+        );
+    }
+
+    #[test]
+    fn changed_final_manifest_refuses_before_inverse_work() {
+        let (root, state, target, initial) = fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, initial).unwrap();
+        transaction.apply().unwrap();
+        let updated = crate::integrations::gnome::render_activation(
+            &root.path().join("native-v2.so"),
+            &root.path().join("state").join(LAUNCHER),
+        )
+        .unwrap();
+        let new_launcher = updated.launcher.clone();
+        transaction.update(updated).unwrap();
+        drop(transaction);
+        let path = root
+            .path()
+            .join("state")
+            .join(super::super::super::super::MANIFEST);
+        fs::write(&path, b"user manifest").unwrap();
+        let before_state = fs::read_dir(root.path().join("state")).unwrap().count();
+        let before_target = fs::read_dir(root.path().join("drop-ins")).unwrap().count();
+        assert!(ActivationTransaction::resume(&state, &target).is_err());
+        assert_eq!(
+            fs::read_to_string(root.path().join("state").join(LAUNCHER)).unwrap(),
+            new_launcher
+        );
+        assert_eq!(fs::read(path).unwrap(), b"user manifest");
+        assert_eq!(
+            fs::read_dir(root.path().join("state")).unwrap().count(),
+            before_state
+        );
+        assert_eq!(
+            fs::read_dir(root.path().join("drop-ins")).unwrap().count(),
+            before_target
+        );
     }
 }
