@@ -1,0 +1,462 @@
+//! Persistent authority for explicit removal of a complete installation.
+
+use super::{ActivationTransaction, DROP_IN, LAUNCHER, MANIFEST, Manifest, Phase, Place, refused};
+use crate::integrations::gnome::{
+    lock::InstallationLock,
+    managed::{ManagedDirectory, OwnedFile, PublishFailure},
+    ownership::Receipt,
+};
+use serde::{Deserialize, Serialize};
+use std::{io, os::unix::fs::MetadataExt};
+
+pub(super) const PENDING_REMOVAL: &str = "uninstall-pending-v1.json";
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Removal {
+    version: u8,
+    launcher: Receipt,
+    drop_in: Receipt,
+    manifest: Receipt,
+}
+
+impl Removal {
+    fn validate(&self) -> io::Result<()> {
+        self.launcher.validate()?;
+        self.drop_in.validate()?;
+        self.manifest.validate()?;
+        if self.version != 1
+            || !self.launcher.is_for(LAUNCHER, 0o700)
+            || !self.drop_in.is_for(DROP_IN, 0o600)
+            || !self.manifest.is_for(MANIFEST, 0o600)
+        {
+            return Err(refused());
+        }
+        Ok(())
+    }
+
+    fn check_manifest(&self, file: &OwnedFile) -> io::Result<()> {
+        let body: Manifest = serde_json::from_slice(&file.content).map_err(|_| refused())?;
+        if body.version != 1 || body.launcher != self.launcher || body.drop_in != self.drop_in {
+            return Err(refused());
+        }
+        Ok(())
+    }
+}
+
+fn no_other_intents(state: &ManagedDirectory) -> io::Result<()> {
+    for name in [
+        super::recovery::PENDING_INSTALL,
+        super::update::CLEANUP_PENDING,
+        super::update::PRECOMMIT_PENDING,
+        super::update::COMPENSATION_PENDING,
+    ] {
+        state.require_absent(name)?;
+    }
+    for name in super::update::EXCHANGE_NAMES {
+        state.require_absent(name)?;
+    }
+    Ok(())
+}
+
+fn finish(
+    state: &ManagedDirectory,
+    target: &ManagedDirectory,
+    lock: &InstallationLock<'_>,
+    journal: &OwnedFile,
+    checkpoint: impl Fn(u8) -> io::Result<()>,
+) -> io::Result<()> {
+    lock.check()?;
+    no_other_intents(state)?;
+    state.verify(journal)?;
+    let body: Removal = serde_json::from_slice(&journal.content).map_err(|_| refused())?;
+    body.validate()?;
+    // Missing files may have been removed only after this durable authority.
+    // Every remaining name is checked before any subsequent deletion.
+    let mut files = Vec::new();
+    for (directory, receipt) in [
+        (target, &body.drop_in),
+        (state, &body.launcher),
+        (state, &body.manifest),
+    ] {
+        let file = match receipt.reopen(directory) {
+            Ok(file) => Some(file),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        files.push((directory, file));
+    }
+    if let Some(file) = &files[2].1 {
+        body.check_manifest(file)?;
+    }
+    state.sync_directory()?;
+    // Remove the active override before its launcher, retaining the manifest
+    // until last. This is file-state ordering, not a manager reload.
+    for (index, (directory, file)) in files.into_iter().enumerate() {
+        lock.check()?;
+        if let Some(file) = file {
+            directory.remove(&file)?;
+        }
+        checkpoint(13 + index as u8)?;
+    }
+    state.sync_directory()?;
+    target.sync_directory()?;
+    lock.check()?;
+    state.remove(journal)
+}
+
+pub(super) fn recover_removal(
+    state: &ManagedDirectory,
+    target: &ManagedDirectory,
+    lock: &InstallationLock<'_>,
+) -> io::Result<bool> {
+    lock.check()?;
+    let journal = match state.read_state(PENDING_REMOVAL) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if super::pending(state, LAUNCHER)?
+                || super::pending(state, MANIFEST)?
+                || super::pending(target, DROP_IN)?
+            {
+                return Ok(false);
+            }
+            match no_other_intents(state) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(false),
+                Err(error) => return Err(error),
+            }
+            // Empty is also the settled uninstalled state. Flush both parents
+            // so a fresh retry cannot forget a failed final-journal sync.
+            state.sync_directory()?;
+            target.sync_directory()?;
+            return Ok(true);
+        }
+        Err(error) => return Err(error),
+    };
+    finish(state, target, lock, &journal, |_| Ok(()))?;
+    Ok(true)
+}
+
+impl ActivationTransaction<'_> {
+    pub(super) fn remove_complete(&mut self) -> io::Result<()> {
+        self.lock.check()?;
+        if self.phase == Phase::Complete {
+            if self.files.len() != 3 {
+                return Err(refused());
+            }
+            no_other_intents(self.state)?;
+            self.state.require_absent(PENDING_REMOVAL)?;
+            for (place, file) in &self.files {
+                self.directory(*place).verify(file)?;
+            }
+            while let Some((place, stage)) = self.stages.last() {
+                self.directory(*place).discard_stage(stage)?;
+                self.stages.pop();
+            }
+            let body = Removal {
+                version: 1,
+                launcher: Receipt::record(self.state, &self.files[0].1)?,
+                drop_in: Receipt::record(self.drop_ins, &self.files[1].1)?,
+                manifest: Receipt::record(self.state, &self.files[2].1)?,
+            };
+            body.validate()?;
+            body.check_manifest(&self.files[2].1)?;
+            let bytes = serde_json::to_vec(&body).map_err(io::Error::other)?;
+            let (journal, result) = match self.state.publish(PENDING_REMOVAL, &bytes, false) {
+                Ok(file) => (file, Ok(())),
+                Err(PublishFailure::Published { error, owned }) => (owned, Err(error)),
+                Err(PublishFailure::Unpublished(error)) => return Err(error),
+                Err(PublishFailure::Staged {
+                    error,
+                    cleanup_error,
+                    stage,
+                }) => {
+                    self.stages.push((Place::State, stage));
+                    return Err(io::Error::other(format!(
+                        "{error}; staging cleanup failed: {cleanup_error}"
+                    )));
+                }
+            };
+            self.removal_record = Some(journal);
+            self.phase = Phase::Removing;
+            result?;
+            self.removal_checkpoint(12)?;
+        }
+        let journal = self.removal_record.as_ref().ok_or_else(refused)?;
+        if journal.file.metadata()?.nlink() == 0 {
+            // Retirement may have unlinked successfully but failed to sync.
+            self.state.require_absent(PENDING_REMOVAL)?;
+            no_other_intents(self.state)?;
+            self.state.require_absent(LAUNCHER)?;
+            self.state.require_absent(MANIFEST)?;
+            self.drop_ins.require_absent(DROP_IN)?;
+            self.state.sync_directory()?;
+            self.drop_ins.sync_directory()?;
+        } else {
+            finish(self.state, self.drop_ins, &self.lock, journal, |point| {
+                self.removal_checkpoint(point)
+            })?;
+        }
+        self.removal_record = None;
+        self.files.clear();
+        self.phase = Phase::Removed;
+        Ok(())
+    }
+
+    fn removal_checkpoint(&self, _point: u8) -> io::Result<()> {
+        #[cfg(test)]
+        if let Some((point, abrupt)) = self.stop_after {
+            if point == _point {
+                if abrupt {
+                    std::process::exit(77);
+                }
+                return Err(io::Error::other("private removal checkpoint"));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::tests::fixture;
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn interrupted_uninstall_resumes_after_a_successful_unlink_with_failed_sync() {
+        let (root, state, target, rendered) = fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        target.fail_directory_sync(true);
+        assert!(transaction.rollback().is_err());
+        drop(transaction);
+        target.fail_directory_sync(false);
+        let mut removed = ActivationTransaction::resume(&state, &target).unwrap();
+        assert_eq!(fs::read_dir(root.path().join("state")).unwrap().count(), 1);
+        assert_eq!(
+            fs::read_dir(root.path().join("drop-ins")).unwrap().count(),
+            0
+        );
+        removed.rollback().unwrap();
+    }
+
+    #[test]
+    fn abrupt_uninstall_child() {
+        use std::path::Path;
+        let Some(root) = std::env::var_os("LYN_PRIVATE_INSTALL_RECOVERY_ROOT") else {
+            return;
+        };
+        let root = Path::new(&root);
+        let metadata = fs::symlink_metadata(root).unwrap();
+        assert!(
+            metadata.is_dir()
+                && metadata.uid() == unsafe { libc::geteuid() }
+                && metadata.mode() & 0o7777 == 0o700
+        );
+        assert_eq!(root.parent().unwrap(), std::env::temp_dir());
+        assert!(
+            root.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("lyn-install-recovery-")
+        );
+        let point: u8 = std::env::var("LYN_PRIVATE_INSTALL_RECOVERY_POINT")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!((12..=15).contains(&point));
+        let state_path = root.join("state");
+        let state =
+            crate::integrations::gnome::directories::open_private(&state_path, false).unwrap();
+        let target =
+            crate::integrations::gnome::directories::open_drop_ins(&root.join("drop-ins"), false)
+                .unwrap();
+        let rendered = crate::integrations::gnome::render_activation(
+            &root.join("native.so"),
+            &state_path.join(LAUNCHER),
+        )
+        .unwrap();
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        transaction.stop_after = Some((point, true));
+        transaction.rollback().unwrap();
+        panic!("removal checkpoint did not exit");
+    }
+
+    #[test]
+    fn four_uninstall_process_exits_remove_only_owned_files_and_allow_reinstall() {
+        use std::os::unix::fs::PermissionsExt;
+        for point in 12..=15 {
+            let root = tempfile::Builder::new()
+                .prefix("lyn-install-recovery-")
+                .tempdir()
+                .unwrap();
+            fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+            let state_path = root.path().join("state");
+            let target_path = root.path().join("drop-ins");
+            let state =
+                crate::integrations::gnome::directories::open_private(&state_path, true).unwrap();
+            drop(
+                crate::integrations::gnome::directories::open_drop_ins(&target_path, true).unwrap(),
+            );
+            fs::set_permissions(&target_path, fs::Permissions::from_mode(0o755)).unwrap();
+            let target =
+                crate::integrations::gnome::directories::open_drop_ins(&target_path, false)
+                    .unwrap();
+            fs::write(target_path.join("user.conf"), b"preserved").unwrap();
+            super::super::recovery::tests::abrupt_exit(
+                root.path(),
+                point,
+                "integrations::gnome::transaction::removal::tests::abrupt_uninstall_child",
+            );
+            let removed = ActivationTransaction::resume(&state, &target).unwrap();
+            assert!(removed.phase == Phase::Removed);
+            drop(removed);
+            assert_eq!(fs::read_dir(&state_path).unwrap().count(), 1);
+            assert_eq!(fs::read_dir(&target_path).unwrap().count(), 1);
+            assert_eq!(
+                fs::read(target_path.join("user.conf")).unwrap(),
+                b"preserved"
+            );
+            assert_eq!(fs::metadata(&target_path).unwrap().mode() & 0o7777, 0o755);
+            let rendered = crate::integrations::gnome::render_activation(
+                &root.path().join("native.so"),
+                &state_path.join(LAUNCHER),
+            )
+            .unwrap();
+            let mut reinstalled = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+            reinstalled.apply().unwrap();
+            reinstalled.rollback().unwrap();
+        }
+    }
+
+    #[test]
+    fn uninstall_sync_failures_retry_live_and_after_reopening() {
+        for reopen in [false, true] {
+            for successes in 0..=8 {
+                let (root, state, target, rendered) = fixture();
+                let mut transaction =
+                    ActivationTransaction::begin(&state, &target, rendered).unwrap();
+                transaction.apply().unwrap();
+                state.fail_directory_sync_after(successes);
+                let result = transaction.rollback();
+                if successes == 0 {
+                    assert!(transaction.phase == Phase::Removing);
+                    assert!(root.path().join("state").join(LAUNCHER).exists());
+                    assert!(root.path().join("state").join(MANIFEST).exists());
+                    assert!(root.path().join("drop-ins").join(DROP_IN).exists());
+                }
+                if reopen {
+                    drop(transaction);
+                    state.fail_directory_sync(false);
+                    let removed = ActivationTransaction::resume(&state, &target).unwrap();
+                    assert!(removed.phase == Phase::Removed);
+                } else {
+                    state.fail_directory_sync(false);
+                    if result.is_err() {
+                        transaction.rollback().unwrap();
+                    }
+                    assert!(transaction.phase == Phase::Removed);
+                }
+                assert_eq!(fs::read_dir(root.path().join("state")).unwrap().count(), 1);
+                assert_eq!(
+                    fs::read_dir(root.path().join("drop-ins")).unwrap().count(),
+                    0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn replaced_remaining_file_refuses_before_any_other_removal() {
+        use std::os::unix::fs::PermissionsExt;
+        let (root, state, target, rendered) = fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        transaction.stop_after = Some((13, false));
+        assert!(transaction.rollback().is_err());
+        drop(transaction);
+        let launcher = root.path().join("state").join(LAUNCHER);
+        fs::rename(&launcher, root.path().join("state").join("retained")).unwrap();
+        fs::write(&launcher, b"user file").unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(ActivationTransaction::resume(&state, &target).is_err());
+        assert_eq!(fs::read(&launcher).unwrap(), b"user file");
+        assert!(root.path().join("state").join(MANIFEST).exists());
+        assert!(root.path().join("state").join(PENDING_REMOVAL).exists());
+    }
+
+    #[test]
+    fn edited_or_conflicting_uninstall_authority_refuses_without_deleting_files() {
+        for conflict in [false, true] {
+            let (root, state, target, rendered) = fixture();
+            let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+            transaction.apply().unwrap();
+            transaction.stop_after = Some((12, false));
+            assert!(transaction.rollback().is_err());
+            drop(transaction);
+            if conflict {
+                fs::write(
+                    root.path()
+                        .join("state")
+                        .join(super::super::update::PRECOMMIT_PENDING),
+                    b"other intent",
+                )
+                .unwrap();
+            } else {
+                fs::write(root.path().join("state").join(PENDING_REMOVAL), b"edited").unwrap();
+            }
+            assert!(ActivationTransaction::resume(&state, &target).is_err());
+            assert!(root.path().join("state").join(LAUNCHER).exists());
+            assert!(root.path().join("drop-ins").join(DROP_IN).exists());
+            assert!(root.path().join("state").join(MANIFEST).exists());
+        }
+    }
+
+    #[test]
+    fn foreign_uninstall_intent_refuses_live_update_and_uninstall() {
+        let (root, state, target, rendered) = fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        let state_path = root.path().join("state");
+        let before = fs::read(state_path.join(LAUNCHER)).unwrap();
+        fs::write(state_path.join(PENDING_REMOVAL), b"foreign").unwrap();
+        let new = crate::integrations::gnome::render_activation(
+            &root.path().join("native-v2.so"),
+            &state_path.join(LAUNCHER),
+        )
+        .unwrap();
+        assert!(transaction.update(new).is_err());
+        assert!(transaction.rollback().is_err());
+        assert_eq!(fs::read(state_path.join(LAUNCHER)).unwrap(), before);
+        assert_eq!(
+            fs::read(state_path.join(PENDING_REMOVAL)).unwrap(),
+            b"foreign"
+        );
+        assert_eq!(fs::read_dir(state_path).unwrap().count(), 4);
+        assert_eq!(
+            fs::read_dir(root.path().join("drop-ins")).unwrap().count(),
+            1
+        );
+    }
+
+    #[test]
+    fn empty_uninstalled_state_still_syncs_both_parents_on_fresh_resume() {
+        let (_root, state, target, rendered) = fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        transaction.rollback().unwrap();
+        drop(transaction);
+        target.fail_directory_sync(true);
+        assert!(ActivationTransaction::resume(&state, &target).is_err());
+        target.fail_directory_sync(false);
+        assert!(
+            ActivationTransaction::resume(&state, &target)
+                .unwrap()
+                .phase
+                == Phase::Removed
+        );
+    }
+}

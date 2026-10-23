@@ -2,6 +2,7 @@
 //! restarts GNOME. Drop releases the lock, never silently removes files.
 
 mod recovery;
+mod removal;
 mod update;
 
 use super::{
@@ -37,6 +38,7 @@ enum Phase {
     Partial,
     Complete,
     Updating,
+    Removing,
     Removed,
 }
 
@@ -49,6 +51,7 @@ pub(super) struct ActivationTransaction<'a> {
     files: Vec<(Place, OwnedFile)>,
     stages: Vec<(Place, StagedFile)>,
     update: Option<update::PendingUpdate>,
+    removal_record: Option<OwnedFile>,
     #[cfg(test)]
     stop_after: Option<(u8, bool)>,
 }
@@ -80,6 +83,7 @@ impl<'a> ActivationTransaction<'a> {
         state.require_absent(LAUNCHER)?;
         state.require_absent(MANIFEST)?;
         state.require_absent(recovery::PENDING_INSTALL)?;
+        state.require_absent(removal::PENDING_REMOVAL)?;
         state.require_absent(update::CLEANUP_PENDING)?;
         state.require_absent(update::PRECOMMIT_PENDING)?;
         state.require_absent(update::COMPENSATION_PENDING)?;
@@ -96,6 +100,7 @@ impl<'a> ActivationTransaction<'a> {
             files: Vec::new(),
             stages: Vec::new(),
             update: None,
+            removal_record: None,
             #[cfg(test)]
             stop_after: None,
         })
@@ -106,6 +111,21 @@ impl<'a> ActivationTransaction<'a> {
         drop_ins: &'a ManagedDirectory,
     ) -> io::Result<Self> {
         let lock = InstallationLock::acquire(state)?;
+        if removal::recover_removal(state, drop_ins, &lock)? {
+            return Ok(Self {
+                state,
+                drop_ins,
+                lock,
+                rendered: None,
+                phase: Phase::Removed,
+                files: Vec::new(),
+                stages: Vec::new(),
+                update: None,
+                removal_record: None,
+                #[cfg(test)]
+                stop_after: None,
+            });
+        }
         if pending(state, recovery::PENDING_INSTALL)? {
             if pending(state, update::CLEANUP_PENDING)?
                 || pending(state, update::PRECOMMIT_PENDING)?
@@ -147,6 +167,7 @@ impl<'a> ActivationTransaction<'a> {
             ],
             stages: Vec::new(),
             update: None,
+            removal_record: None,
             #[cfg(test)]
             stop_after: None,
         })
@@ -203,10 +224,14 @@ impl<'a> ActivationTransaction<'a> {
 
     /// Preflight all current files before deleting any. Failed deletions keep
     /// their ownership lease, except when the pinned inode is already unlinked.
-    /// This is explicit process-local rollback, not crash recovery or update.
+    /// Complete installations use journaled removal; partial-install rollback
+    /// remains process-local. Neither path operates on a running service.
     pub(super) fn rollback(&mut self) -> io::Result<()> {
         if self.update.is_some() {
             return Err(refused());
+        }
+        if self.phase == Phase::Complete || self.phase == Phase::Removing {
+            return self.remove_complete();
         }
         self.lock.check()?;
         for (place, file) in &self.files {

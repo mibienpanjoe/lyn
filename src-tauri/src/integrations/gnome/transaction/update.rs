@@ -40,6 +40,7 @@ pub(super) struct PendingUpdate {
 impl ActivationTransaction<'_> {
     fn preflight_update(&self) -> io::Result<()> {
         self.lock.check()?;
+        self.state.require_absent(super::removal::PENDING_REMOVAL)?;
         for (place, file) in &self.files {
             self.directory(*place).verify(file)?;
         }
