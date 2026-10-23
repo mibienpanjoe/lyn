@@ -75,6 +75,58 @@ mod tests {
     use super::*;
     use std::{ffi::OsString, os::unix::ffi::OsStringExt, path::Path};
 
+    fn private_managed_bus_address(address: &str, bus: &Path) -> bool {
+        let Some(path) = bus.to_str() else {
+            return false;
+        };
+        if !path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/-_.".contains(&byte))
+        {
+            return false;
+        }
+        let mut fields = address.split(',');
+        if fields.next() != Some(format!("unix:path={path}").as_str()) {
+            return false;
+        }
+        match (fields.next(), fields.next()) {
+            (None, None) => true,
+            (Some(guid), None) => guid.strip_prefix("guid=").is_some_and(|guid| {
+                guid.len() == 32 && guid.bytes().all(|byte| byte.is_ascii_hexdigit())
+            }),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn managed_fixture_bus_does_not_accept_extra_address_fields_or_encoded_paths() {
+        let bus = Path::new("/tmp/lyn-gnome-run-test/runtime/session-bus");
+        let address = format!("unix:path={}", bus.display());
+        assert!(private_managed_bus_address(&address, bus));
+        assert!(private_managed_bus_address(
+            &format!("{address},guid={}", "a".repeat(32)),
+            bus
+        ));
+        for suffix in [
+            "-other",
+            ",path=/run/user/1000/bus",
+            ",abstract=foreign",
+            ",guid=bad",
+            ";unix:path=/other",
+            "/../other",
+        ] {
+            assert!(
+                !private_managed_bus_address(&format!("{address}{suffix}"), bus),
+                "{suffix}"
+            );
+        }
+        let encoded = Path::new("/tmp/lyn-gnome-run-%2f..%2f/runtime/session-bus");
+        assert!(!private_managed_bus_address(
+            &format!("unix:path={}", encoded.display()),
+            encoded
+        ));
+    }
+
     #[test]
     fn native_activation_fixture_entry() {
         use std::{fs, io::Read, os::unix::fs::MetadataExt};
@@ -102,7 +154,9 @@ mod tests {
         assert!(module.is_absolute() && module.is_file());
         let state_path = root.join("state");
         let state = directories::open_private(&state_path, true).unwrap();
-        let target = directories::open_drop_ins(&root.join("drop-ins"), true).unwrap();
+        let target =
+            directories::open_drop_ins(&root.join("units/gnome-terminal-server.service.d"), true)
+                .unwrap();
         // Test-only bundle path comes from the guarded controller. Production
         // obtains these same validated bytes only from artifact::embedded().
         let mut bytes = Vec::new();
@@ -141,6 +195,69 @@ mod tests {
         assert_eq!(
             transaction::inspect_activation_files(Some(&state), Some(&target)),
             transaction::ActivationFilesState::Owned
+        );
+    }
+
+    #[test]
+    fn native_managed_service_fixture_entry() {
+        use std::{
+            fs,
+            os::unix::fs::{FileTypeExt, MetadataExt},
+        };
+        let Some(root) = std::env::var_os("LYN_PRIVATE_NATIVE_ACTIVATION_ROOT") else {
+            return;
+        };
+        let root = Path::new(&root);
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR").unwrap();
+        let runtime = Path::new(&runtime);
+        for (path, prefix) in [
+            (root, "lyn-na-"),
+            (runtime.parent().unwrap(), "lyn-gnome-run-"),
+        ] {
+            assert_eq!(path.parent(), Some(std::env::temp_dir().as_path()));
+            assert!(
+                path.file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with(prefix)
+            );
+            let metadata = fs::symlink_metadata(path).unwrap();
+            assert!(
+                metadata.is_dir()
+                    && metadata.uid() == unsafe { libc::geteuid() }
+                    && metadata.mode() & 0o7777 == 0o700
+            );
+            assert_eq!(path.canonicalize().unwrap(), path);
+        }
+        assert_eq!(runtime.file_name().unwrap(), "runtime");
+        let metadata = fs::symlink_metadata(runtime).unwrap();
+        assert!(
+            metadata.is_dir()
+                && metadata.uid() == unsafe { libc::geteuid() }
+                && metadata.mode() & 0o7777 == 0o700
+        );
+        assert_eq!(runtime.canonicalize().unwrap(), runtime);
+        let bus = runtime.join("session-bus");
+        let metadata = fs::symlink_metadata(&bus).unwrap();
+        assert!(metadata.file_type().is_socket() && metadata.uid() == unsafe { libc::geteuid() });
+        let address = std::env::var("DBUS_SESSION_BUS_ADDRESS").unwrap();
+        assert!(private_managed_bus_address(&address, &bus));
+        let owned = service::OwnedActivation::open(
+            &root.join("state"),
+            &root.join("units/gnome-terminal-server.service.d"),
+        )
+        .unwrap();
+        let result = service::inspect_owned_service(&owned);
+        let expected = std::env::var("LYN_PRIVATE_MANAGED_DEFINITION").unwrap();
+        assert_eq!(
+            result,
+            match expected.as_str() {
+                "loaded" => Ok(service::DefinitionState::ManagedLoaded),
+                "pending" => Ok(service::DefinitionState::NeedsReload),
+                "changing" => Err(service::ServiceRefusal::Changed),
+                _ => panic!("unknown private manager mode"),
+            }
         );
     }
 

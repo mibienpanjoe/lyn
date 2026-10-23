@@ -1,7 +1,7 @@
 //! Nonmutating inspection, deliberately separate from resume/recovery.
 
 use super::{DROP_IN, LAUNCHER, MANIFEST, Manifest, pending, recovery, removal, update};
-use crate::integrations::gnome::managed::ManagedDirectory;
+use crate::integrations::gnome::managed::{ManagedDirectory, OwnedFile};
 use std::{io, os::fd::AsRawFd};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +56,63 @@ fn require_regular(directory: &ManagedDirectory, name: &str) -> io::Result<()> {
     Ok(())
 }
 
+pub(in crate::integrations::gnome) struct PinnedActivation {
+    pub(in crate::integrations::gnome) launcher: OwnedFile,
+    pub(in crate::integrations::gnome) drop_in: OwnedFile,
+    manifest: OwnedFile,
+    body: Manifest,
+}
+
+impl PinnedActivation {
+    pub(in crate::integrations::gnome) fn open(
+        state: &ManagedDirectory,
+        target: &ManagedDirectory,
+    ) -> io::Result<Self> {
+        if has_intent(Some(state))? {
+            return Err(super::refused());
+        }
+        for (directory, name) in [(state, LAUNCHER), (state, MANIFEST), (target, DROP_IN)] {
+            require_regular(directory, name)?;
+        }
+        let manifest = state.read_state(MANIFEST)?;
+        let body: Manifest =
+            serde_json::from_slice(&manifest.content).map_err(|_| super::refused())?;
+        if body.version != 1
+            || !body.launcher.is_for(LAUNCHER, 0o700)
+            || !body.drop_in.is_for(DROP_IN, 0o600)
+        {
+            return Err(super::refused());
+        }
+        let result = Self {
+            launcher: body.launcher.reopen(state)?,
+            drop_in: body.drop_in.reopen(target)?,
+            manifest,
+            body,
+        };
+        result.recheck(state, target)?;
+        Ok(result)
+    }
+
+    pub(in crate::integrations::gnome) fn recheck(
+        &self,
+        state: &ManagedDirectory,
+        target: &ManagedDirectory,
+    ) -> io::Result<()> {
+        if has_intent(Some(state))? {
+            return Err(super::refused());
+        }
+        state.verify(&self.manifest)?;
+        state.verify(&self.launcher)?;
+        target.verify(&self.drop_in)?;
+        self.body.launcher.reopen(state)?;
+        self.body.drop_in.reopen(target)?;
+        if has_intent(Some(state))? {
+            return Err(super::refused());
+        }
+        Ok(())
+    }
+}
+
 fn inspect(
     state: Option<&ManagedDirectory>,
     target: Option<&ManagedDirectory>,
@@ -75,32 +132,11 @@ fn inspect(
     if !launcher || !manifest || !drop_in {
         return Ok(ActivationFilesState::Changed);
     }
-    // Metadata-only rejection before opening a socket, pipe, directory or
-    // device planted at a fixed role. Do not touch an unknown data stream.
-    for (directory, name) in [(state, LAUNCHER), (state, MANIFEST), (target, DROP_IN)] {
-        require_regular(directory, name)?;
-    }
-    let manifest_file = state.read_state(MANIFEST)?;
-    let body: Manifest =
-        serde_json::from_slice(&manifest_file.content).map_err(|_| super::refused())?;
-    if body.version != 1
-        || !body.launcher.is_for(LAUNCHER, 0o700)
-        || !body.drop_in.is_for(DROP_IN, 0o600)
-    {
-        return Ok(ActivationFilesState::Changed);
-    }
-    let launcher = body.launcher.reopen(state)?;
-    let drop_in = body.drop_in.reopen(target)?;
-    state.verify(&manifest_file)?;
-    state.verify(&launcher)?;
-    target.verify(&drop_in)?;
-    // Ordinary strict receipts retain their timestamp checks on this second
-    // fence too. An inspection never repairs or adopts a replacement.
-    body.launcher.reopen(state)?;
-    body.drop_in.reopen(target)?;
+    let pinned = PinnedActivation::open(state, target);
     if has_intent(Some(state))? {
         return Ok(ActivationFilesState::Pending);
     }
+    pinned?;
     Ok(ActivationFilesState::Owned)
 }
 

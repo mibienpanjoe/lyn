@@ -1,6 +1,8 @@
 //! Read-only service compatibility. Never starts, stops or reloads a service.
 
 mod overrides;
+mod owned;
+pub(super) use owned::OwnedActivation;
 
 use gio::{
     glib::{self, variant::ToVariant},
@@ -55,6 +57,20 @@ fn value<T: glib::variant::FromVariant>(properties: &Properties, name: &str) -> 
 }
 
 fn policy(properties: &Properties) -> Result<String> {
+    policy_for(properties, None).map(|(fragment, _)| fragment)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum DefinitionState {
+    Stock,
+    NeedsReload,
+    ManagedLoaded,
+}
+
+fn policy_for(
+    properties: &Properties,
+    owned_paths: Option<(&str, &str)>,
+) -> Result<(String, DefinitionState)> {
     let fragment: String = value(properties, "FragmentPath")?;
     let starts: Vec<Exec> = value(properties, "ExecStart")?;
     if value::<String>(properties, "LoadState")? != "loaded"
@@ -63,15 +79,11 @@ fn policy(properties: &Properties) -> Result<String> {
             "/lib/systemd/user/gnome-terminal-server.service",
         ]
         .contains(&fragment.as_str())
-        || value::<bool>(properties, "NeedDaemonReload")?
         || value::<bool>(properties, "Transient")?
         || value::<Vec<String>>(properties, "Names")? != [UNIT]
-        || !value::<Vec<String>>(properties, "DropInPaths")?.is_empty()
         || value::<String>(properties, "Type")? != "dbus"
         || value::<String>(properties, "BusName")? != BUS
         || starts.len() != 1
-        || starts[0].0 != SERVER
-        || starts[0].1 != [SERVER]
         || starts[0].2
         || !value::<Vec<Exec>>(properties, "ExecStartPre")?.is_empty()
         || !value::<Vec<Exec>>(properties, "ExecStartPost")?.is_empty()
@@ -81,7 +93,24 @@ fn policy(properties: &Properties) -> Result<String> {
     if !value::<Vec<Exec>>(properties, "ExecCondition")?.is_empty() {
         return Err(ServiceRefusal::Unsupported);
     }
-    Ok(fragment)
+    let reload: bool = value(properties, "NeedDaemonReload")?;
+    let drop_ins: Vec<String> = value(properties, "DropInPaths")?;
+    let stock = starts[0].0 == SERVER && starts[0].1 == [SERVER] && drop_ins.is_empty();
+    let state = match owned_paths {
+        None if stock && !reload => DefinitionState::Stock,
+        Some(_) if stock => DefinitionState::NeedsReload,
+        Some((launcher, drop_in))
+            if starts[0].0 == launcher && starts[0].1 == [launcher] && drop_ins == [drop_in] =>
+        {
+            if reload {
+                DefinitionState::NeedsReload
+            } else {
+                DefinitionState::ManagedLoaded
+            }
+        }
+        _ => return Err(ServiceRefusal::Unsupported),
+    };
+    Ok((fragment, state))
 }
 
 struct Budget {
@@ -322,10 +351,29 @@ pub(super) fn inspect_unmodified_service() -> Result<()> {
 }
 
 fn inspect_address(address: &str) -> Result<()> {
+    inspect_address_for(address, None).map(|_| ())
+}
+
+pub(super) fn inspect_owned_service(owned: &OwnedActivation) -> Result<DefinitionState> {
+    let address =
+        std::env::var("DBUS_SESSION_BUS_ADDRESS").map_err(|_| ServiceRefusal::Unavailable)?;
+    inspect_address_for(&address, Some(owned))
+}
+
+fn inspect_address_for(address: &str, owned: Option<&OwnedActivation>) -> Result<DefinitionState> {
     if address.len() > 4096 || !address.starts_with("unix:path=/") || address.contains(';') {
         return Err(ServiceRefusal::Unavailable);
     }
     let budget = Budget::new()?;
+    let allowed = owned
+        .map(|owned| {
+            owned.recheck().map_err(|_| ServiceRefusal::Changed)?;
+            let metadata = owned
+                .drop_in_metadata()
+                .map_err(|_| ServiceRefusal::Changed)?;
+            overrides::OwnedDropIn::pin(std::path::Path::new(owned.paths().1), &metadata)
+        })
+        .transpose()?;
     let connection = gio::DBusConnection::for_address_sync(
         &address,
         gio::DBusConnectionFlags::AUTHENTICATION_CLIENT
@@ -349,7 +397,7 @@ fn inspect_address(address: &str) -> Result<()> {
         .get::<(glib::variant::ObjectPath,)>()
         .ok_or(ServiceRefusal::Unsupported)?;
     let first = properties(&connection, &budget, &manager, path.as_str())?;
-    let fragment = policy(&first)?;
+    let (fragment, definition) = policy_for(&first, owned.map(OwnedActivation::paths))?;
     let fragment = match fragment.as_str() {
         "/usr/lib/systemd/user/gnome-terminal-server.service" => {
             "/usr/lib/systemd/user/gnome-terminal-server.service"
@@ -362,7 +410,7 @@ fn inspect_address(address: &str) -> Result<()> {
     let vendor = TrustedFile::open(fragment)?;
     let paths = unit_paths(&connection, &budget, &manager)?;
     let vendor_inode = (vendor.metadata.dev(), vendor.metadata.ino());
-    let disk = overrides::inspect(&paths, vendor_inode)?;
+    let disk = overrides::inspect_for(&paths, vendor_inode, allowed.as_ref())?;
     let executable = TrustedFile::open(SERVER)?;
     if executable.metadata.mode() & 0o111 == 0 || executable.metadata.mode() & 0o6000 != 0 {
         return Err(ServiceRefusal::Unsupported);
@@ -377,18 +425,34 @@ fn inspect_address(address: &str) -> Result<()> {
     if text.len() > 16384 || !activation_agrees(&text) {
         return Err(ServiceRefusal::Unsupported);
     }
-    if first != properties(&connection, &budget, &manager, path.as_str())?
-        || paths != unit_paths(&connection, &budget, &manager)?
+    let second = properties(&connection, &budget, &manager, path.as_str())?;
+    if first != second {
+        #[cfg(test)]
+        eprintln!(
+            "GNOME service inspection changed properties: {:?}",
+            first
+                .keys()
+                .filter(|key| first.get(*key) != second.get(*key))
+                .collect::<Vec<_>>()
+        );
+        return Err(ServiceRefusal::Changed);
+    }
+    if paths != unit_paths(&connection, &budget, &manager)?
         || manager != owner(&connection, &budget)?
     {
+        #[cfg(test)]
+        eprintln!("GNOME service inspection changed manager owner or UnitPath");
         return Err(ServiceRefusal::Changed);
     }
     vendor.recheck()?;
     executable.recheck()?;
     activation.recheck()?;
-    disk.recheck(&paths, vendor_inode)?;
+    disk.recheck_for(&paths, vendor_inode, allowed.as_ref())?;
+    if let Some(owned) = owned {
+        owned.recheck().map_err(|_| ServiceRefusal::Changed)?;
+    }
     budget.remaining()?;
-    Ok(())
+    Ok(definition)
 }
 
 #[cfg(test)]
@@ -432,6 +496,52 @@ mod tests {
             properties.insert(name, Vec::<Exec>::new().to_variant());
         }
         properties
+    }
+
+    #[test]
+    fn only_exact_managed_definition_qualifies_and_reload_is_distinct() {
+        let launcher = "/private/state/launcher-v1";
+        let drop_in = "/private/config/gnome-terminal-server.service.d/90-lyn-native.conf";
+        let paths = Some((launcher, drop_in));
+        let mut installed = reference();
+        let mut start = value::<Vec<Exec>>(&installed, "ExecStart").unwrap();
+        start[0].0 = launcher.into();
+        start[0].1 = vec![launcher.into()];
+        installed.insert("ExecStart", start.clone().to_variant());
+        installed.insert("DropInPaths", vec![drop_in.to_owned()].to_variant());
+        assert_eq!(
+            policy_for(&installed, paths).unwrap().1,
+            DefinitionState::ManagedLoaded
+        );
+        assert_eq!(policy(&installed), Err(ServiceRefusal::Unsupported));
+        installed.insert("NeedDaemonReload", true.to_variant());
+        assert_eq!(
+            policy_for(&installed, paths).unwrap().1,
+            DefinitionState::NeedsReload
+        );
+        for needs_reload in [false, true] {
+            let mut stock = reference();
+            stock.insert("NeedDaemonReload", needs_reload.to_variant());
+            assert_eq!(
+                policy_for(&stock, paths).unwrap().1,
+                DefinitionState::NeedsReload
+            );
+        }
+        installed.insert(
+            "DropInPaths",
+            vec![drop_in.to_owned(), "/foreign.conf".into()].to_variant(),
+        );
+        assert_eq!(
+            policy_for(&installed, paths),
+            Err(ServiceRefusal::Unsupported)
+        );
+        installed.insert("DropInPaths", vec![drop_in.to_owned()].to_variant());
+        start[0].1.push("foreign-argument".into());
+        installed.insert("ExecStart", start.to_variant());
+        assert_eq!(
+            policy_for(&installed, paths),
+            Err(ServiceRefusal::Unsupported)
+        );
     }
 
     #[test]

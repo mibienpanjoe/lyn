@@ -47,9 +47,56 @@ impl From<&fs::Metadata> for Stamp {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Snapshot(Vec<(PathBuf, Option<Stamp>, Vec<OsString>)>);
+
+pub(super) struct OwnedDropIn {
+    path: PathBuf,
+    stamp: Stamp,
+}
+impl OwnedDropIn {
+    pub(super) fn pin(path: &Path, metadata: &fs::Metadata) -> Result<Self> {
+        if !metadata.is_file()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.mode() & 0o7777 != 0o600
+            || metadata.nlink() != 1
+        {
+            return Err(ServiceRefusal::Changed);
+        }
+        Ok(Self {
+            path: path.into(),
+            stamp: Stamp::from(metadata),
+        })
+    }
+}
+
 impl Snapshot {
     pub(super) fn recheck(&self, paths: &[String], vendor: (u64, u64)) -> Result<()> {
         if self != &inspect(paths, vendor)? {
+            return Err(ServiceRefusal::Changed);
+        }
+        Ok(())
+    }
+
+    pub(super) fn recheck_for(
+        &self,
+        paths: &[String],
+        vendor: (u64, u64),
+        owned: Option<&OwnedDropIn>,
+    ) -> Result<()> {
+        let current = inspect_for(paths, vendor, owned)?;
+        if self != &current {
+            #[cfg(test)]
+            for (before, after) in self
+                .0
+                .iter()
+                .zip(&current.0)
+                .filter(|(before, after)| before != after)
+            {
+                eprintln!(
+                    "GNOME service disk inventory changed: {} (names changed: {})",
+                    before.0.display(),
+                    before.2 != after.2
+                );
+            }
             return Err(ServiceRefusal::Changed);
         }
         Ok(())
@@ -120,11 +167,20 @@ fn directory(
 }
 
 pub(super) fn inspect(paths: &[String], vendor: (u64, u64)) -> Result<Snapshot> {
+    inspect_for(paths, vendor, None)
+}
+
+pub(super) fn inspect_for(
+    paths: &[String],
+    vendor: (u64, u64),
+    owned: Option<&OwnedDropIn>,
+) -> Result<Snapshot> {
     if paths.is_empty() || paths.len() > MAX_PATHS {
         return Err(ServiceRefusal::Unsupported);
     }
     let mut snapshot = Snapshot(Vec::new());
     let mut visited = 0;
+    let mut owned_seen = 0;
     for root in paths {
         let path = Path::new(root);
         if !path.is_absolute()
@@ -173,11 +229,27 @@ pub(super) fn inspect(paths: &[String], vendor: (u64, u64)) -> Result<Snapshot> 
         for suffix in DROP_INS {
             let drop_in = path.join(suffix);
             let (stamp, names) = directory(&drop_in, &mut visited, false)?;
-            if names.iter().any(|name| name.as_bytes().ends_with(b".conf")) {
-                return Err(ServiceRefusal::Unsupported);
+            for name in names
+                .iter()
+                .filter(|name| name.as_bytes().ends_with(b".conf"))
+            {
+                let entry = drop_in.join(name);
+                let allowed = owned
+                    .filter(|owned| suffix == DROP_INS[0] && owned.path == entry)
+                    .ok_or(ServiceRefusal::Unsupported)?;
+                let current = metadata(&entry)?.ok_or(ServiceRefusal::Changed)?;
+                let current = Stamp::from(&current);
+                if current != allowed.stamp {
+                    return Err(ServiceRefusal::Changed);
+                }
+                owned_seen += 1;
+                snapshot.0.push((entry, Some(current), Vec::new()));
             }
             snapshot.0.push((drop_in, stamp, names));
         }
+    }
+    if owned.is_some() && owned_seen != 1 {
+        return Err(ServiceRefusal::Unsupported);
     }
     Ok(snapshot)
 }
@@ -186,6 +258,32 @@ pub(super) fn inspect(paths: &[String], vendor: (u64, u64)) -> Result<Snapshot> 
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn only_the_pinned_owned_drop_in_is_allowed_and_fenced() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join(DROP_INS[0]);
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("90-lyn-native.conf");
+        fs::write(&path, b"owned override").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let owned = OwnedDropIn::pin(&path, &fs::metadata(&path).unwrap()).unwrap();
+        let paths = vec![root.path().to_str().unwrap().to_owned()];
+        assert!(inspect_for(&paths, (0, 0), Some(&owned)).is_ok());
+        assert_eq!(inspect(&paths, (0, 0)), Err(ServiceRefusal::Unsupported));
+        fs::write(directory.join("foreign.conf"), b"keep").unwrap();
+        assert_eq!(
+            inspect_for(&paths, (0, 0), Some(&owned)),
+            Err(ServiceRefusal::Unsupported)
+        );
+        fs::remove_file(directory.join("foreign.conf")).unwrap();
+        fs::write(&path, b"edited override").unwrap();
+        assert_eq!(
+            inspect_for(&paths, (0, 0), Some(&owned)),
+            Err(ServiceRefusal::Changed)
+        );
+    }
 
     #[test]
     fn unreloaded_prefix_override_is_refused_and_preserved() {

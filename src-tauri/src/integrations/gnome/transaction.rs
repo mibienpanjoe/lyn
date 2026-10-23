@@ -6,6 +6,7 @@ mod recovery;
 mod removal;
 mod update;
 
+pub(super) use inspection::PinnedActivation;
 pub(super) use inspection::{ActivationFilesState, inspect_activation_files};
 
 use super::{
@@ -17,8 +18,8 @@ use super::{
 use serde::{Deserialize, Serialize};
 use std::{io, os::unix::fs::MetadataExt};
 
-const LAUNCHER: &str = "launcher-v1";
-const DROP_IN: &str = "90-lyn-native.conf";
+pub(super) const LAUNCHER: &str = "launcher-v1";
+pub(super) const DROP_IN: &str = "90-lyn-native.conf";
 const MANIFEST: &str = "installation-v1.json";
 
 #[derive(Serialize, Deserialize)]

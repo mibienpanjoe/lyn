@@ -19,6 +19,35 @@ from resource_test import stop_server
 from rust_probe import RustProbe
 
 
+def check_managed_service(root, executable, sdk, environment):
+    for mode in ("pending", "loaded", "changing"):
+        ready = root / f"manager-{mode}.sock"
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(str(ready))
+            ready.chmod(0o600)
+            listener.listen(1)
+            listener.settimeout(3)
+            process = subprocess.Popen(["/usr/bin/python3", str(Path(__file__).with_name("managed_service_fixture.py")),
+                                        str(root), mode, str(ready), str(sdk) if sdk else "-"], env=environment)
+            try:
+                channel, _ = listener.accept()
+                with channel:
+                    channel.settimeout(1)
+                    assert channel.recv(1) == b"R"
+                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_managed_service_fixture_entry",
+                                "--test-threads=1"], env=dict(environment, LYN_PRIVATE_MANAGED_DEFINITION=mode),
+                               check=True, timeout=4)
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=3)
+    print("PASS: private simulated manager API distinguishes pending/loaded definitions and refuses changed properties; no service action", flush=True)
+
+
 def run(module, preserved, executable, sdk):
     require_owned_display(sdk)
     private_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
@@ -35,6 +64,7 @@ def run(module, preserved, executable, sdk):
         stored_module = root / "state/modules" / hashlib.sha256(module.read_bytes()).hexdigest() / module.name
         assert stored_module.read_bytes() == module.read_bytes()
         assert stored_module.stat().st_mode & 0o7777 == 0o400
+        check_managed_service(root, executable, sdk, fixture_environment)
         broker = RustProbe(root, executable, published=True)
         server = None
         pin = None

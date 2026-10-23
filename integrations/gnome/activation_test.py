@@ -12,6 +12,7 @@ from build import ROOT, build_bundle, module_flags
 
 def main():
     repo = ROOT.parents[1]
+    subprocess.run([sys.executable, str(ROOT / "prototype/managed_service_fixture_test.py")], check=True, timeout=3)
     sdk_value = os.environ.get("LYN_GNOME_SDK_ROOT")
     sdk = Path(sdk_value).resolve(strict=True) if sdk_value else None
     flags = module_flags(sdk)
