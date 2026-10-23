@@ -1,7 +1,9 @@
 //! Process-local reversible update. Persistent interruption recovery is separate.
 
 mod cleanup;
+mod precommit;
 pub(super) use cleanup::{CLEANUP_PENDING, recover_cleanup};
+pub(super) use precommit::PRECOMMIT_PENDING;
 
 use super::super::{
     RenderedActivation,
@@ -26,6 +28,8 @@ pub(super) struct PendingUpdate {
     manifest_refreshed: bool,
     cleanup_record: Option<OwnedFile>,
     cleanup_record_retired: bool,
+    precommit_record: Option<OwnedFile>,
+    precommit_retired: bool,
 }
 
 impl ActivationTransaction<'_> {
@@ -35,6 +39,9 @@ impl ActivationTransaction<'_> {
             self.directory(*place).verify(file)?;
         }
         if let Some(update) = &self.update {
+            if let Some(record) = &update.precommit_record {
+                self.state.verify(record)?;
+            }
             for backup in &update.backups {
                 self.directory(backup.place).verify(&backup.file)?;
             }
@@ -127,8 +134,10 @@ impl ActivationTransaction<'_> {
         }
         self.preflight_update()?;
         self.state.require_absent(CLEANUP_PENDING)?;
+        self.state.require_absent(PRECOMMIT_PENDING)?;
         self.update = Some(PendingUpdate::default());
         self.phase = Phase::Updating;
+        self.prepare_precommit()?;
         self.replace_role(0, Place::State, rendered.launcher.as_bytes(), true)?;
         self.replace_role(1, Place::DropIns, rendered.drop_in.as_bytes(), false)?;
         let bytes = self.manifest_bytes()?;
@@ -187,6 +196,7 @@ impl ActivationTransaction<'_> {
         self.clean_candidates()?;
         self.clean_backups()?;
         self.sync_update_directories()?;
+        self.retire_precommit()?;
         self.retire_cleanup_record()?;
         self.update = None;
         self.phase = Phase::Complete;
@@ -203,6 +213,13 @@ impl ActivationTransaction<'_> {
             return Err(refused());
         }
         self.preflight_update()?;
+        if self
+            .update
+            .as_ref()
+            .is_some_and(|update| update.precommit_record.is_none())
+        {
+            self.state.require_absent(PRECOMMIT_PENDING)?;
+        }
         self.update.as_mut().ok_or_else(refused)?.ready = false;
         // Never restore an old manifest with receipts invalidated by rename.
         for backup in &mut self.update.as_mut().ok_or_else(refused)?.backups {
@@ -246,6 +263,7 @@ impl ActivationTransaction<'_> {
         self.sync_update_directories()?;
         self.clean_backups()?;
         self.sync_update_directories()?;
+        self.retire_precommit()?;
         self.update = None;
         self.phase = Phase::Complete;
         Ok(())

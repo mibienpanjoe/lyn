@@ -81,6 +81,7 @@ impl<'a> ActivationTransaction<'a> {
         state.require_absent(MANIFEST)?;
         state.require_absent(recovery::PENDING_INSTALL)?;
         state.require_absent(update::CLEANUP_PENDING)?;
+        state.require_absent(update::PRECOMMIT_PENDING)?;
         drop_ins.require_absent(DROP_IN)?;
         Ok(Self {
             state,
@@ -101,11 +102,17 @@ impl<'a> ActivationTransaction<'a> {
         drop_ins: &'a ManagedDirectory,
     ) -> io::Result<Self> {
         let lock = InstallationLock::acquire(state)?;
-        if pending(state, recovery::PENDING_INSTALL)? && pending(state, update::CLEANUP_PENDING)? {
+        if pending(state, recovery::PENDING_INSTALL)?
+            && (pending(state, update::CLEANUP_PENDING)?
+                || pending(state, update::PRECOMMIT_PENDING)?)
+        {
             return Err(refused());
         }
         recovery::recover_pending(state, drop_ins, &lock)?;
         update::recover_cleanup(state, drop_ins, &lock)?;
+        // No automatic acceptance of an update which never crossed the explicit
+        // commit boundary. Full pre-commit recovery remains unimplemented.
+        state.require_absent(update::PRECOMMIT_PENDING)?;
         let manifest_file = state.read_state(MANIFEST)?;
         let manifest: Manifest =
             serde_json::from_slice(&manifest_file.content).map_err(|_| refused())?;

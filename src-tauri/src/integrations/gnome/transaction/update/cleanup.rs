@@ -1,6 +1,7 @@
 //! Persistent authority for cleanup after an explicitly committed update.
 
 use super::super::{ActivationTransaction, DROP_IN, LAUNCHER, MANIFEST, Manifest, Place, refused};
+use super::PRECOMMIT_PENDING;
 use crate::integrations::gnome::{
     lock::InstallationLock,
     managed::{ManagedDirectory, OwnedFile, PublishFailure},
@@ -26,6 +27,8 @@ struct CleanupRecord {
     version: u8,
     current: FileSet,
     backups: FileSet,
+    #[serde(default)]
+    precommit: Option<Receipt>,
 }
 
 fn candidate(receipt: &Receipt, mode: u32) -> bool {
@@ -48,6 +51,10 @@ impl CleanupRecord {
             || self.backups.launcher.filename() == self.backups.drop_in.filename()
             || self.backups.launcher.filename() == self.backups.manifest.filename()
             || self.backups.drop_in.filename() == self.backups.manifest.filename()
+            || self
+                .precommit
+                .as_ref()
+                .is_some_and(|receipt| !receipt.is_for(PRECOMMIT_PENDING, 0o600))
         {
             return Err(refused());
         }
@@ -90,6 +97,10 @@ impl ActivationTransaction<'_> {
                 drop_in: backup(1)?,
                 manifest: backup(2)?,
             },
+            precommit: Some(Receipt::record(
+                self.state,
+                update.precommit_record.as_ref().ok_or_else(refused)?,
+            )?),
         };
         snapshot.validate()?;
         let bytes = serde_json::to_vec(&snapshot).map_err(io::Error::other)?;
@@ -120,6 +131,9 @@ impl ActivationTransaction<'_> {
     pub(super) fn retire_cleanup_record(&mut self) -> io::Result<()> {
         self.lock.check()?;
         let update = self.update.as_mut().ok_or_else(refused)?;
+        if !update.precommit_retired || update.precommit_record.is_some() {
+            return Err(refused());
+        }
         if update.cleanup_record_retired {
             return Ok(());
         }
@@ -177,6 +191,17 @@ pub(in crate::integrations::gnome::transaction) fn recover_cleanup(
     }
     let _manifest_launcher = manifest.launcher.reopen(state)?;
     let _manifest_drop_in = manifest.drop_in.reopen(drop_ins)?;
+    let precommit = if let Some(receipt) = &snapshot.precommit {
+        match receipt.reopen(state) {
+            Ok(file) => Some(file),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        }
+    } else {
+        // Old cleanup records carry no authority over a new refusal marker.
+        state.require_absent(PRECOMMIT_PENDING)?;
+        None
+    };
     let mut backups: Vec<(&ManagedDirectory, OwnedFile)> = Vec::new();
     for (directory, receipt) in [
         (state, &snapshot.backups.manifest),
@@ -199,6 +224,10 @@ pub(in crate::integrations::gnome::transaction) fn recover_cleanup(
     }
     state.sync_directory()?;
     drop_ins.sync_directory()?;
+    if let Some(precommit) = precommit {
+        lock.check()?;
+        state.remove(&precommit)?;
+    }
     lock.check()?;
     state.remove(&journal)
 }
@@ -400,6 +429,7 @@ mod tests {
         transaction.update(updated).unwrap();
         transaction.prepare_cleanup_record().unwrap();
         transaction.clean_backups().unwrap();
+        transaction.retire_precommit().unwrap();
         state.fail_directory_sync(true);
         assert!(transaction.retire_cleanup_record().is_err());
         assert!(!root.path().join("state").join(CLEANUP_PENDING).exists());
@@ -424,7 +454,7 @@ mod tests {
         transaction.clean_backups().unwrap();
         drop(transaction);
         // First flush makes the intent durable; the second precedes retirement.
-        state.fail_directory_sync_after(2);
+        state.fail_directory_sync_after(3);
         assert!(ActivationTransaction::resume(&state, &target).is_err());
         assert!(!root.path().join("state").join(CLEANUP_PENDING).exists());
         assert!(ActivationTransaction::resume(&state, &target).is_err());
