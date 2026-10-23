@@ -2130,6 +2130,7 @@ version = "0.6.8"
 dependencies = [
  "arboard",
  "flate2",
+ "gio",
  "hound",
  "libc",
  "png 0.18.1",
