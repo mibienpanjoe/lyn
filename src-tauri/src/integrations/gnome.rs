@@ -73,6 +73,40 @@ mod tests {
     use std::{ffi::OsString, os::unix::ffi::OsStringExt, path::Path};
 
     #[test]
+    fn native_activation_fixture_entry() {
+        use std::{fs, os::unix::fs::MetadataExt};
+        let Some(root) = std::env::var_os("LYN_PRIVATE_NATIVE_ACTIVATION_ROOT") else {
+            return;
+        };
+        let root = Path::new(&root);
+        let metadata = fs::symlink_metadata(root).unwrap();
+        assert!(root.is_absolute() && root.parent() == Some(std::env::temp_dir().as_path()));
+        assert!(
+            root.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("lyn-na-")
+        );
+        assert!(
+            metadata.is_dir()
+                && metadata.uid() == unsafe { libc::geteuid() }
+                && metadata.mode() & 0o7777 == 0o700
+        );
+        assert_eq!(root.canonicalize().unwrap(), root);
+        let module = std::env::var_os("LYN_PRIVATE_NATIVE_ACTIVATION_MODULE").unwrap();
+        let module = Path::new(&module);
+        assert!(module.is_absolute() && module.is_file());
+        let state_path = root.join("state");
+        let state = directories::open_private(&state_path, true).unwrap();
+        let target = directories::open_drop_ins(&root.join("drop-ins"), true).unwrap();
+        let rendered = render_activation(module, &state_path.join("launcher-v1")).unwrap();
+        let mut transaction =
+            transaction::ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+    }
+
+    #[test]
     fn wrapper_only_appends_the_module_and_execs_the_fixed_server() {
         let plan = render_activation(
             Path::new("/tmp/lyn space/native's.so"),

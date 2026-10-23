@@ -12,7 +12,9 @@
 #include <unistd.h>
 #include "../native_channel.h"
 
+#ifndef LYN_GNOME_NATIVE_MODULE
 static gchar *endpoint;
+#endif
 static gchar *module_path;
 static guint64 next_source;
 
@@ -79,8 +81,19 @@ static gboolean runtime_compatible(void)
         && vte_get_micro_version() == 0;
 }
 
+static void remove_module_entry(const char *variable, const char *path);
+
 G_MODULE_EXPORT const gchar *g_module_check_init(GModule *module)
 {
+#ifdef LYN_GNOME_NATIVE_MODULE
+    /* Scrub our exact entry even on refusal, before a child can inherit it.
+     * Do not become resident or install callbacks in an unrelated executable. */
+    const gchar *path = g_module_name(module);
+    remove_module_entry("GTK3_MODULES", path);
+    remove_module_entry("GTK_MODULES", path);
+    if (!native_server_process())
+        return "Lyn native: not a supported system GNOME server";
+#endif
     if (!runtime_compatible())
         return "Lyn native prototype: unverified GTK/VTE version";
     module_path = g_strdup(g_module_name(module));
@@ -89,15 +102,15 @@ G_MODULE_EXPORT const gchar *g_module_check_init(GModule *module)
     return NULL;
 }
 
-static void remove_own_module(const char *variable)
+static void remove_module_entry(const char *variable, const char *path)
 {
     const gchar *value = g_getenv(variable);
-    if (!value || !module_path)
+    if (!value || !path)
         return;
     gchar **parts = g_strsplit(value, ":", -1);
     GPtrArray *keep = g_ptr_array_new();
     for (gchar **part = parts; *part; part++)
-        if (strcmp(*part, module_path) != 0)
+        if (strcmp(*part, path) != 0)
             g_ptr_array_add(keep, *part);
     if (keep->len == 0) {
         g_unsetenv(variable);
@@ -109,6 +122,11 @@ static void remove_own_module(const char *variable)
     }
     g_ptr_array_free(keep, TRUE);
     g_strfreev(parts);
+}
+
+static void remove_own_module(const char *variable)
+{
+    remove_module_entry(variable, module_path);
 }
 
 static TerminalIdentity *terminal_identity(GtkWidget *widget)
@@ -260,6 +278,7 @@ static void answer_query(const LynFrame *query, LynFrame *reply)
 #endif
 }
 
+#ifndef LYN_GNOME_NATIVE_MODULE
 static void publish(const char *frame, size_t length)
 {
     struct sockaddr_un address = {.sun_family = AF_UNIX};
@@ -271,6 +290,7 @@ static void publish(const char *frame, size_t length)
         close(channel);
     }
 }
+#endif
 
 static gboolean snapshot(gpointer data)
 {
@@ -287,7 +307,9 @@ static gboolean snapshot(gpointer data)
     /* Never publish a partially enumerated set as exact evidence. */
     if (!observation.incomplete && frame->len <= MAX_SNAPSHOT_BYTES - 2) {
         g_string_append(frame, "]}");
+#ifndef LYN_GNOME_NATIVE_MODULE
         publish(frame->str, frame->len);
+#endif
     }
     g_string_free(frame, TRUE);
 #ifdef LYN_GNOME_TEST_METRICS
@@ -310,6 +332,7 @@ static gboolean snapshot(gpointer data)
     return G_SOURCE_CONTINUE;
 }
 
+#ifndef LYN_GNOME_NATIVE_MODULE
 static gboolean connect_when_dispatching(gpointer data)
 {
     /* Start protocol deadlines only once GTK can dispatch channel I/O.
@@ -317,6 +340,7 @@ static gboolean connect_when_dispatching(gpointer data)
     (void)lyn_native_start((const gchar *)data, answer_query);
     return G_SOURCE_REMOVE;
 }
+#endif
 
 static gboolean discover_when_dispatching(gpointer data)
 {
@@ -337,6 +361,18 @@ G_MODULE_EXPORT void gtk_module_init(gint *argc, gchar ***argv)
         return;
     initialized = TRUE;
 
+#ifdef LYN_GNOME_NATIVE_MODULE
+    if (!module_path || !native_server_process())
+        return;
+    remove_own_module("GTK3_MODULES");
+    remove_own_module("GTK_MODULES");
+    const gchar *runtime = g_getenv("XDG_RUNTIME_DIR");
+    if (!runtime || runtime[0] != '/' || strlen(runtime) >= sizeof(((struct sockaddr_un *)0)->sun_path))
+        return;
+    g_timeout_add(25, snapshot, NULL);
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, discover_when_dispatching,
+                    g_strdup(runtime), g_free);
+#else
     gchar *executable = g_file_read_link("/proc/self/exe", NULL);
     if (!executable)
         return;
@@ -365,4 +401,5 @@ G_MODULE_EXPORT void gtk_module_init(gint *argc, gchar ***argv)
     else if (discovery && !stream)
         g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, discover_when_dispatching,
                         g_strdup(discovery), g_free);
+#endif
 }
