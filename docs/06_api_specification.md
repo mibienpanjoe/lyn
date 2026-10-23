@@ -1,6 +1,6 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.14, 2026-09-18
+Version: v1.15, 2026-10-23
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
@@ -23,7 +23,7 @@ Contract status: **Shared primitives, manual and live contexts, capture-session 
 - Timestamps are RFC 3339 UTC strings and are localized only for display.
 - Durations are integer milliseconds.
 - Byte sizes are non-negative integers.
-- Optional fields are explicit `null`, not omitted, in command results.
+- Optional fields are explicit `null`, not omitted, in command results, except the additive `IntegrationStatus.native` extension, which is omitted for legacy integration rows.
 - User text is UTF-8 and is not normalized or rewritten by the transport layer.
 - Commands accept media IDs and context IDs, never arbitrary filesystem paths.
 - Enums are lowercase string literals.
@@ -644,6 +644,36 @@ Image preview uses the read-only opaque `previewUri` returned in media summaries
 
 ## Settings and Local Intelligence Commands
 
+### `get_integration_statuses`
+
+**Input:** `{}`. **Success:** `IntegrationStatus[]` (empty on non-Linux platforms). Filesystem and native connection checks run on a blocking worker, outside the UI event loop. The command accepts no paths, peer identifiers or service actions. It never resumes installer transactions or sends a context/capture query.
+
+```ts
+type IntegrationId = "cursor" | "vscode" | "browser" | "kitty" | "shell" | "gnome";
+type GnomeActivationFilesStatus = "absent" | "owned" | "changed" | "pending" | "unavailable";
+type GnomeConnectionStatus = "connected" | "disconnected" | "busy" | "unavailable";
+interface GnomeIntegrationEvidence {
+  files: GnomeActivationFilesStatus;
+  connection: GnomeConnectionStatus;
+  canInstall: boolean;
+}
+interface IntegrationStatus {
+  id: IntegrationId;
+  name: string;
+  description: string;
+  detected: boolean;
+  installed: boolean;
+  details: string | null;
+  native?: GnomeIntegrationEvidence;
+}
+```
+
+The GNOME row keeps file ownership and admitted transport observations separate. `owned` covers the three activation files only; `connected` covers an observed authenticated transport, not the focused source or a verified capture. Missing evidence must display unavailable, never Installed/Ready or an installation action. No private path, PID or source identifier is returned in native evidence. The initial GNOME distribution is not yet available: `installed` and `canInstall` are false even if activation files are owned or a manually activated native producer is connected. The [native protocol contract](gnome_native_protocol.md) owns the precise observation/refusal boundaries.
+
+### `install_integration`
+
+**Input:** `{ id: IntegrationId }`, rejecting all additional fields. **Success:** `{ id, success, message, installed }` inside the standard result envelope. Existing integration installations retain their behavior. GNOME currently returns `success: false`, `installed: false` and a safe build-unavailable message without creating files, probing/reloading a manager or restarting a terminal. The UI hides that unavailable action; packaging and safe installer wiring remain separate implementation requirements.
+
 `get_settings`, `update_settings`, and `get_app_version` are implemented. Speech-model commands and model-progress events in this section remain proposed behind G2 and are not registered by the current build.
 
 ```ts
@@ -863,6 +893,8 @@ No concrete model distributor is selected in the source overview. A release MUST
 | Settings | `get_app_version` | Command Gateway | No |
 | Settings | `get_settings` | Storage Service | No |
 | Settings | `update_settings` | Storage Service | Yes |
+| Integrations | `get_integration_statuses` | Integration Service + Native Broker | No setup/session mutation |
+| Integrations | `install_integration` | Integration Service | Provider setup; GNOME currently refuses |
 | Intelligence | `get_speech_model_status` | Local Speech Adapter | No |
 | Intelligence | `install_speech_model` | Local Speech Adapter | Local model state |
 | Intelligence | `remove_speech_model` | Local Speech Adapter | Local model state |

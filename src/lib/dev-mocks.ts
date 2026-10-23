@@ -516,6 +516,16 @@ let devIntegrations: IntegrationStatus[] = [
     installed: false,
     details: 'Available for Bash and Zsh',
   },
+  {
+    id: 'gnome',
+    name: 'GNOME Terminal',
+    description:
+      'Associates captures with the active local GNOME terminal project.',
+    detected: true,
+    installed: false,
+    details: null,
+    native: { files: 'absent', connection: 'disconnected', canInstall: false },
+  },
 ];
 
 export const devIntegrationClient: IntegrationClient = {
@@ -523,6 +533,14 @@ export const devIntegrationClient: IntegrationClient = {
     return [...devIntegrations];
   },
   async install(input) {
+    if (input.id === 'gnome') {
+      return {
+        id: input.id,
+        success: false,
+        installed: false,
+        message: 'GNOME installation is not available in this build.',
+      };
+    }
     devIntegrations = devIntegrations.map((item) =>
       item.id === input.id ? { ...item, installed: true } : item,
     );

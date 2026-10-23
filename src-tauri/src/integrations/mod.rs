@@ -195,6 +195,7 @@ pub(crate) fn cursor_status(home: &Path) -> IntegrationStatus {
 
     IntegrationStatus {
         id: IntegrationId::Cursor,
+        native: None,
         name: "Cursor IDE".to_owned(),
         description: "Reports the focused Cursor workspace folder to Lyn on capture.".to_owned(),
         detected,
@@ -224,6 +225,7 @@ pub(crate) fn vscode_status(home: &Path) -> IntegrationStatus {
 
     IntegrationStatus {
         id: IntegrationId::Vscode,
+        native: None,
         name: "Visual Studio Code".to_owned(),
         description: "Reports the focused VS Code workspace folder to Lyn on capture.".to_owned(),
         detected,
@@ -275,6 +277,7 @@ pub(crate) fn browser_status(home: &Path) -> IntegrationStatus {
 
     IntegrationStatus {
         id: IntegrationId::Browser,
+        native: None,
         name: "Web Browser (Chrome, Brave, Edge, Firefox)".to_owned(),
         description:
             "Captures from the focused tab; localhost maps to a project only when one local process directory is proven."
@@ -310,6 +313,7 @@ pub(crate) fn kitty_status(home: &Path) -> IntegrationStatus {
 
     IntegrationStatus {
         id: IntegrationId::Kitty,
+        native: None,
         name: "Kitty Terminal".to_owned(),
         description: "Monitors exact focused terminal pane without inspecting commands or output."
             .to_owned(),
@@ -390,6 +394,7 @@ pub(crate) fn shell_status(home: &Path) -> IntegrationStatus {
 
     IntegrationStatus {
         id: IntegrationId::Shell,
+        native: None,
         name: "Terminal Shell (Bash / Zsh)".to_owned(),
         description: "Associates GNOME Terminal and external shells with current git repository."
             .to_owned(),
@@ -464,6 +469,12 @@ pub(crate) fn install_integration_by_id(
         IntegrationId::Browser => install_browser(home),
         IntegrationId::Kitty => install_kitty(home),
         IntegrationId::Shell => install_shell(home),
+        IntegrationId::Gnome => InstallIntegrationResult {
+            id: IntegrationId::Gnome,
+            success: false,
+            installed: false,
+            message: "GNOME installation is not available in this build.".to_owned(),
+        },
     }
 }
 
@@ -831,6 +842,18 @@ fn install_shell(home: &Path) -> InstallIntegrationResult {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unavailable_gnome_installation_refuses_without_creating_files() {
+        let root = tempfile::tempdir().unwrap();
+        let result = super::install_integration_by_id(
+            root.path(),
+            crate::contract::InstallIntegrationInput {
+                id: crate::contract::IntegrationId::Gnome,
+            },
+        );
+        assert!(!result.success && !result.installed);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
     use super::*;
     use tempfile::tempdir;
 

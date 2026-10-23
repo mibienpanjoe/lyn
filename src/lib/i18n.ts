@@ -1,4 +1,8 @@
-import type { LanguageSetting } from './ipc-types';
+import type {
+  GnomeActivationFilesStatus,
+  GnomeConnectionStatus,
+  LanguageSetting,
+} from './ipc-types';
 
 export interface Translations {
   settingsTitle: string;
@@ -43,6 +47,10 @@ export interface Translations {
   btnAddShell: string;
   btnInstallExtension: string;
   btnInstalling: string;
+  btnInstallNative: string;
+  gnomeConnectionStatus: Record<GnomeConnectionStatus, string>;
+  gnomeFilesStatus: Record<GnomeActivationFilesStatus, string>;
+  gnomeInstallUnavailable: string;
   integrationDescriptions: Record<string, string>;
 
   appearanceTitle: string;
@@ -151,7 +159,23 @@ const en: Translations = {
   btnAddShell: 'Add to Shell',
   btnInstallExtension: 'Install Extension',
   btnInstalling: 'Installing…',
+  btnInstallNative: 'Install',
+  gnomeConnectionStatus: {
+    connected: 'Connected',
+    disconnected: 'Not connected',
+    busy: 'Connection busy',
+    unavailable: 'Connection unavailable',
+  },
+  gnomeFilesStatus: {
+    absent: 'Not installed.',
+    owned: 'Activation files verified.',
+    changed: 'Activation files changed.',
+    pending: 'Installation needs attention.',
+    unavailable: 'Installation status unavailable.',
+  },
+  gnomeInstallUnavailable: 'Installation is not available in this build.',
   integrationDescriptions: {
+    gnome: 'Associates captures with the active local GNOME terminal project.',
     cursor: 'Reports the focused Cursor workspace folder to Lyn on capture.',
     vscode: 'Reports the focused VS Code workspace folder to Lyn on capture.',
     browser:
@@ -270,7 +294,24 @@ const fr: Translations = {
   btnAddShell: 'Ajouter au shell',
   btnInstallExtension: 'Installer l’extension',
   btnInstalling: 'Installation…',
+  btnInstallNative: 'Installer',
+  gnomeConnectionStatus: {
+    connected: 'Connecté',
+    disconnected: 'Non connecté',
+    busy: 'Connexion occupée',
+    unavailable: 'Connexion indisponible',
+  },
+  gnomeFilesStatus: {
+    absent: 'Non installé.',
+    owned: 'Fichiers d’activation vérifiés.',
+    changed: 'Fichiers d’activation modifiés.',
+    pending: 'L’installation nécessite une intervention.',
+    unavailable: 'État de l’installation indisponible.',
+  },
+  gnomeInstallUnavailable:
+    'L’installation n’est pas disponible dans cette version.',
   integrationDescriptions: {
+    gnome: 'Associe les captures au projet du terminal GNOME local actif.',
     cursor:
       'Transmet le dossier de travail Cursor actif à Lyn lors de la capture.',
     vscode:

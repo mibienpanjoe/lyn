@@ -709,6 +709,34 @@ pub enum IntegrationId {
     Browser,
     Kitty,
     Shell,
+    Gnome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum GnomeActivationFilesStatus {
+    Absent,
+    Owned,
+    Changed,
+    Pending,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum GnomeConnectionStatus {
+    Connected,
+    Disconnected,
+    Busy,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct GnomeIntegrationEvidence {
+    pub files: GnomeActivationFilesStatus,
+    pub connection: GnomeConnectionStatus,
+    pub can_install: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -720,6 +748,9 @@ pub struct IntegrationStatus {
     pub detected: bool,
     pub installed: bool,
     pub details: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub native: Option<GnomeIntegrationEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -824,6 +855,9 @@ pub fn typescript_bindings() -> String {
         StopAudioPlaybackInput::decl(&config),
         AudioPlaybackResult::decl(&config),
         IntegrationId::decl(&config),
+        GnomeActivationFilesStatus::decl(&config),
+        GnomeConnectionStatus::decl(&config),
+        GnomeIntegrationEvidence::decl(&config),
         IntegrationStatus::decl(&config),
         InstallIntegrationInput::decl(&config),
         InstallIntegrationResult::decl(&config),
@@ -1189,6 +1223,33 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(failure["ok"], false);
+    }
+
+    #[test]
+    fn integration_status_preserves_legacy_payloads_and_adds_typed_native_evidence() {
+        let legacy = json!({"id":"cursor", "name":"Cursor IDE", "description":"Editor context",
+            "detected":true, "installed":false, "details":null});
+        let mut status: IntegrationStatus = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(status.native.is_none());
+        assert_eq!(serde_json::to_value(&status).unwrap(), legacy);
+        status.id = IntegrationId::Gnome;
+        status.native = Some(GnomeIntegrationEvidence {
+            files: GnomeActivationFilesStatus::Owned,
+            connection: GnomeConnectionStatus::Connected,
+            can_install: false,
+        });
+        let payload = serde_json::to_value(status).unwrap();
+        assert_eq!(
+            payload["native"],
+            json!({"files":"owned", "connection":"connected", "canInstall":false})
+        );
+        assert_eq!(payload["installed"], false);
+        assert!(
+            serde_json::from_value::<InstallIntegrationInput>(
+                json!({"id":"gnome", "path":"/untrusted"})
+            )
+            .is_err()
+        );
     }
 
     #[test]

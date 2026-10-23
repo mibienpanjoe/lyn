@@ -598,7 +598,19 @@
                           >
                         {/if}
                       </div>
-                      {#if item.installed}
+                      {#if item.id === 'gnome'}
+                        <span
+                          class="integration-badge"
+                          role="status"
+                          class:installed={item.native?.connection ===
+                            'connected'}
+                          class:ready={item.native?.connection !== 'connected'}
+                        >
+                          {t.gnomeConnectionStatus[
+                            item.native?.connection ?? 'unavailable'
+                          ]}
+                        </span>
+                      {:else if item.installed}
                         <span class="integration-badge installed">
                           <CheckIcon size={11} aria-hidden="true" />
                           {t.badgeInstalled}
@@ -626,34 +638,48 @@
                       >
                         {integrationFeedback[item.id].message}
                       </div>
-                    {:else if item.details}
+                    {/if}
+                    {#if item.id === 'gnome'}
+                      <div class="integration-details-text">
+                        {t.gnomeFilesStatus[
+                          item.native?.files ?? 'unavailable'
+                        ]}
+                        {#if !item.native?.canInstall}
+                          {t.gnomeInstallUnavailable}
+                        {/if}
+                      </div>
+                    {:else if !integrationFeedback[item.id] && item.details}
                       {@render renderDetails(item.details)}
                     {/if}
                   </div>
 
-                  <div class="integration-action">
-                    <button
-                      type="button"
-                      class="secondary-action"
-                      class:installed-btn={item.installed}
-                      disabled={installingIntegrationId !== null}
-                      onclick={() => installIntegration(item.id)}
-                    >
-                      {#if installingIntegrationId === item.id}
-                        {t.btnInstalling}
-                      {:else if item.installed}
-                        {t.btnReinstall}
-                      {:else if item.id === 'kitty'}
-                        {t.btnEnableWatcher}
-                      {:else if item.id === 'browser'}
-                        {t.btnRegisterHost}
-                      {:else if item.id === 'shell'}
-                        {t.btnAddShell}
-                      {:else}
-                        {t.btnInstallExtension}
-                      {/if}
-                    </button>
-                  </div>
+                  {#if item.id !== 'gnome' || item.native?.canInstall}
+                    <div class="integration-action">
+                      <button
+                        type="button"
+                        class="secondary-action"
+                        class:installed-btn={item.installed}
+                        disabled={installingIntegrationId !== null}
+                        onclick={() => installIntegration(item.id)}
+                      >
+                        {#if installingIntegrationId === item.id}
+                          {t.btnInstalling}
+                        {:else if item.id === 'gnome'}
+                          {t.btnInstallNative}
+                        {:else if item.installed}
+                          {t.btnReinstall}
+                        {:else if item.id === 'kitty'}
+                          {t.btnEnableWatcher}
+                        {:else if item.id === 'browser'}
+                          {t.btnRegisterHost}
+                        {:else if item.id === 'shell'}
+                          {t.btnAddShell}
+                        {:else}
+                          {t.btnInstallExtension}
+                        {/if}
+                      </button>
+                    </div>
+                  {/if}
                 </div>
               {/each}
             {/if}

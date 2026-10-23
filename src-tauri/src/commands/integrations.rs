@@ -8,21 +8,54 @@ use crate::{
 };
 
 #[tauri::command]
-pub(crate) fn get_integration_statuses(
+pub(crate) async fn get_integration_statuses(
+    app: tauri::AppHandle,
     input: serde_json::Value,
 ) -> CommandResult<Vec<IntegrationStatus>> {
+    if let Err(error) = validate_status_input(&input) {
+        return CommandResult::failure(error);
+    }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = input;
+        let _ = app;
         CommandResult::success(Vec::new())
     }
     #[cfg(target_os = "linux")]
     {
-        if !is_empty_input(&input) {
-            return CommandResult::failure(validation_error("input"));
-        }
+        use tauri::Manager;
+        let broker = app
+            .try_state::<std::sync::Arc<crate::context::gnome_broker::NativeBroker>>()
+            .map(|broker| std::sync::Arc::clone(broker.inner()));
         let home = user_home_dir();
-        CommandResult::success(list_integration_statuses(&home))
+        match tauri::async_runtime::spawn_blocking(move || {
+            let mut statuses = list_integration_statuses(&home);
+            let connection = broker.as_ref().map_or(
+                crate::context::gnome_broker::NativeConnectionStatus::Unavailable,
+                |broker| broker.connection_status(),
+            );
+            statuses.push(crate::integrations::gnome::status::observe(
+                &home, connection,
+            ));
+            statuses
+        })
+        .await
+        {
+            Ok(statuses) => CommandResult::success(statuses),
+            Err(_) => CommandResult::failure(AppError {
+                code: ErrorCode::InternalError,
+                message: "Integration status is unavailable.".to_owned(),
+                retryable: true,
+                details: ErrorDetails::default(),
+            }),
+        }
+    }
+}
+
+fn validate_status_input(input: &serde_json::Value) -> Result<(), AppError> {
+    if is_empty_input(input) {
+        Ok(())
+    } else {
+        Err(validation_error("input"))
     }
 }
 
@@ -70,8 +103,8 @@ mod tests {
 
     #[test]
     fn get_integration_statuses_rejects_non_empty_input() {
-        let result = get_integration_statuses(json!({ "unexpected": true }));
-        assert!(matches!(result, CommandResult::Failure { .. }));
+        assert!(validate_status_input(&json!({ "unexpected": true })).is_err());
+        assert!(validate_status_input(&json!({})).is_ok());
     }
 
     #[test]

@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/svelte';
 import axe from 'axe-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -381,6 +387,89 @@ describe('Settings', () => {
     expect(
       await screen.findByText('Extension installed successfully!'),
     ).toBeVisible();
+  });
+
+  it('distinguishes GNOME connection from activation files without offering unavailable installation', async () => {
+    const gnome: IntegrationStatus = {
+      id: 'gnome',
+      name: 'GNOME Terminal',
+      description: 'Native terminal context',
+      detected: true,
+      installed: false,
+      details: null,
+      native: { files: 'owned', connection: 'connected', canInstall: false },
+    };
+    const intClient: IntegrationClient = {
+      list: vi
+        .fn()
+        .mockResolvedValueOnce([gnome])
+        .mockResolvedValueOnce([
+          {
+            ...gnome,
+            native: { files: 'pending', connection: 'busy', canInstall: false },
+          },
+        ]),
+      install: vi.fn(),
+    };
+    const { container } = render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient,
+    });
+    await screen.findByText('GNOME Terminal');
+    expect(screen.getByText('Connected')).toBeVisible();
+    expect(screen.getByText(/Activation files verified\./)).toBeVisible();
+    expect(
+      screen.getByText(/Installation is not available in this build\./),
+    ).toBeVisible();
+    expect(screen.queryByText('Installed', { exact: true })).toBeNull();
+    const gnomeCard = screen
+      .getByText('GNOME Terminal')
+      .closest('.integration-card') as HTMLElement;
+    expect(within(gnomeCard).queryByRole('button')).toBeNull();
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Refresh integration statuses' }),
+    );
+    expect(await screen.findByText('Connection busy')).toBeVisible();
+    expect(screen.getByText(/Installation needs attention\./)).toBeVisible();
+    expect(intClient.install).not.toHaveBeenCalled();
+    expect((await axe.run(container)).violations).toEqual([]);
+  });
+
+  it('shows unknown GNOME evidence safely in French without an installation action', async () => {
+    const intClient: IntegrationClient = {
+      list: vi.fn().mockResolvedValue([
+        {
+          id: 'gnome',
+          name: 'GNOME Terminal',
+          description: 'Native terminal context',
+          detected: true,
+          installed: false,
+          details: null,
+        },
+      ]),
+      install: vi.fn(),
+    };
+    render(SettingsPanel, {
+      client: client({
+        get: vi.fn().mockResolvedValue({ ...initial, language: 'french' }),
+      }),
+      modelClient,
+      intClient,
+    });
+    await screen.findByText('Connexion indisponible');
+    expect(
+      screen.getByText(/État de l’installation indisponible\./),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        /L’installation n’est pas disponible dans cette version\./,
+      ),
+    ).toBeVisible();
+    const card = screen
+      .getByText('GNOME Terminal')
+      .closest('.integration-card') as HTMLElement;
+    expect(within(card).queryByRole('button')).toBeNull();
   });
 
   it('handles overlapping list requests and discards out-of-order stale responses', async () => {

@@ -8,6 +8,7 @@ mod managed;
 mod ownership;
 mod replacement;
 mod service;
+pub(crate) mod status;
 mod transaction;
 
 #[derive(Debug, PartialEq, Eq)]

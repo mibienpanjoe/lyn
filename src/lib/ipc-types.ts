@@ -166,9 +166,15 @@ export type StopAudioPlaybackInput = { playbackTargetId: string, };
 
 export type AudioPlaybackResult = { playing: boolean, durationMs: number | null, };
 
-export type IntegrationId = "cursor" | "vscode" | "browser" | "kitty" | "shell";
+export type IntegrationId = "cursor" | "vscode" | "browser" | "kitty" | "shell" | "gnome";
 
-export type IntegrationStatus = { id: IntegrationId, name: string, description: string, detected: boolean, installed: boolean, details: string | null, };
+export type GnomeActivationFilesStatus = "absent" | "owned" | "changed" | "pending" | "unavailable";
+
+export type GnomeConnectionStatus = "connected" | "disconnected" | "busy" | "unavailable";
+
+export type GnomeIntegrationEvidence = { files: GnomeActivationFilesStatus, connection: GnomeConnectionStatus, canInstall: boolean, };
+
+export type IntegrationStatus = { id: IntegrationId, name: string, description: string, detected: boolean, installed: boolean, details: string | null, native?: GnomeIntegrationEvidence, };
 
 export type InstallIntegrationInput = { id: IntegrationId, };
 
