@@ -214,6 +214,9 @@ def run(module, preserved, executable, sdk, updated_module):
             with simulated_manager(root, "loaded", sdk, action_environment):
                 subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
                                 "--test-threads=1"], env=action_environment, check=True, timeout=8)
+                action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "inspect-retired"
+                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                "--test-threads=1"], env=action_environment, check=True, timeout=8)
             assert not (root / "state/launcher-v1").exists()
             assert not (root / "state/installation-v1.json").exists()
             assert not (root / "units/gnome-terminal-server.service.d/90-lyn-native.conf").exists()
@@ -221,7 +224,8 @@ def run(module, preserved, executable, sdk, updated_module):
             poller = select.poll()
             poller.register(pin, select.POLLIN)
             assert not poller.poll(0) and server.poll() is None
-            print("PASS: activation removal retains both modules and does not restart or deactivate the live private server", flush=True)
+            assert (root / "state/uninstall-retired-v1.json").is_file()
+            print("PASS: activation removal retains both modules and persistent authority for the exact cached manager definition; live private server unchanged", flush=True)
         finally:
             child.close()
             if server is not None:

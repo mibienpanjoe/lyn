@@ -173,6 +173,7 @@ impl ExistingActivation {
     }
 
     fn recheck(&self, paths: &Paths) -> io::Result<()> {
+        paths.require_no_retirement()?;
         paths.recheck_activation(&self.state, &self.target)?;
         self.owned.recheck()
     }
@@ -294,7 +295,13 @@ fn remove_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result<Removed,
     owned_definition(service, &active.owned, Stage::Applying)?;
     let applying = |error| failure(Stage::Applying, Cause::Io(error));
     active.recheck(paths).map_err(applying)?;
-    transaction.rollback().map_err(applying)?;
+    transaction
+        .retire_activation(
+            &paths.state,
+            active.owned.module_digest(),
+            active.owned.previous_module(),
+        )
+        .map_err(applying)?;
     let verifying = |error| failure(Stage::Verifying, Cause::Io(error));
     paths
         .recheck_activation(&active.state, &active.target)
@@ -302,6 +309,10 @@ fn remove_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result<Removed,
     if paths.inspect().map_err(verifying)? != ActivationFilesState::Absent {
         return Err(failure(Stage::Verifying, Cause::Conflict));
     }
+    OwnedActivation::open_retired(&paths.state, &paths.target)
+        .map_err(verifying)?
+        .recheck()
+        .map_err(verifying)?;
     Ok(Removed)
 }
 
@@ -391,6 +402,13 @@ fn same_directory(fresh: &ManagedDirectory, pinned: &ManagedDirectory) -> io::Re
 }
 
 impl Paths {
+    fn require_no_retirement(&self) -> io::Result<()> {
+        match directories::open_private(&self.state, false) {
+            Ok(state) => state.require_absent(transaction::RETIRED_REMOVAL),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
     fn from_home(home: &Path) -> Result<Self, Failure> {
         let data = std::env::var_os("XDG_DATA_HOME");
         let config = std::env::var_os("XDG_CONFIG_HOME");
@@ -511,6 +529,9 @@ fn prepare_at(
     artifact: &Artifact,
     service: &mut impl ServiceChecks,
 ) -> Result<Prepared, Failure> {
+    paths
+        .require_no_retirement()
+        .map_err(|error| failure(Stage::Preflight, Cause::Io(error)))?;
     let manifest = serde_json::to_vec(&artifact.manifest)
         .map_err(|_| failure(Stage::Preflight, Cause::NoArtifact))?;
     artifact::format::validate(&manifest, artifact.bytes)
@@ -625,7 +646,15 @@ pub(super) fn recover_interrupted_private(
     let mut service = RealService {
         target: paths.target.clone(),
     };
-    remove_at(&paths, &mut service)?;
+    {
+        // Reset only this fixture's complete files; no production retirement.
+        let mut transaction = ActivationTransaction::open_complete(&active.state, &active.target)
+            .map_err(|error| failure(Stage::Preparing, Cause::Io(error)))?;
+        owned_definition(&mut service, &active.owned, Stage::Applying)?;
+        transaction
+            .rollback()
+            .map_err(|error| failure(Stage::Applying, Cause::Io(error)))?;
+    }
     {
         let mut transaction = ActivationTransaction::begin(&active.state, &active.target, rendered)
             .map_err(|error| failure(Stage::Preparing, Cause::Io(error)))?;
@@ -747,9 +776,12 @@ mod tests {
         let artifact = artifact();
         let mut checks = Checks::default();
         prepare_at(paths, &artifact, &mut checks).unwrap();
-        remove_at(paths, &mut checks).unwrap();
         let state = directories::open_private(&paths.state, false).unwrap();
         let target = directories::open_drop_ins(&paths.target, false).unwrap();
+        ActivationTransaction::open_complete(&state, &target)
+            .unwrap()
+            .rollback()
+            .unwrap();
         let module = paths
             .state
             .join("modules")
@@ -1169,6 +1201,98 @@ mod tests {
         assert_eq!((checks.stock_calls, checks.owned_calls), calls);
         assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Absent);
         assert!(paths.state.join("modules").is_dir());
+    }
+
+    #[test]
+    fn removal_retains_factory_authority_and_blocks_reinstall_until_manager_sync() {
+        let (_root, paths) = fixture();
+        let artifact = artifact();
+        let mut checks = Checks::default();
+        prepare_at(&paths, &artifact, &mut checks).unwrap();
+        let expected = OwnedActivation::open(&paths.state, &paths.target)
+            .unwrap()
+            .module_path()
+            .to_owned();
+        remove_at(&paths, &mut checks).unwrap();
+        let retired = OwnedActivation::open_retired(&paths.state, &paths.target).unwrap();
+        assert_eq!(retired.module_path(), expected);
+        retired.recheck().unwrap();
+        let calls = (checks.stock_calls, checks.owned_calls);
+        assert!(prepare_at(&paths, &artifact, &mut checks).is_err());
+        assert_eq!((checks.stock_calls, checks.owned_calls), calls);
+        assert!(!paths.state.join(transaction::LAUNCHER).exists());
+        assert!(!paths.target.join(transaction::DROP_IN).exists());
+    }
+
+    #[test]
+    fn retired_authority_refuses_changed_payload_namespace_and_recreated_roles() {
+        for kind in ["payload", "namespace", "role", "pending", "schema"] {
+            let (_root, paths) = fixture();
+            let mut checks = Checks::default();
+            prepare_at(&paths, &artifact(), &mut checks).unwrap();
+            remove_at(&paths, &mut checks).unwrap();
+            let retired = OwnedActivation::open_retired(&paths.state, &paths.target).unwrap();
+            let record = paths.state.join(transaction::RETIRED_REMOVAL);
+            match kind {
+                "payload" | "schema" => {
+                    let mut json: serde_json::Value =
+                        serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
+                    if kind == "payload" {
+                        json["activation"]["digest"] = "b".repeat(64).into();
+                    } else {
+                        json["unexpected"] = true.into();
+                    }
+                    fs::write(&record, serde_json::to_vec(&json).unwrap()).unwrap();
+                }
+                "namespace" => {
+                    fs::rename(&paths.target, paths.target.with_extension("old")).unwrap();
+                    fs::create_dir(&paths.target).unwrap();
+                    fs::set_permissions(&paths.target, fs::Permissions::from_mode(0o700)).unwrap();
+                }
+                "pending" => {
+                    fs::write(paths.state.join("installation-pending-v1.json"), b"{}").unwrap()
+                }
+                _ => fs::write(paths.state.join(transaction::LAUNCHER), b"foreign").unwrap(),
+            }
+            assert!(retired.recheck().is_err(), "{kind}");
+            assert!(
+                OwnedActivation::open_retired(&paths.state, &paths.target).is_err(),
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn retirement_is_representable_for_long_quote_heavy_supported_paths() {
+        let (root, mut paths) = fixture();
+        let mut state = root.path().to_owned();
+        for _ in 0..14 {
+            state.push("'".repeat(220));
+        }
+        paths.state = state.join("state");
+        let mut checks = Checks::default();
+        prepare_at(&paths, &artifact(), &mut checks).unwrap();
+        let launcher = fs::read_to_string(paths.state.join(transaction::LAUNCHER)).unwrap();
+        let drop_in = fs::read_to_string(paths.target.join(transaction::DROP_IN)).unwrap();
+        assert!(launcher.len() <= super::super::managed::MAX_CONTENT);
+        assert!(drop_in.len() <= super::super::managed::MAX_CONTENT);
+        // Duplicating these valid texts would exceed the shared journal cap.
+        let duplicated_length = serde_json::to_vec(&(launcher, drop_in)).unwrap().len();
+        assert!(
+            duplicated_length > super::super::managed::MAX_CONTENT,
+            "{duplicated_length}"
+        );
+        remove_at(&paths, &mut checks).unwrap();
+        assert!(
+            fs::read(paths.state.join(transaction::RETIRED_REMOVAL))
+                .unwrap()
+                .len()
+                < 4096
+        );
+        OwnedActivation::open_retired(&paths.state, &paths.target)
+            .unwrap()
+            .recheck()
+            .unwrap();
     }
 
     #[test]

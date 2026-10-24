@@ -89,6 +89,26 @@ impl Receipt {
         Ok(())
     }
 
+    pub(super) fn check_directory(&self, directory: &ManagedDirectory) -> io::Result<()> {
+        self.validate()?;
+        directory.check()?;
+        let metadata = directory.directory.metadata()?;
+        if (metadata.dev(), metadata.ino()) != (self.directory_device, self.directory_inode) {
+            return Err(refused());
+        }
+        Ok(())
+    }
+
+    pub(super) fn check_content(&self, bytes: &[u8]) -> io::Result<()> {
+        self.validate()?;
+        if bytes.len() as u64 != self.length
+            || <[u8; 32]>::from(Sha256::digest(bytes)) != self.sha256
+        {
+            return Err(refused());
+        }
+        Ok(())
+    }
+
     pub(super) fn decode(bytes: &[u8]) -> io::Result<Self> {
         if bytes.len() > MAX_CONTENT {
             return Err(refused());

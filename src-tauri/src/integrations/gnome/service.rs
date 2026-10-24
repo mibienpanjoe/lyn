@@ -113,6 +113,22 @@ fn policy_for(
     Ok((fragment, state))
 }
 
+fn retired_policy(
+    properties: &Properties,
+    paths: (&str, &str),
+) -> Result<(String, DefinitionState)> {
+    let (fragment, state) = policy_for(properties, Some(paths))?;
+    let starts: Vec<Exec> = value(properties, "ExecStart")?;
+    if starts[0].0 == SERVER
+        && starts[0].1 == [SERVER]
+        && value::<Vec<String>>(properties, "DropInPaths")?.is_empty()
+        && !value::<bool>(properties, "NeedDaemonReload")?
+    {
+        return Ok((fragment, DefinitionState::Stock));
+    }
+    Ok((fragment, state))
+}
+
 struct Budget {
     deadline: Instant,
     cancel: gio::Cancellable,
@@ -424,7 +440,10 @@ fn inspect_address_for(
         .get::<(glib::variant::ObjectPath,)>()
         .ok_or(ServiceRefusal::Unsupported)?;
     let first = properties(&connection, &budget, &manager, path.as_str())?;
-    let (fragment, definition) = policy_for(&first, owned.map(OwnedActivation::paths))?;
+    let (fragment, definition) = match owned {
+        Some(owned) if owned.is_retired() => retired_policy(&first, owned.paths())?,
+        _ => policy_for(&first, owned.map(OwnedActivation::paths))?,
+    };
     let fragment = match fragment.as_str() {
         "/usr/lib/systemd/user/gnome-terminal-server.service" => {
             "/usr/lib/systemd/user/gnome-terminal-server.service"
@@ -609,6 +628,43 @@ mod tests {
                 "wrong type {name}"
             );
         }
+    }
+
+    #[test]
+    fn retired_authority_distinguishes_stock_from_exact_cached_definition() {
+        let paths = (
+            "/private/state/launcher-v1",
+            "/private/units/90-lyn-native.conf",
+        );
+        let mut properties = reference();
+        assert_eq!(
+            retired_policy(&properties, paths).unwrap().1,
+            DefinitionState::Stock
+        );
+        properties.insert("NeedDaemonReload", true.to_variant());
+        assert_eq!(
+            retired_policy(&properties, paths).unwrap().1,
+            DefinitionState::NeedsReload
+        );
+        let mut starts = value::<Vec<Exec>>(&properties, "ExecStart").unwrap();
+        starts[0].0 = paths.0.into();
+        starts[0].1 = vec![paths.0.into()];
+        properties.insert("ExecStart", starts.to_variant());
+        properties.insert("DropInPaths", vec![paths.1.to_owned()].to_variant());
+        assert_eq!(
+            retired_policy(&properties, paths).unwrap().1,
+            DefinitionState::NeedsReload
+        );
+        properties.insert("NeedDaemonReload", false.to_variant());
+        assert_eq!(
+            retired_policy(&properties, paths).unwrap().1,
+            DefinitionState::ManagedLoaded
+        );
+        properties.insert("DropInPaths", vec!["/foreign.conf".to_owned()].to_variant());
+        assert_eq!(
+            retired_policy(&properties, paths),
+            Err(ServiceRefusal::Unsupported)
+        );
     }
 
     #[test]

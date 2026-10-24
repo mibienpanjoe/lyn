@@ -6,7 +6,7 @@ use super::super::{
     directories,
     managed::ManagedDirectory,
     render_activation_with_previous,
-    transaction::{DROP_IN, InstallSnapshot, LAUNCHER, PinnedActivation},
+    transaction::{DROP_IN, InstallSnapshot, LAUNCHER, PinnedActivation, RetirementSnapshot},
 };
 use std::{
     fs, io,
@@ -29,6 +29,7 @@ pub(in crate::integrations::gnome) struct OwnedActivation {
 enum ActivationEvidence {
     Complete(PinnedActivation),
     Installing(InstallSnapshot),
+    Retired(RetirementSnapshot),
 }
 
 impl ActivationEvidence {
@@ -36,6 +37,7 @@ impl ActivationEvidence {
         match self {
             Self::Complete(files) => (&files.launcher.content, &files.drop_in.content),
             Self::Installing(files) => (&files.launcher.content, &files.drop_in.content),
+            Self::Retired(files) => files.contents(),
         }
     }
 
@@ -43,6 +45,7 @@ impl ActivationEvidence {
         match self {
             Self::Complete(files) => files.recheck(state, target),
             Self::Installing(files) => files.recheck(state, target),
+            Self::Retired(files) => files.recheck(state, target),
         }
     }
 }
@@ -74,6 +77,21 @@ impl OwnedActivation {
         let target = directories::open_drop_ins(target_path, false)?;
         let files = ActivationEvidence::Installing(InstallSnapshot::open(&state, &target)?);
         Self::from_files(state_path, target_path, state, target, files)
+    }
+
+    pub(in crate::integrations::gnome) fn open_retired(
+        state_path: &Path,
+        target_path: &Path,
+    ) -> io::Result<Self> {
+        let state = directories::open_private(state_path, false)?;
+        let target = directories::open_drop_ins(target_path, false)?;
+        let files =
+            ActivationEvidence::Retired(RetirementSnapshot::open(&state, &target, state_path)?);
+        Self::from_files(state_path, target_path, state, target, files)
+    }
+
+    pub(super) fn is_retired(&self) -> bool {
+        matches!(&self.files, ActivationEvidence::Retired(_))
     }
 
     fn from_files(
@@ -189,6 +207,7 @@ impl OwnedActivation {
                 files.drop_in.file.metadata().map(Some)
             }
             ActivationEvidence::Installing(_) => Ok(None),
+            ActivationEvidence::Retired(_) => Ok(None),
         }
     }
 

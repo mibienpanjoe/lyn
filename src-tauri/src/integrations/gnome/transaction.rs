@@ -9,6 +9,7 @@ mod update;
 pub(super) use inspection::PinnedActivation;
 pub(super) use inspection::{ActivationFilesState, inspect_activation_files};
 pub(super) use recovery::InstallSnapshot;
+pub(super) use removal::{RETIRED_REMOVAL, RetirementSnapshot};
 
 use super::{
     RenderedActivation,
@@ -116,6 +117,7 @@ impl<'a> ActivationTransaction<'a> {
         state.require_absent(MANIFEST)?;
         state.require_absent(recovery::PENDING_INSTALL)?;
         state.require_absent(removal::PENDING_REMOVAL)?;
+        state.require_absent(removal::RETIRED_REMOVAL)?;
         state.require_absent(update::CLEANUP_PENDING)?;
         state.require_absent(update::PRECOMMIT_PENDING)?;
         state.require_absent(update::COMPENSATION_PENDING)?;

@@ -2,14 +2,63 @@
 
 use super::{ActivationTransaction, DROP_IN, LAUNCHER, MANIFEST, Manifest, Phase, Place, refused};
 use crate::integrations::gnome::{
+    RenderedActivation,
+    artifact::format,
     lock::InstallationLock,
     managed::{ManagedDirectory, OwnedFile, PublishFailure},
     ownership::Receipt,
+    render_activation_with_previous,
 };
 use serde::{Deserialize, Serialize};
-use std::{io, os::unix::fs::MetadataExt};
+use std::{
+    io,
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
+};
 
 pub(super) const PENDING_REMOVAL: &str = "uninstall-pending-v1.json";
+pub(in crate::integrations::gnome) const RETIRED_REMOVAL: &str = "uninstall-retired-v1.json";
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActivationReference {
+    digest: String,
+    previous: Option<String>,
+}
+
+impl ActivationReference {
+    fn validate(&self) -> io::Result<()> {
+        let digest = |value: &str| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        };
+        if !digest(&self.digest)
+            || self
+                .previous
+                .as_ref()
+                .is_some_and(|previous| !digest(previous) || previous == &self.digest)
+        {
+            return Err(refused());
+        }
+        Ok(())
+    }
+
+    fn render(&self, state_path: &Path) -> io::Result<RenderedActivation> {
+        self.validate()?;
+        let module = state_path
+            .join("modules")
+            .join(&self.digest)
+            .join(format::MODULE_NAME);
+        render_activation_with_previous(
+            &module,
+            &state_path.join(LAUNCHER),
+            self.previous.as_deref(),
+        )
+        .map_err(|_| refused())
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,6 +67,8 @@ struct Removal {
     launcher: Receipt,
     drop_in: Receipt,
     manifest: Receipt,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    activation: Option<ActivationReference>,
 }
 
 impl Removal {
@@ -25,14 +76,28 @@ impl Removal {
         self.launcher.validate()?;
         self.drop_in.validate()?;
         self.manifest.validate()?;
-        if self.version != 1
+        if !matches!((self.version, &self.activation), (1, None) | (2, Some(_)))
             || !self.launcher.is_for(LAUNCHER, 0o700)
             || !self.drop_in.is_for(DROP_IN, 0o600)
             || !self.manifest.is_for(MANIFEST, 0o600)
         {
             return Err(refused());
         }
+        if let Some(reference) = &self.activation {
+            reference.validate()?;
+        }
         Ok(())
+    }
+
+    fn render_retired(&self, state_path: &Path) -> io::Result<RenderedActivation> {
+        let rendered = self
+            .activation
+            .as_ref()
+            .ok_or_else(refused)?
+            .render(state_path)?;
+        self.launcher.check_content(rendered.launcher.as_bytes())?;
+        self.drop_in.check_content(rendered.drop_in.as_bytes())?;
+        Ok(rendered)
     }
 
     fn check_manifest(&self, file: &OwnedFile) -> io::Result<()> {
@@ -59,11 +124,63 @@ fn no_other_intents(state: &ManagedDirectory) -> io::Result<()> {
     Ok(())
 }
 
+pub(in crate::integrations::gnome) struct RetirementSnapshot {
+    record: OwnedFile,
+    rendered: RenderedActivation,
+    state_path: PathBuf,
+}
+
+impl RetirementSnapshot {
+    pub(in crate::integrations::gnome) fn open(
+        state: &ManagedDirectory,
+        target: &ManagedDirectory,
+        state_path: &Path,
+    ) -> io::Result<Self> {
+        no_other_intents(state)?;
+        state.require_absent(PENDING_REMOVAL)?;
+        state.require_absent(LAUNCHER)?;
+        state.require_absent(MANIFEST)?;
+        target.require_absent(DROP_IN)?;
+        let record = state.read_state(RETIRED_REMOVAL)?;
+        let body: Removal = serde_json::from_slice(&record.content).map_err(|_| refused())?;
+        body.validate()?;
+        if body.version != 2 {
+            return Err(refused());
+        }
+        body.launcher.check_directory(state)?;
+        body.manifest.check_directory(state)?;
+        body.drop_in.check_directory(target)?;
+        let rendered = body.render_retired(state_path)?;
+        Ok(Self {
+            record,
+            rendered,
+            state_path: state_path.into(),
+        })
+    }
+
+    pub(in crate::integrations::gnome) fn contents(&self) -> (&[u8], &[u8]) {
+        (
+            self.rendered.launcher.as_bytes(),
+            self.rendered.drop_in.as_bytes(),
+        )
+    }
+
+    pub(in crate::integrations::gnome) fn recheck(
+        &self,
+        state: &ManagedDirectory,
+        target: &ManagedDirectory,
+    ) -> io::Result<()> {
+        state.verify(&self.record)?;
+        Self::open(state, target, &self.state_path)?;
+        state.verify(&self.record)
+    }
+}
+
 fn finish(
     state: &ManagedDirectory,
     target: &ManagedDirectory,
     lock: &InstallationLock<'_>,
-    journal: &OwnedFile,
+    journal: &mut OwnedFile,
     checkpoint: impl Fn(u8) -> io::Result<()>,
 ) -> io::Result<()> {
     lock.check()?;
@@ -71,6 +188,18 @@ fn finish(
     state.verify(journal)?;
     let body: Removal = serde_json::from_slice(&journal.content).map_err(|_| refused())?;
     body.validate()?;
+    if journal.name.to_bytes() == RETIRED_REMOVAL.as_bytes() {
+        if body.version != 2 {
+            return Err(refused());
+        }
+        state.require_absent(PENDING_REMOVAL)?;
+        state.require_absent(LAUNCHER)?;
+        state.require_absent(MANIFEST)?;
+        target.require_absent(DROP_IN)?;
+        state.sync_directory()?;
+        return target.sync_directory();
+    }
+    state.require_absent(RETIRED_REMOVAL)?;
     // Missing files may have been removed only after this durable authority.
     // Every remaining name is checked before any subsequent deletion.
     let mut files = Vec::new();
@@ -102,7 +231,13 @@ fn finish(
     state.sync_directory()?;
     target.sync_directory()?;
     lock.check()?;
-    state.remove(journal)
+    if body.activation.is_some() {
+        state
+            .move_to_unoccupied(journal, RETIRED_REMOVAL)?
+            .durability
+    } else {
+        state.remove(journal)
+    }
 }
 
 pub(super) fn recover_removal(
@@ -111,7 +246,7 @@ pub(super) fn recover_removal(
     lock: &InstallationLock<'_>,
 ) -> io::Result<bool> {
     lock.check()?;
-    let journal = match state.read_state(PENDING_REMOVAL) {
+    let mut journal = match state.read_state(PENDING_REMOVAL) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if super::pending(state, LAUNCHER)?
@@ -133,18 +268,46 @@ pub(super) fn recover_removal(
         }
         Err(error) => return Err(error),
     };
-    finish(state, target, lock, &journal, |_| Ok(()))?;
+    let body: Removal = serde_json::from_slice(&journal.content).map_err(|_| refused())?;
+    body.validate()?;
+    // V2 needs the internally resolved factory path and hash reconstruction.
+    // The generic filesystem resume API has no such authority.
+    if body.version != 1 {
+        return Err(refused());
+    }
+    finish(state, target, lock, &mut journal, |_| Ok(()))?;
     Ok(true)
 }
 
 impl ActivationTransaction<'_> {
     pub(super) fn remove_complete(&mut self) -> io::Result<()> {
+        self.remove_complete_kind(None)
+    }
+
+    pub(in crate::integrations::gnome) fn retire_activation(
+        &mut self,
+        state_path: &Path,
+        digest: &str,
+        previous: Option<&str>,
+    ) -> io::Result<()> {
+        let reference = ActivationReference {
+            digest: digest.into(),
+            previous: previous.map(str::to_owned),
+        };
+        self.remove_complete_kind(Some((state_path, &reference)))
+    }
+
+    fn remove_complete_kind(
+        &mut self,
+        retain: Option<(&Path, &ActivationReference)>,
+    ) -> io::Result<()> {
         self.lock.check()?;
         if self.phase == Phase::Complete {
             if self.files.len() != 3 {
                 return Err(refused());
             }
             no_other_intents(self.state)?;
+            self.state.require_absent(RETIRED_REMOVAL)?;
             self.state.require_absent(PENDING_REMOVAL)?;
             for (place, file) in &self.files {
                 self.directory(*place).verify(file)?;
@@ -154,12 +317,16 @@ impl ActivationTransaction<'_> {
                 self.stages.pop();
             }
             let body = Removal {
-                version: 1,
+                version: if retain.is_some() { 2 } else { 1 },
                 launcher: Receipt::record(self.state, &self.files[0].1)?,
                 drop_in: Receipt::record(self.drop_ins, &self.files[1].1)?,
                 manifest: Receipt::record(self.state, &self.files[2].1)?,
+                activation: retain.map(|(_, reference)| reference.clone()),
             };
             body.validate()?;
+            if let Some((state_path, _)) = retain {
+                body.render_retired(state_path)?;
+            }
             body.check_manifest(&self.files[2].1)?;
             let bytes = serde_json::to_vec(&body).map_err(io::Error::other)?;
             let (journal, result) = match self.state.publish(PENDING_REMOVAL, &bytes, false) {
@@ -182,8 +349,15 @@ impl ActivationTransaction<'_> {
             result?;
             self.removal_checkpoint(12)?;
         }
-        let journal = self.removal_record.as_ref().ok_or_else(refused)?;
+        #[cfg(test)]
+        let stop_after = self.stop_after;
+        let journal = self.removal_record.as_mut().ok_or_else(refused)?;
         if journal.file.metadata()?.nlink() == 0 {
+            let body: Removal = serde_json::from_slice(&journal.content).map_err(|_| refused())?;
+            body.validate()?;
+            if body.version != 1 {
+                return Err(refused());
+            }
             // Retirement may have unlinked successfully but failed to sync.
             self.state.require_absent(PENDING_REMOVAL)?;
             no_other_intents(self.state)?;
@@ -194,7 +368,17 @@ impl ActivationTransaction<'_> {
             self.drop_ins.sync_directory()?;
         } else {
             finish(self.state, self.drop_ins, &self.lock, journal, |point| {
-                self.removal_checkpoint(point)
+                #[cfg(test)]
+                if let Some((stop, abrupt)) = stop_after {
+                    if point == stop {
+                        if abrupt {
+                            std::process::exit(77);
+                        }
+                        return Err(io::Error::other("private removal checkpoint"));
+                    }
+                }
+                let _ = point;
+                Ok(())
             })?;
         }
         self.removal_record = None;
@@ -222,6 +406,118 @@ mod tests {
     use super::super::tests::fixture;
     use super::*;
     use std::fs;
+
+    fn retirement_fixture() -> (
+        tempfile::TempDir,
+        ManagedDirectory,
+        ManagedDirectory,
+        RenderedActivation,
+    ) {
+        let (root, state, target, _) = fixture();
+        let reference = ActivationReference {
+            digest: "a".repeat(64),
+            previous: None,
+        };
+        let rendered = reference.render(&root.path().join("state")).unwrap();
+        (root, state, target, rendered)
+    }
+
+    fn retire(transaction: &mut ActivationTransaction<'_>, root: &Path) -> io::Result<()> {
+        transaction.retire_activation(&root.join("state"), &"a".repeat(64), None)
+    }
+
+    #[test]
+    fn retirement_preserves_the_same_journal_inode_and_rechecks_absence() {
+        let (root, state, target, rendered) = retirement_fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        transaction.stop_after = Some((12, false));
+        assert!(retire(&mut transaction, root.path()).is_err());
+        let original_inode = fs::metadata(root.path().join("state").join(PENDING_REMOVAL))
+            .unwrap()
+            .ino();
+        transaction.stop_after = None;
+        retire(&mut transaction, root.path()).unwrap();
+        let retired =
+            RetirementSnapshot::open(&state, &target, &root.path().join("state")).unwrap();
+        assert_eq!(
+            retired.record.file.metadata().unwrap().ino(),
+            original_inode
+        );
+        retired.recheck(&state, &target).unwrap();
+        assert!(!root.path().join("state").join(PENDING_REMOVAL).exists());
+        fs::write(root.path().join("drop-ins").join(DROP_IN), b"foreign").unwrap();
+        assert!(retired.recheck(&state, &target).is_err());
+    }
+
+    #[test]
+    fn retirement_rename_sync_failure_retries_the_moved_lease() {
+        let (root, state, target, rendered) = retirement_fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        transaction.stop_after = Some((15, false));
+        assert!(retire(&mut transaction, root.path()).is_err());
+        transaction.stop_after = None;
+        state.fail_directory_sync_after(2);
+        assert!(retire(&mut transaction, root.path()).is_err());
+        assert!(root.path().join("state").join(RETIRED_REMOVAL).is_file());
+        assert!(!root.path().join("state").join(PENDING_REMOVAL).exists());
+        state.fail_directory_sync(false);
+        retire(&mut transaction, root.path()).unwrap();
+        RetirementSnapshot::open(&state, &target, &root.path().join("state"))
+            .unwrap()
+            .recheck(&state, &target)
+            .unwrap();
+    }
+
+    #[test]
+    fn retirement_refuses_an_occupied_record_before_removing_activation() {
+        let (root, state, target, rendered) = retirement_fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        fs::write(root.path().join("state").join(RETIRED_REMOVAL), b"unknown").unwrap();
+        assert!(retire(&mut transaction, root.path()).is_err());
+        assert!(root.path().join("state").join(LAUNCHER).exists());
+        assert!(root.path().join("drop-ins").join(DROP_IN).exists());
+        assert!(!root.path().join("state").join(PENDING_REMOVAL).exists());
+    }
+
+    #[test]
+    fn retirement_cannot_accept_an_unlinked_authority_as_a_finished_move() {
+        let (root, state, target, rendered) = retirement_fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        transaction.stop_after = Some((15, false));
+        assert!(retire(&mut transaction, root.path()).is_err());
+        fs::remove_file(root.path().join("state").join(PENDING_REMOVAL)).unwrap();
+        transaction.stop_after = None;
+        assert!(retire(&mut transaction, root.path()).is_err());
+        assert!(!root.path().join("state").join(RETIRED_REMOVAL).exists());
+    }
+
+    #[test]
+    fn retirement_generic_resume_requires_reconstruction_context_before_deleting() {
+        for edit in [false, true] {
+            let (root, state, target, rendered) = retirement_fixture();
+            let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+            transaction.apply().unwrap();
+            transaction.stop_after = Some((12, false));
+            assert!(retire(&mut transaction, root.path()).is_err());
+            drop(transaction);
+            if edit {
+                let path = root.path().join("state").join(PENDING_REMOVAL);
+                let mut body: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                body["activation"]["digest"] = "b".repeat(64).into();
+                fs::write(path, serde_json::to_vec(&body).unwrap()).unwrap();
+            }
+            assert!(ActivationTransaction::resume(&state, &target).is_err());
+            assert!(root.path().join("state").join(LAUNCHER).is_file());
+            assert!(root.path().join("state").join(MANIFEST).is_file());
+            assert!(root.path().join("drop-ins").join(DROP_IN).is_file());
+            assert!(!root.path().join("state").join(RETIRED_REMOVAL).exists());
+        }
+    }
 
     #[test]
     fn interrupted_uninstall_resumes_after_a_successful_unlink_with_failed_sync() {

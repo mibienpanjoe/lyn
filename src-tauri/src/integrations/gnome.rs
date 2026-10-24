@@ -258,6 +258,17 @@ mod tests {
                 let result = coordinator::rollback_private(root).unwrap();
                 assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);
             }
+            "inspect-retired" => {
+                let owned = service::OwnedActivation::open_retired(
+                    &root.join("state"),
+                    &root.join("units/gnome-terminal-server.service.d"),
+                )
+                .unwrap();
+                assert_eq!(
+                    service::inspect_owned_service(&owned).unwrap(),
+                    service::DefinitionState::ManagedLoaded
+                );
+            }
             _ => panic!("unknown private file action"),
         }
     }

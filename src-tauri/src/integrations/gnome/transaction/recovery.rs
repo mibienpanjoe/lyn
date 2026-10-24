@@ -160,6 +160,7 @@ impl InstallSnapshot {
         drop_ins: &ManagedDirectory,
     ) -> io::Result<Self> {
         for name in [
+            super::removal::RETIRED_REMOVAL,
             super::removal::PENDING_REMOVAL,
             super::update::CLEANUP_PENDING,
             super::update::PRECOMMIT_PENDING,
