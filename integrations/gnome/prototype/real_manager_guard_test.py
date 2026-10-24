@@ -67,11 +67,11 @@ class Guards(unittest.TestCase):
 
     def test_symlink_is_preserved_without_following(self):
         root, fd = self.fixture()
-        (root / "outside").mkdir()
-        (root / "init.scope").symlink_to(root / "outside", target_is_directory=True)
-        with self.assertRaisesRegex(RuntimeError, "unknown"):
-            remove_children(fd, {})
-        self.assertTrue((root / "outside").is_dir())
+        outside, _ = self.fixture()
+        (outside / "preserved").write_text("untouched")
+        (root / "init.scope").symlink_to(outside, target_is_directory=True)
+        remove_children(fd, {})
+        self.assertEqual((outside / "preserved").read_text(), "untouched")
         self.assertTrue((root / "init.scope").is_symlink())
 
     def test_nonempty_child_is_not_recursively_removed(self):
