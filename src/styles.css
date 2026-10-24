@@ -1375,6 +1375,21 @@ kbd {
   flex: none;
 }
 
+.integration-card.native-integration {
+  grid-template-columns: 38px minmax(0, 1fr);
+}
+
+.native-integration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.native-integration-actions button {
+  white-space: normal;
+}
+
 .integration-action button {
   white-space: nowrap;
 }

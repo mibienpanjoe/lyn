@@ -3,6 +3,7 @@
 use std::path::Path;
 
 pub(crate) mod artifact;
+mod availability;
 mod coordinator;
 mod directories;
 mod lock;
@@ -318,6 +319,26 @@ mod tests {
                     result.activation.phase,
                     crate::contract::GnomeActivationPhase::AwaitingRemovalConfirmation
                 );
+            }
+            "uninstall" => {
+                let owned = service::OwnedActivation::open(
+                    &root.join("state"),
+                    &root.join("units/gnome-terminal-server.service.d"),
+                )
+                .unwrap();
+                let result = coordinator::manage_private(
+                    root,
+                    crate::contract::ManageGnomeActivationInput {
+                        action: crate::contract::GnomeManagementAction::Uninstall,
+                        expected_revision: owned.management_revision().unwrap(),
+                    },
+                )
+                .unwrap();
+                assert_eq!(
+                    result.activation.phase,
+                    crate::contract::GnomeActivationPhase::Absent
+                );
+                assert!(result.activation.revision.is_none());
             }
             "interrupt-remove" => {
                 coordinator::interrupt_removal_private(root).unwrap();

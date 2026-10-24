@@ -1,6 +1,6 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.17, 2026-10-24
+Version: v1.18, 2026-10-24
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
@@ -659,6 +659,7 @@ interface GnomeIntegrationEvidence {
   activation?: {
     phase: "absent" | "configured" | "installing" | "finishing_update" | "restoring_update" | "removing" | "awaiting_removal_confirmation" | "changed" | "unavailable";
     revision: string | null;
+    actions?: GnomeManagementAction[];
   };
 }
 interface IntegrationStatus {
@@ -676,17 +677,23 @@ The GNOME row keeps file ownership and admitted transport observations separate.
 
 The additive activation observation distinguishes recognized complete configuration, interrupted first installation, committed update cleanup, uncommitted restoration, removal and retained removal authority. Each recognized owned phase carries an opaque64-hex revision derived from its pinned authority file's identity/change time/content with a phase-specific domain; complete configuration preserves the existing rollback revision. It is a freshness marker for the same recorded configuration/intent, not a credential, a module version, an action permission or an atomic global snapshot. The same intent can retain its revision as recorded cleanup progresses. Absent/changed/unavailable observations have `revision:null`. An identical-byte replacement of the authority changes its fresh revision and invalidates a retained reader. Status creates no locks/directories, performs no manager/provider RPC or transaction recovery and never acknowledges removal. The UI uses localized phase text with legacy file-status fallback and does not display the revision. The separate `manage_gnome_activation` command below consumes an expected revision with authoritative checks; this metadata itself performs no mutation.
 
+The optional `actions` list contains advisory offers for the observed phase. Status checks retained modules through bounded read-only ownership/content validation, without locks, writes or manager RPC. Configured activation offers synchronization only with an intact current module, update only with a different valid embedded bundle as well, and rollback only with an intact recorded previous module; removal remains available with damaged module data. Recovery offers require an intact target module. Missing offers preserve legacy display without management buttons. Offers never replace authoritative action validation.
+
 ### `manage_gnome_activation`
 
 Library-only Linux command, registered through the command allowlist and the Library permission set, never the capture window. Runs on a blocking worker.
 
-**Input:** `{ action, expectedRevision }`, rejecting all additional fields. `expectedRevision` must be exactly64 lowercase hexadecimal characters obtained from recognized `native.activation` evidence. `action` is one of `update`, `rollback`, `remove`, `recover_install`, `finish_update`, `restore_update`, `recover_removal`, `synchronize`, `confirm_removal`. No paths, module/digest selector, process identity, first-install or terminal restart action is accepted. Update uses only the build-time embedded bundle; a build without one refuses before writes.
+**Input:** `{ action, expectedRevision }`, rejecting all additional fields. `expectedRevision` must be exactly64 lowercase hexadecimal characters obtained from recognized `native.activation` evidence. `action` is one of `update`, `rollback`, `remove`, `uninstall`, `recover_install`, `finish_update`, `restore_update`, `recover_removal`, `synchronize`, `confirm_removal`. No paths, module/digest selector, process identity, first-install or terminal restart action is accepted. Update uses only the build-time embedded bundle; a build without one refuses before writes.
 
 **Success:** `{ action, activation: GnomeActivationEvidence }` in the standard envelope. The coordinator completed the requested operation; `activation` is a subsequent read-only observation, not atomic with that effect and not proof of a running native module/capture. A retired removal may be synchronized/confirmed without an embedded bundle; a completed absent-record confirmation cannot reuse a retired revision.
 
 The expected revision is validated before service work and again under the same installation lock before mutation; update checks before module-store writes. Snapshot/inode continuity remains checked through callbacks and postflight, which inspects the new authority rather than comparing it to the displaced request revision. Synchronization checks the lock immediately before service entry and again after the final manager fence before `Manager.Reload`; acknowledgement checks it before unlink. No automatic retry, context/capture query or terminal restart occurs.
 
-**Errors:** malformed/unknown input or noncanonical revisions return `VALIDATION_ERROR`. Linux management refusals use `PERMISSION_DENIED` with one closed `details.state`: `stale_revision`, `artifact_unavailable`, `location_unavailable`, `configuration_changed`, `service_unavailable` or `configuration_unavailable`. Non-Linux use is refused. No raw OS error or private path is returned. Management failures are not automatically retryable: they may follow filesystem changes or an effective manager reload; refresh status before a new explicit action. First-install availability, action buttons and packaged/installed acceptance remain separate.
+`uninstall` composes strict removal (or pending-removal recovery), manager synchronization and retirement acknowledgement. The first transaction captures its retired revision while still holding its flock; acknowledgement consumes that exact token, never a later status revision. Already retired authority uses the supplied expected revision directly. Other pending phases refuse. The legacy `remove` action still stops at retirement. An error can leave retirement authority for a fresh explicit `confirm_removal`; modules and open terminals remain unchanged.
+
+Settings sends one explicit action with the displayed revision, disables competing controls, retires its cached offers and refreshes status after success or error. It never retries or chains actions automatically. A failed refresh keeps old offers disabled; a receipt whose phase/revision differs from the refreshed observation loses its success message. Native management errors use localized fixed text.
+
+**Errors:** malformed/unknown input or noncanonical revisions return `VALIDATION_ERROR`. Linux management refusals use `PERMISSION_DENIED` with one closed `details.state`: `stale_revision`, `artifact_unavailable`, `location_unavailable`, `configuration_changed`, `service_unavailable` or `configuration_unavailable`. Non-Linux use is refused. No raw OS error or private path is returned. Management failures are not automatically retryable: they may follow filesystem changes or an effective manager reload; refresh status before a new explicit action. First-install availability and packaged/installed acceptance remain separate.
 
 ### `install_integration`
 

@@ -8,7 +8,13 @@ import {
 import axe from 'axe-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppSettings, IntegrationStatus } from '../lib/ipc-types';
+import type {
+  AppSettings,
+  IntegrationStatus,
+  GnomeActivationPhase,
+  GnomeManagementAction,
+  ManageGnomeActivationResult,
+} from '../lib/ipc-types';
 import SettingsPanel from './SettingsPanel.svelte';
 import type { SpeechModelClient } from './model-client';
 import { SettingsCommandError, type SettingsClient } from './settings-client';
@@ -30,6 +36,32 @@ const initial: AppSettings = {
   localSpeechEnabled: false,
   language: 'english',
 };
+
+function nativeStatus(
+  phase: GnomeActivationPhase,
+  revision: string | null,
+  actions: GnomeManagementAction[],
+): IntegrationStatus {
+  return {
+    id: 'gnome',
+    name: 'GNOME Terminal',
+    description: 'Native context',
+    detected: true,
+    installed: false,
+    details: null,
+    native: {
+      files:
+        phase === 'configured'
+          ? 'owned'
+          : phase === 'absent'
+            ? 'absent'
+            : 'pending',
+      connection: 'disconnected',
+      canInstall: false,
+      activation: { phase, revision, actions },
+    },
+  };
+}
 
 function client(overrides: Partial<SettingsClient> = {}): SettingsClient {
   return {
@@ -433,6 +465,261 @@ describe('Settings', () => {
     expect(await screen.findByText('Connection busy')).toBeVisible();
     expect(screen.getByText(/Installation needs attention\./)).toBeVisible();
     expect(intClient.install).not.toHaveBeenCalled();
+    expect((await axe.run(container)).violations).toEqual([]);
+  });
+
+  it('uses one captured revision, blocks duplicate actions and refreshes after completion', async () => {
+    let finish!: (result: ManageGnomeActivationResult) => void;
+    const manage = vi.fn(
+      () =>
+        new Promise<ManageGnomeActivationResult>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([
+        nativeStatus('restoring_update', 'a'.repeat(64), ['restore_update']),
+      ])
+      .mockResolvedValueOnce([
+        nativeStatus('configured', 'b'.repeat(64), ['uninstall']),
+      ]);
+    const intClient: IntegrationClient = { list, manage, install: vi.fn() };
+    render(SettingsPanel, { client: client(), modelClient, intClient });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Restore configuration' }),
+    );
+    expect(manage).toHaveBeenCalledWith({
+      action: 'restore_update',
+      expectedRevision: 'a'.repeat(64),
+    });
+    const busy = screen.getByRole('button', { name: 'Working…' });
+    expect(busy).toBeDisabled();
+    await fireEvent.click(busy);
+    expect(manage).toHaveBeenCalledTimes(1);
+    finish({
+      action: 'restore_update',
+      activation: {
+        phase: 'configured',
+        revision: 'b'.repeat(64),
+        actions: ['uninstall'],
+      },
+    });
+    expect(
+      await screen.findByText(/Previous configuration restored/),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole('button', { name: 'Remove integration' }),
+    ).toBeEnabled();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(intClient.install).not.toHaveBeenCalled();
+  });
+
+  it('removes an integration with one compound request and no client-side continuation', async () => {
+    const manage = vi.fn().mockResolvedValue({
+      action: 'uninstall',
+      activation: { phase: 'absent', revision: null },
+    });
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([
+        nativeStatus('configured', 'a'.repeat(64), ['uninstall']),
+      ])
+      .mockResolvedValueOnce([nativeStatus('absent', null, [])]);
+    const install = vi.fn();
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient: { list, manage, install },
+    });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Remove integration' }),
+    );
+    expect(await screen.findByText(/Integration removed/)).toBeVisible();
+    expect(manage).toHaveBeenCalledTimes(1);
+    expect(manage).toHaveBeenCalledWith({
+      action: 'uninstall',
+      expectedRevision: 'a'.repeat(64),
+    });
+    expect(install).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Finish removal' })).toBeNull();
+  });
+
+  it('retires stale offers even when refresh fails and never replays the mutation', async () => {
+    const stale = new IntegrationCommandError({
+      code: 'PERMISSION_DENIED',
+      message: 'Do not display backend text',
+      retryable: false,
+      details: { state: 'stale_revision' },
+    });
+    const manage = vi
+      .fn()
+      .mockRejectedValueOnce(stale)
+      .mockResolvedValueOnce({
+        action: 'restore_update',
+        activation: { phase: 'configured', revision: 'c'.repeat(64) },
+      });
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([
+        nativeStatus('restoring_update', 'a'.repeat(64), ['restore_update']),
+      ])
+      .mockRejectedValueOnce(new Error('read failed'))
+      .mockResolvedValueOnce([
+        nativeStatus('restoring_update', 'b'.repeat(64), ['restore_update']),
+      ])
+      .mockResolvedValueOnce([nativeStatus('configured', 'c'.repeat(64), [])]);
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient: { list, manage, install: vi.fn() },
+    });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Restore configuration' }),
+    );
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    expect(
+      screen.queryByRole('button', { name: 'Restore configuration' }),
+    ).toBeNull();
+    expect(manage).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Do not display backend text')).toBeNull();
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Refresh integration statuses' }),
+    );
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Restore configuration' }),
+    );
+    expect(manage).toHaveBeenNthCalledWith(2, {
+      action: 'restore_update',
+      expectedRevision: 'b'.repeat(64),
+    });
+    expect(
+      await screen.findByText(/Previous configuration restored/),
+    ).toBeVisible();
+  });
+
+  it('does not claim success when the post-action observation changed', async () => {
+    const manage = vi.fn().mockResolvedValue({
+      action: 'restore_update',
+      activation: { phase: 'changed', revision: null },
+    });
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([
+        nativeStatus('restoring_update', 'a'.repeat(64), ['restore_update']),
+      ])
+      .mockResolvedValueOnce([nativeStatus('changed', null, [])]);
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient: { list, manage, install: vi.fn() },
+    });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Restore configuration' }),
+    );
+    expect(await screen.findByText(/configuration changed/)).toBeVisible();
+    expect(screen.queryByText(/Previous configuration restored/)).toBeNull();
+    expect(manage).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    nativeStatus('changed', null, []),
+    nativeStatus('configured', 'c'.repeat(64), ['uninstall']),
+  ])(
+    'retires a successful receipt when refresh observes another authority',
+    async (after) => {
+      const manage = vi.fn().mockResolvedValue({
+        action: 'restore_update',
+        activation: { phase: 'configured', revision: 'b'.repeat(64) },
+      });
+      const list = vi
+        .fn()
+        .mockResolvedValueOnce([
+          nativeStatus('restoring_update', 'a'.repeat(64), ['restore_update']),
+        ])
+        .mockResolvedValueOnce([after]);
+      render(SettingsPanel, {
+        client: client(),
+        modelClient,
+        intClient: { list, manage, install: vi.fn() },
+      });
+      await fireEvent.click(
+        await screen.findByRole('button', { name: 'Restore configuration' }),
+      );
+      expect(await screen.findByText(/configuration changed/)).toBeVisible();
+      expect(screen.queryByText(/Previous configuration restored/)).toBeNull();
+      expect(manage).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('localizes a failed post-action refresh in French instead of displaying backend text', async () => {
+    const manage = vi.fn().mockResolvedValue({
+      action: 'restore_update',
+      activation: { phase: 'configured', revision: 'b'.repeat(64) },
+    });
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([
+        nativeStatus('restoring_update', 'a'.repeat(64), ['restore_update']),
+      ])
+      .mockRejectedValueOnce(
+        new IntegrationCommandError({
+          code: 'INTERNAL_ERROR',
+          message: 'backend-only refresh failure',
+          retryable: false,
+          details: {},
+        }),
+      );
+    render(SettingsPanel, {
+      client: client({
+        get: vi.fn().mockResolvedValue({ ...initial, language: 'french' }),
+      }),
+      modelClient,
+      intClient: { list, manage, install: vi.fn() },
+    });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Restaurer la configuration' }),
+    );
+    expect(
+      await screen.findByText(/L’état n’a pas pu être actualisé/),
+    ).toBeVisible();
+    expect(screen.queryByText('backend-only refresh failure')).toBeNull();
+    expect(manage).toHaveBeenCalledTimes(1);
+  });
+
+  it('localizes native management errors in French and hides unsupported or invalid offers', async () => {
+    const manage = vi.fn().mockRejectedValue(
+      new IntegrationCommandError({
+        code: 'PERMISSION_DENIED',
+        message: 'backend-only text',
+        retryable: false,
+        details: { state: 'stale_revision' },
+      }),
+    );
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([
+        nativeStatus('restoring_update', 'a'.repeat(64), ['restore_update']),
+      ])
+      .mockResolvedValueOnce([
+        nativeStatus('configured', 'A'.repeat(64), ['uninstall', 'remove']),
+      ]);
+    const { container } = render(SettingsPanel, {
+      client: client({
+        get: vi.fn().mockResolvedValue({ ...initial, language: 'french' }),
+      }),
+      modelClient,
+      intClient: { list, manage, install: vi.fn() },
+    });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Restaurer la configuration' }),
+    );
+    expect(await screen.findByText(/La configuration a changé/)).toBeVisible();
+    expect(screen.queryByText('backend-only text')).toBeNull();
+    const card = screen
+      .getByText('GNOME Terminal')
+      .closest('.integration-card') as HTMLElement;
+    expect(within(card).queryByRole('button')).toBeNull();
     expect((await axe.run(container)).violations).toEqual([]);
   });
 

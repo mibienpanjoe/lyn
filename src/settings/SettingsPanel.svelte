@@ -13,6 +13,9 @@
     ContextProviderKind,
     IntegrationId,
     IntegrationStatus,
+    GnomeManagementAction,
+    GnomeActivationPhase,
+    GnomeActivationEvidence,
     LanguageSetting,
     SpeechModelStatus,
     ThemeSetting,
@@ -76,6 +79,9 @@
     Record<string, { success: boolean; message: string }>
   >({});
   let integrationRequestSeq = 0;
+  let managingGnomeAction = $state<GnomeManagementAction | null>(null);
+  let disposed = false;
+  let nativeManagementReadPending = false;
 
   const t = $derived(getTranslations(draft?.language ?? 'english'));
 
@@ -122,13 +128,15 @@
   });
 
   onDestroy(() => {
+    disposed = true;
+    integrationRequestSeq += 1;
     unsubscribeModel?.();
   });
 
   async function loadIntegrations() {
     if (!isLinux) {
       loadingIntegrations = false;
-      return;
+      return false;
     }
     const seq = ++integrationRequestSeq;
     loadingIntegrations = true;
@@ -138,17 +146,172 @@
       if (seq === integrationRequestSeq) {
         integrations = result;
         integrationError = null;
+        nativeManagementReadPending = false;
+        return true;
       }
+      return false;
     } catch (caught) {
       if (seq === integrationRequestSeq) {
-        integrationError =
-          caught instanceof IntegrationCommandError
+        integrationError = nativeManagementReadPending
+          ? t.gnomeManagementRefreshFailed
+          : caught instanceof IntegrationCommandError
             ? caught.message
             : t.integrationDiscoveryFailed;
       }
+      return false;
     } finally {
       if (seq === integrationRequestSeq) {
         loadingIntegrations = false;
+      }
+    }
+  }
+
+  const gnomeActionPhases: Partial<
+    Record<GnomeManagementAction, readonly GnomeActivationPhase[]>
+  > = {
+    update: ['configured'],
+    rollback: ['configured'],
+    synchronize: ['configured'],
+    uninstall: ['configured', 'removing'],
+    recover_install: ['installing'],
+    finish_update: ['finishing_update'],
+    restore_update: ['restoring_update'],
+    confirm_removal: ['awaiting_removal_confirmation'],
+  };
+
+  function refreshIntegrations() {
+    if (installingIntegrationId) return;
+    const { gnome: _oldNativeFeedback, ...otherFeedback } = integrationFeedback;
+    integrationFeedback = otherFeedback;
+    void loadIntegrations();
+  }
+
+  function gnomeActions(item: IntegrationStatus): GnomeManagementAction[] {
+    const evidence = item.native?.activation;
+    if (
+      !intClient.manage ||
+      !evidence?.revision ||
+      !/^[0-9a-f]{64}$/.test(evidence.revision) ||
+      !Array.isArray(evidence.actions)
+    )
+      return [];
+    return [...new Set(evidence.actions)].filter((action) =>
+      gnomeActionPhases[action]?.includes(evidence.phase),
+    );
+  }
+
+  function gnomeActionLabel(
+    item: IntegrationStatus,
+    action: GnomeManagementAction,
+  ) {
+    return action === 'uninstall' &&
+      item.native?.activation?.phase === 'removing'
+      ? t.gnomeManagementLabels.recover_removal
+      : t.gnomeManagementLabels[action];
+  }
+
+  async function manageGnome(
+    item: IntegrationStatus,
+    action: GnomeManagementAction,
+  ) {
+    const client = intClient;
+    const manage = client.manage;
+    const revision = item.native?.activation?.revision;
+    if (
+      !isLinux ||
+      installingIntegrationId ||
+      !manage ||
+      !revision ||
+      !gnomeActions(item).includes(action)
+    )
+      return;
+    installingIntegrationId = 'gnome';
+    managingGnomeAction = action;
+    nativeManagementReadPending = true;
+    integrationRequestSeq += 1;
+    loadingIntegrations = false;
+    let receipt: GnomeActivationEvidence | null = null;
+    try {
+      const result = await manage.call(client, {
+        action,
+        expectedRevision: revision,
+      });
+      if (disposed) return;
+      const expected =
+        action === 'uninstall' || action === 'confirm_removal'
+          ? 'absent'
+          : 'configured';
+      const success =
+        result.action === action &&
+        result.activation.phase === expected &&
+        (expected === 'absent' ||
+          /^[0-9a-f]{64}$/.test(result.activation.revision ?? ''));
+      if (success) receipt = result.activation;
+      integrationFeedback = {
+        ...integrationFeedback,
+        gnome: {
+          success,
+          message: success
+            ? t.gnomeManagementReceipts[action]
+            : t.gnomeManagementStale,
+        },
+      };
+    } catch (caught) {
+      if (!disposed)
+        integrationFeedback = {
+          ...integrationFeedback,
+          gnome: {
+            success: false,
+            message:
+              caught instanceof IntegrationCommandError &&
+              caught.appError.details.state === 'stale_revision'
+                ? t.gnomeManagementStale
+                : t.gnomeManagementFailed,
+          },
+        };
+    } finally {
+      if (!disposed) {
+        // A result or error can follow effects. Retire the old offer before
+        // refreshing; never reuse it if that read fails and never replay.
+        integrations = integrations.map((row) =>
+          row.id === 'gnome' && row.native?.activation
+            ? {
+                ...row,
+                native: {
+                  ...row.native,
+                  activation: {
+                    ...row.native.activation,
+                    revision: null,
+                    actions: [],
+                  },
+                },
+              }
+            : row,
+        );
+        const refreshed = await loadIntegrations();
+        if (refreshed && receipt && !disposed) {
+          const current = integrations.find((row) => row.id === 'gnome')?.native
+            ?.activation;
+          if (
+            current?.phase !== receipt.phase ||
+            current?.revision !== receipt.revision
+          ) {
+            integrationFeedback = {
+              ...integrationFeedback,
+              gnome: { success: false, message: t.gnomeManagementStale },
+            };
+          }
+        }
+        if (!refreshed && !disposed)
+          integrationFeedback = {
+            ...integrationFeedback,
+            gnome: {
+              success: false,
+              message: t.gnomeManagementRefreshFailed,
+            },
+          };
+        installingIntegrationId = null;
+        managingGnomeAction = null;
       }
     }
   }
@@ -543,8 +706,8 @@
               class="refresh-integrations-btn"
               title={t.refreshIntegrations}
               aria-label={t.refreshIntegrations}
-              disabled={loadingIntegrations}
-              onclick={() => loadIntegrations()}
+              disabled={loadingIntegrations || installingIntegrationId !== null}
+              onclick={refreshIntegrations}
             >
               <RefreshCwIcon
                 size={14}
@@ -563,13 +726,17 @@
                 <button
                   type="button"
                   class="secondary-action"
-                  onclick={() => loadIntegrations()}>{t.retry}</button
+                  onclick={refreshIntegrations}>{t.retry}</button
                 >
               </div>
             {:else}
               {#each integrations as item (item.id)}
                 {@const parsed = parseIntegrationName(item.name)}
-                <div class="integration-card" data-installed={item.installed}>
+                <div
+                  class="integration-card"
+                  class:native-integration={item.id === 'gnome'}
+                  data-installed={item.installed}
+                >
                   <div
                     class="integration-icon-wrap"
                     data-platform={item.id}
@@ -635,6 +802,11 @@
                         class="integration-feedback"
                         class:success={integrationFeedback[item.id].success}
                         class:failure={!integrationFeedback[item.id].success}
+                        role={item.id === 'gnome'
+                          ? integrationFeedback[item.id].success
+                            ? 'status'
+                            : 'alert'
+                          : undefined}
                       >
                         {integrationFeedback[item.id].message}
                       </div>
@@ -650,10 +822,28 @@
                             item.native?.files ?? 'unavailable'
                           ]}
                         {/if}
-                        {#if !item.native?.canInstall}
+                        {#if !item.native?.canInstall && (!item.native?.activation?.actions || item.native.activation.phase === 'absent')}
                           {t.gnomeInstallUnavailable}
                         {/if}
                       </div>
+                      {#if gnomeActions(item).length > 0}
+                        <div class="native-integration-actions">
+                          {#each gnomeActions(item) as action}
+                            <button
+                              type="button"
+                              class="secondary-action"
+                              class:quiet-danger={action === 'uninstall'}
+                              disabled={installingIntegrationId !== null ||
+                                loadingIntegrations}
+                              onclick={() => manageGnome(item, action)}
+                            >
+                              {managingGnomeAction === action
+                                ? t.gnomeManaging
+                                : gnomeActionLabel(item, action)}
+                            </button>
+                          {/each}
+                        </div>
+                      {/if}
                     {:else if !integrationFeedback[item.id] && item.details}
                       {@render renderDetails(item.details)}
                     {/if}

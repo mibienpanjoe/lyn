@@ -59,6 +59,7 @@ fn phase(phase: GnomeActivationPhase) -> GnomeActivationEvidence {
     GnomeActivationEvidence {
         phase,
         revision: None,
+        actions: None,
     }
 }
 
@@ -73,9 +74,11 @@ pub(super) fn activation(
         result: io::Result<OwnedActivation>,
     ) -> io::Result<GnomeActivationEvidence> {
         let owned = result?;
+        let actions = super::availability::actions(&owned, phase);
         Ok(GnomeActivationEvidence {
             phase,
             revision: Some(owned.management_revision()?),
+            actions: Some(actions),
         })
     }
     let result = match files {

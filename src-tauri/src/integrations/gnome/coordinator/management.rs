@@ -38,6 +38,30 @@ fn manage_at(
         Action::Remove => {
             remove_at(paths, &mut service)?;
         }
+        Action::Uninstall => {
+            let removed = match paths
+                .inspect()
+                .map_err(|error| failure(Stage::Preflight, Cause::Io(error)))?
+            {
+                ActivationFilesState::Owned => remove_at(paths, &mut service)?,
+                ActivationFilesState::Pending => recover_removal_at(paths, &mut service)?,
+                ActivationFilesState::Absent => {
+                    acknowledge_removal_at_revision(paths, Some(&service.expected))?;
+                    let files = paths.inspect().unwrap_or(ActivationFilesState::Unavailable);
+                    return Ok(ManageGnomeActivationResult {
+                        action: input.action,
+                        activation: status::activation(&paths.state, &paths.target, files),
+                    });
+                }
+                _ => return Err(failure(Stage::Preflight, Cause::Conflict)),
+            };
+            // Captured while removal still held its lock, never obtained from
+            // the later advisory status read or an unrelated new authority.
+            let retired = removed
+                .revision
+                .ok_or_else(|| failure(Stage::Applying, Cause::Conflict))?;
+            acknowledge_removal_at_revision(paths, Some(&retired))?;
+        }
         Action::RecoverInstall => {
             recover_install_at(paths, &mut service)?;
         }

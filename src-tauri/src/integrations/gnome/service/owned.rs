@@ -271,6 +271,24 @@ impl OwnedActivation {
         Ok(revision)
     }
 
+    /// Read-only prerequisite for an action offer, never an installation claim.
+    pub(in crate::integrations::gnome) fn retained_module_available(&self, digest: &str) -> bool {
+        let read = || -> io::Result<()> {
+            self.recheck()?;
+            let modules = directories::open_private_child(&self.state, "modules", false)?;
+            let stored = super::super::module_store::read_existing(&modules, digest)?;
+            super::super::module_store::verify_existing(&modules, &stored)?;
+            let current = directories::open_private_child(&self.state, "modules", false)?;
+            let current = current.directory.metadata()?;
+            let pinned = modules.directory.metadata()?;
+            if (current.dev(), current.ino()) != (pinned.dev(), pinned.ino()) {
+                return Err(refused());
+            }
+            self.recheck()
+        };
+        read().is_ok()
+    }
+
     pub(super) fn drop_in_metadata(&self) -> io::Result<Option<fs::Metadata>> {
         match &self.files {
             ActivationEvidence::Complete(files) => files.drop_in.file.metadata().map(Some),

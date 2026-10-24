@@ -6,6 +6,8 @@ import type {
   InstallIntegrationInput,
   InstallIntegrationResult,
   IntegrationStatus,
+  ManageGnomeActivationInput,
+  ManageGnomeActivationResult,
 } from '../lib/ipc-types';
 
 type Invoke = <T>(
@@ -16,6 +18,9 @@ type Invoke = <T>(
 export interface IntegrationClient {
   list(): Promise<IntegrationStatus[]>;
   install(input: InstallIntegrationInput): Promise<InstallIntegrationResult>;
+  manage?(
+    input: ManageGnomeActivationInput,
+  ): Promise<ManageGnomeActivationResult>;
 }
 
 export class IntegrationCommandError extends Error {
@@ -39,6 +44,12 @@ export function createIntegrationClient(
       command<IntegrationStatus[]>(call, 'get_integration_statuses', {}),
     install: (input) =>
       command<InstallIntegrationResult>(call, 'install_integration', input),
+    manage: (input) =>
+      command<ManageGnomeActivationResult>(
+        call,
+        'manage_gnome_activation',
+        input,
+      ),
   };
 }
 

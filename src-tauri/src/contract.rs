@@ -736,6 +736,9 @@ pub enum GnomeConnectionStatus {
 pub struct GnomeActivationEvidence {
     pub phase: GnomeActivationPhase,
     pub revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub actions: Option<Vec<GnomeManagementAction>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -744,6 +747,7 @@ pub enum GnomeManagementAction {
     Update,
     Rollback,
     Remove,
+    Uninstall,
     RecoverInstall,
     FinishUpdate,
     RestoreUpdate,

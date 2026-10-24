@@ -62,7 +62,9 @@ pub(super) struct Prepared {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct Removed;
+pub(super) struct Removed {
+    revision: Option<String>,
+}
 
 #[derive(Debug)]
 pub(super) struct RollbackOffer {
@@ -300,7 +302,7 @@ fn remove_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result<Removed,
         if service.expected_revision().is_some() {
             return Err(failure(Stage::Preflight, Cause::StaleRevision));
         }
-        return Ok(Removed);
+        return Ok(Removed { revision: None });
     }
     let active = ExistingActivation::open(paths)?;
     owned_definition(service, &active.owned, Stage::Preflight)?;
@@ -329,11 +331,11 @@ fn remove_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result<Removed,
     if paths.inspect().map_err(verifying)? != ActivationFilesState::Absent {
         return Err(failure(Stage::Verifying, Cause::Conflict));
     }
-    OwnedActivation::open_retired(&paths.state, &paths.target)
-        .map_err(verifying)?
-        .recheck()
-        .map_err(verifying)?;
-    Ok(Removed)
+    let retired = OwnedActivation::open_retired(&paths.state, &paths.target).map_err(verifying)?;
+    let revision = retired.management_revision().map_err(verifying)?;
+    Ok(Removed {
+        revision: Some(revision),
+    })
 }
 
 fn recover_install_at(
@@ -445,7 +447,9 @@ fn recover_removal_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result
         .recheck_activation(&state, &target)
         .map_err(verifying)?;
     retired.recheck().map_err(verifying)?;
-    Ok(Removed)
+    Ok(Removed {
+        revision: Some(retired.management_revision().map_err(verifying)?),
+    })
 }
 
 fn synchronize_at(paths: &Paths) -> Result<service::Synchronized, Failure> {
@@ -1205,6 +1209,68 @@ mod tests {
         let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
         transaction.interrupt_install_after(checkpoint);
         assert!(transaction.apply().is_err());
+    }
+
+    #[test]
+    fn management_offers_require_retained_target_bytes_and_preserve_modified_modules() {
+        use crate::contract::{GnomeActivationPhase as Phase, GnomeManagementAction as Action};
+        let (_root, paths) = fixture();
+        prepare_at(&paths, &artifact(), &mut Checks::default()).unwrap();
+        let active = ExistingActivation::open(&paths).unwrap();
+        let actions = super::super::availability::actions(&active.owned, Phase::Configured);
+        assert!(actions.contains(&Action::Synchronize) && actions.contains(&Action::Uninstall));
+        assert!(!actions.contains(&Action::Rollback));
+        if artifact::embedded().unwrap().is_none() {
+            assert!(!actions.contains(&Action::Update));
+        }
+        update_at(&paths, &other_artifact(), &mut Checks::default()).unwrap();
+        let active = ExistingActivation::open(&paths).unwrap();
+        assert!(
+            super::super::availability::actions(&active.owned, Phase::Configured)
+                .contains(&Action::Rollback)
+        );
+        for (digest, previous_available) in [
+            (other_artifact().manifest.sha256, true),
+            (artifact().manifest.sha256, false),
+        ] {
+            let module = paths
+                .state
+                .join("modules")
+                .join(digest)
+                .join(artifact::format::MODULE_NAME);
+            fs::set_permissions(&module, fs::Permissions::from_mode(0o600)).unwrap();
+            fs::write(&module, b"modified module retained").unwrap();
+            let before = fs::read_dir(paths.state.join("modules")).unwrap().count();
+            let actions = super::super::availability::actions(&active.owned, Phase::Configured);
+            assert!(!actions.contains(&Action::Synchronize) && !actions.contains(&Action::Update));
+            assert_eq!(actions.contains(&Action::Rollback), previous_available);
+            assert!(actions.contains(&Action::Uninstall));
+            assert_eq!(fs::read(module).unwrap(), b"modified module retained");
+            assert_eq!(
+                fs::read_dir(paths.state.join("modules")).unwrap().count(),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn uninstall_continuation_uses_the_revision_captured_before_removal_unlocks() {
+        let (_root, paths) = fixture();
+        prepare_at(&paths, &artifact(), &mut Checks::default()).unwrap();
+        let removed = remove_at(&paths, &mut Checks::default()).unwrap();
+        let expected = removed.revision.unwrap();
+        let record = paths.state.join(transaction::RETIRED_REMOVAL);
+        let bytes = fs::read(&record).unwrap();
+        fs::rename(&record, paths.state.join("preserved-retirement")).unwrap();
+        fs::write(&record, &bytes).unwrap();
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(matches!(
+            acknowledge_removal_at_revision(&paths, Some(&expected))
+                .unwrap_err()
+                .cause,
+            Cause::StaleRevision
+        ));
+        assert_eq!(fs::read(record).unwrap(), bytes);
     }
 
     #[test]

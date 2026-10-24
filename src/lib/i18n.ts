@@ -1,6 +1,7 @@
 import type {
   GnomeActivationFilesStatus,
   GnomeActivationPhase,
+  GnomeManagementAction,
   GnomeConnectionStatus,
   LanguageSetting,
 } from './ipc-types';
@@ -53,6 +54,12 @@ export interface Translations {
   gnomeFilesStatus: Record<GnomeActivationFilesStatus, string>;
   gnomeActivationPhase: Record<GnomeActivationPhase, string>;
   gnomeInstallUnavailable: string;
+  gnomeManagementLabels: Record<GnomeManagementAction, string>;
+  gnomeManagementReceipts: Record<GnomeManagementAction, string>;
+  gnomeManaging: string;
+  gnomeManagementFailed: string;
+  gnomeManagementStale: string;
+  gnomeManagementRefreshFailed: string;
   integrationDescriptions: Record<string, string>;
 
   appearanceTitle: string;
@@ -176,6 +183,43 @@ const en: Translations = {
     unavailable: 'Installation status unavailable.',
   },
   gnomeInstallUnavailable: 'Installation is not available in this build.',
+  gnomeManagementLabels: {
+    update: 'Update',
+    rollback: 'Restore previous version',
+    remove: 'Remove configuration',
+    uninstall: 'Remove integration',
+    recover_install: 'Finish installation',
+    finish_update: 'Finish update',
+    restore_update: 'Restore configuration',
+    recover_removal: 'Finish removal',
+    synchronize: 'Apply configuration',
+    confirm_removal: 'Finish removal',
+  },
+  gnomeManagementReceipts: {
+    update: 'Configuration updated. Open terminals remain unchanged.',
+    rollback:
+      'Previous configuration restored. Open terminals remain unchanged.',
+    remove:
+      'Configuration removed. Finish removal before starting GNOME Terminal again.',
+    uninstall: 'Integration removed. Open terminals remain unchanged.',
+    recover_install:
+      'Installation prepared. Apply the configuration before the next GNOME Terminal start.',
+    finish_update: 'Update completed. Open terminals remain unchanged.',
+    restore_update:
+      'Previous configuration restored. Open terminals remain unchanged.',
+    recover_removal:
+      'Configuration removed. Finish removal before starting GNOME Terminal again.',
+    synchronize:
+      'Configuration applied to future GNOME Terminal starts. Open terminals remain unchanged.',
+    confirm_removal: 'Integration removed. Open terminals remain unchanged.',
+  },
+  gnomeManaging: 'Working…',
+  gnomeManagementFailed:
+    'The operation could not be completed. Check the refreshed status before acting again.',
+  gnomeManagementStale:
+    'The configuration changed. Check the refreshed status before acting again.',
+  gnomeManagementRefreshFailed:
+    'The status could not be refreshed. Refresh it before acting again.',
   gnomeActivationPhase: {
     absent: 'Not installed.',
     configured: 'Lyn configuration verified.',
@@ -323,6 +367,46 @@ const fr: Translations = {
   },
   gnomeInstallUnavailable:
     'L’installation n’est pas disponible dans cette version.',
+  gnomeManagementLabels: {
+    update: 'Mettre à jour',
+    rollback: 'Revenir à la version précédente',
+    remove: 'Retirer la configuration',
+    uninstall: 'Retirer l’intégration',
+    recover_install: 'Terminer l’installation',
+    finish_update: 'Terminer la mise à jour',
+    restore_update: 'Restaurer la configuration',
+    recover_removal: 'Terminer le retrait',
+    synchronize: 'Appliquer la configuration',
+    confirm_removal: 'Terminer le retrait',
+  },
+  gnomeManagementReceipts: {
+    update:
+      'Configuration mise à jour. Les terminaux ouverts restent inchangés.',
+    rollback:
+      'Configuration précédente restaurée. Les terminaux ouverts restent inchangés.',
+    remove:
+      'Configuration retirée. Terminez le retrait avant de relancer GNOME Terminal.',
+    uninstall: 'Intégration retirée. Les terminaux ouverts restent inchangés.',
+    recover_install:
+      'Installation préparée. Appliquez la configuration avant le prochain démarrage de GNOME Terminal.',
+    finish_update:
+      'Mise à jour terminée. Les terminaux ouverts restent inchangés.',
+    restore_update:
+      'Configuration précédente restaurée. Les terminaux ouverts restent inchangés.',
+    recover_removal:
+      'Configuration retirée. Terminez le retrait avant de relancer GNOME Terminal.',
+    synchronize:
+      'Configuration appliquée aux prochains démarrages de GNOME Terminal. Les terminaux ouverts restent inchangés.',
+    confirm_removal:
+      'Intégration retirée. Les terminaux ouverts restent inchangés.',
+  },
+  gnomeManaging: 'En cours…',
+  gnomeManagementFailed:
+    'L’opération n’a pas pu aboutir. Vérifiez l’état actualisé avant de réessayer.',
+  gnomeManagementStale:
+    'La configuration a changé. Vérifiez l’état actualisé avant de réessayer.',
+  gnomeManagementRefreshFailed:
+    'L’état n’a pas pu être actualisé. Actualisez-le avant toute nouvelle action.',
   gnomeActivationPhase: {
     absent: 'Non installé.',
     configured: 'Configuration de Lyn vérifiée.',

@@ -65,4 +65,19 @@ describe('integration client', () => {
       IntegrationCommandError,
     );
   });
+
+  it('sends the captured revision with a closed native action', async () => {
+    const input = {
+      action: 'restore_update' as const,
+      expectedRevision: 'a'.repeat(64),
+    };
+    const result = {
+      action: input.action,
+      activation: { phase: 'configured', revision: 'b'.repeat(64) },
+    };
+    const invoke = vi.fn().mockResolvedValue({ ok: true, data: result });
+    const client = createIntegrationClient(invoke);
+    expect(await client.manage!(input)).toEqual(result);
+    expect(invoke).toHaveBeenCalledWith('manage_gnome_activation', { input });
+  });
 });

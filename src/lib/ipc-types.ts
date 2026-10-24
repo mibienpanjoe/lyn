@@ -174,9 +174,9 @@ export type GnomeConnectionStatus = "connected" | "disconnected" | "busy" | "una
 
 export type GnomeActivationPhase = "absent" | "configured" | "installing" | "finishing_update" | "restoring_update" | "removing" | "awaiting_removal_confirmation" | "changed" | "unavailable";
 
-export type GnomeActivationEvidence = { phase: GnomeActivationPhase, revision: string | null, };
+export type GnomeActivationEvidence = { phase: GnomeActivationPhase, revision: string | null, actions?: Array<GnomeManagementAction>, };
 
-export type GnomeManagementAction = "update" | "rollback" | "remove" | "recover_install" | "finish_update" | "restore_update" | "recover_removal" | "synchronize" | "confirm_removal";
+export type GnomeManagementAction = "update" | "rollback" | "remove" | "uninstall" | "recover_install" | "finish_update" | "restore_update" | "recover_removal" | "synchronize" | "confirm_removal";
 
 export type ManageGnomeActivationInput = { action: GnomeManagementAction, expectedRevision: string, };
 

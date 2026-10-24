@@ -321,6 +321,28 @@ def run(module, preserved, executable, sdk, updated_module):
             assert stored_module.read_bytes() == module.read_bytes() and updated_stored.read_bytes() == updated_module.read_bytes()
             assert not poller.poll(0) and server.poll() is None
             print("PASS: stock-verified retirement acknowledgement, same-client post-unlink check, no-RPC fresh retry and private reinstall preserve modules/live server", flush=True)
+            reset_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="prepare-again")
+            with simulated_manager(root, "stock", sdk, reset_environment):
+                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                "--test-threads=1"], env=reset_environment, check=True, timeout=8)
+            uninstall_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="uninstall")
+            with simulated_manager(root, "sync-remove", sdk, uninstall_environment):
+                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                "--test-threads=1"], env=uninstall_environment, check=True, timeout=8)
+                from gi.repository import Gio, GLib
+                observer = Gio.DBusConnection.new_for_address_sync(os.environ["DBUS_SESSION_BUS_ADDRESS"],
+                    Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+                try:
+                    reply = observer.call_sync("org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.DBus.Properties", "Get",
+                        GLib.Variant("(ss)", ("org.freedesktop.systemd1.Manager", "ReloadCount")), None, Gio.DBusCallFlags.NO_AUTO_START, 500, None)
+                    assert reply.get_child_value(0).get_variant().unpack() == 1
+                finally:
+                    observer.close_sync(None)
+            assert not (root / "state/uninstall-retired-v1.json").exists()
+            assert not (root / "state/launcher-v1").exists()
+            assert stored_module.read_bytes() == module.read_bytes() and updated_stored.read_bytes() == updated_module.read_bytes()
+            assert not poller.poll(0) and server.poll() is None
+            print("PASS: one revisioned uninstall completes retirement, one manager Reload and acknowledgement; both modules and original private server preserved", flush=True)
         finally:
             child.close()
             if server is not None:
