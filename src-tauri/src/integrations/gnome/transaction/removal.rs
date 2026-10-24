@@ -298,6 +298,25 @@ impl RetirementSnapshot {
         Self::open(state, target, &self.state_path)?;
         state.verify(&self.record)
     }
+
+    pub(in crate::integrations::gnome) fn acknowledge(
+        &self,
+        state: &ManagedDirectory,
+        target: &ManagedDirectory,
+    ) -> io::Result<()> {
+        if self.record.file.metadata()?.nlink() == 0 {
+            no_other_intents(state)?;
+            for name in [PENDING_REMOVAL, RETIRED_REMOVAL, LAUNCHER, MANIFEST] {
+                state.require_absent(name)?;
+            }
+            target.require_absent(DROP_IN)?;
+            state.sync_directory()?;
+            return target.sync_directory();
+        }
+        self.recheck(state, target)?;
+        state.remove(&self.record)?;
+        target.sync_directory()
+    }
 }
 
 fn finish(
@@ -626,6 +645,50 @@ mod tests {
             .unwrap()
             .recheck(&state, &target)
             .unwrap();
+    }
+
+    #[test]
+    fn retirement_acknowledgement_keeps_unknown_files_and_retries_unlink_sync() {
+        let (root, state, target, rendered) = retirement_fixture();
+        let state_path = root.path().join("state");
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        retire(&mut transaction, root.path()).unwrap();
+        drop(transaction);
+        fs::write(state_path.join("unrelated.json"), b"preserved").unwrap();
+        let retired = RetirementSnapshot::open(&state, &target, &state_path).unwrap();
+        state.fail_directory_sync(true);
+        assert!(retired.acknowledge(&state, &target).is_err());
+        assert!(!state_path.join(RETIRED_REMOVAL).exists());
+        state.fail_directory_sync(false);
+        retired.acknowledge(&state, &target).unwrap();
+        assert_eq!(
+            fs::read(state_path.join("unrelated.json")).unwrap(),
+            b"preserved"
+        );
+        fs::write(state_path.join(RETIRED_REMOVAL), b"unknown").unwrap();
+        assert!(retired.acknowledge(&state, &target).is_err());
+        assert_eq!(
+            fs::read(state_path.join(RETIRED_REMOVAL)).unwrap(),
+            b"unknown"
+        );
+    }
+
+    #[test]
+    fn retirement_acknowledgement_refuses_an_identical_replacement_record() {
+        let (root, state, target, rendered) = retirement_fixture();
+        let state_path = root.path().join("state");
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        retire(&mut transaction, root.path()).unwrap();
+        drop(transaction);
+        let retired = RetirementSnapshot::open(&state, &target, &state_path).unwrap();
+        let original = state_path.join("original-retired");
+        let replacement = state_path.join(RETIRED_REMOVAL);
+        fs::rename(&replacement, &original).unwrap();
+        fs::copy(&original, &replacement).unwrap();
+        assert!(retired.acknowledge(&state, &target).is_err());
+        assert_eq!(fs::read(original).unwrap(), fs::read(replacement).unwrap());
     }
 
     #[test]

@@ -229,6 +229,19 @@ impl OwnedActivation {
     }
 
     pub(in crate::integrations::gnome) fn recheck(&self) -> io::Result<()> {
+        self.recheck_namespace()?;
+        self.files.recheck(&self.state, &self.target)
+    }
+
+    pub(in crate::integrations::gnome) fn acknowledge_retirement(&self) -> io::Result<()> {
+        self.recheck_namespace()?;
+        match &self.files {
+            ActivationEvidence::Retired(files) => files.acknowledge(&self.state, &self.target),
+            _ => Err(refused()),
+        }
+    }
+
+    fn recheck_namespace(&self) -> io::Result<()> {
         let state = directories::open_private(&self.state_path, false)?;
         let target = directories::open_drop_ins(&self.target_path, false)?;
         for (current, pinned) in [(&state, &self.state), (&target, &self.target)] {
@@ -238,7 +251,7 @@ impl OwnedActivation {
                 return Err(refused());
             }
         }
-        self.files.recheck(&self.state, &self.target)
+        Ok(())
     }
 }
 

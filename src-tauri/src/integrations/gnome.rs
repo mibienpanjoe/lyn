@@ -288,6 +288,24 @@ mod tests {
                 lock.check().unwrap();
                 owned.recheck().unwrap();
             }
+            "acknowledge-remove" => {
+                let result = coordinator::acknowledge_removal_private(root);
+                match std::env::var("LYN_PRIVATE_SYNC_EXPECTED").unwrap().as_str() {
+                    "stock" => {
+                        assert_eq!(result.unwrap().definition, service::DefinitionState::Stock)
+                    }
+                    "refused" => assert!(result.is_err()),
+                    _ => panic!("unknown private acknowledgement expectation"),
+                }
+            }
+            "prepare-again" => {
+                assert_eq!(
+                    coordinator::prepare_private(root, &private_native_artifact())
+                        .unwrap()
+                        .definition,
+                    service::DefinitionState::NeedsReload
+                );
+            }
             "rollback" => {
                 let result = coordinator::rollback_private(root).unwrap();
                 assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);

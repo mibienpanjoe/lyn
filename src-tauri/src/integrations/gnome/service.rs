@@ -466,7 +466,7 @@ struct ServiceInspection {
 }
 
 impl ServiceInspection {
-    fn recheck_files(&self, paths: &[String], owned: &OwnedActivation) -> Result<()> {
+    fn recheck_disk(&self, paths: &[String]) -> Result<()> {
         if self.paths != paths {
             return Err(ServiceRefusal::Changed);
         }
@@ -478,6 +478,11 @@ impl ServiceInspection {
             (self.vendor.metadata.dev(), self.vendor.metadata.ino()),
             self.allowed.as_ref(),
         )?;
+        Ok(())
+    }
+
+    fn recheck_files(&self, paths: &[String], owned: &OwnedActivation) -> Result<()> {
+        self.recheck_disk(paths)?;
         owned.recheck().map_err(|_| ServiceRefusal::Changed)
     }
 
@@ -627,6 +632,14 @@ pub(super) fn synchronize_owned_service(
     owned: &OwnedActivation,
     before_reload: impl FnOnce() -> Result<()>,
 ) -> Result<Synchronized> {
+    synchronize_verified(owned, before_reload, |_, _, _, _| Ok(()))
+}
+
+fn synchronize_verified(
+    owned: &OwnedActivation,
+    before_reload: impl FnOnce() -> Result<()>,
+    on_verified: impl FnOnce(&gio::DBusConnection, &Budget, &str, &ServiceInspection) -> Result<()>,
+) -> Result<Synchronized> {
     owned.recheck().map_err(|_| ServiceRefusal::Changed)?;
     let address =
         std::env::var("DBUS_SESSION_BUS_ADDRESS").map_err(|_| ServiceRefusal::Unavailable)?;
@@ -652,6 +665,8 @@ pub(super) fn synchronize_owned_service(
     };
     if before.definition == expected {
         before.recheck(&connection, &budget, &manager, owned)?;
+        on_verified(&connection, &budget, &manager, &before)?;
+        budget.remaining()?;
         return Ok(Synchronized {
             definition: expected,
         });
@@ -679,10 +694,38 @@ pub(super) fn synchronize_owned_service(
         return Err(ServiceRefusal::Changed);
     }
     before.recheck_files(&after.paths, owned)?;
+    on_verified(&connection, &budget, &manager, &after)?;
     budget.remaining()?;
     Ok(Synchronized {
         definition: expected,
     })
+}
+
+pub(super) fn acknowledge_retired_service(
+    owned: &OwnedActivation,
+    before_reload: impl FnOnce() -> Result<()>,
+    acknowledge: impl FnOnce() -> Result<()>,
+) -> Result<Synchronized> {
+    if !owned.is_retired() {
+        return Err(ServiceRefusal::Unsupported);
+    }
+    synchronize_verified(
+        owned,
+        before_reload,
+        |connection, budget, manager, verified| {
+            if verified.definition != DefinitionState::Stock {
+                return Err(ServiceRefusal::Changed);
+            }
+            verified.recheck(connection, budget, manager, owned)?;
+            acknowledge()?;
+            let target = std::path::Path::new(owned.paths().1).parent();
+            let stock = inspect_connected(connection, budget, manager, None, target)?;
+            if stock.definition != DefinitionState::Stock {
+                return Err(ServiceRefusal::Changed);
+            }
+            verified.recheck_disk(&stock.paths)
+        },
+    )
 }
 
 #[cfg(test)]

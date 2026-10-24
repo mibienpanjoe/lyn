@@ -477,6 +477,72 @@ fn synchronize_at(paths: &Paths) -> Result<service::Synchronized, Failure> {
     Ok(result)
 }
 
+fn acknowledge_removal_at(paths: &Paths) -> Result<service::Synchronized, Failure> {
+    let preflight = |error| failure(Stage::Preflight, Cause::Io(error));
+    let state = directories::open_private(&paths.state, false).map_err(preflight)?;
+    let target = directories::open_drop_ins(&paths.target, false).map_err(preflight)?;
+    if paths.inspect().map_err(preflight)? != ActivationFilesState::Absent {
+        return Err(failure(Stage::Preflight, Cause::Conflict));
+    }
+    let lock = super::lock::InstallationLock::acquire_existing(&state)
+        .map_err(|error| failure(Stage::Preparing, Cause::Io(error)))?;
+    let absence = || {
+        paths.recheck_activation(&state, &target)?;
+        state.require_absent(transaction::RETIRED_REMOVAL)?;
+        if paths.inspect()? != ActivationFilesState::Absent {
+            return Err(io::Error::other(
+                "native removal acknowledgement is not settled",
+            ));
+        }
+        lock.check()
+    };
+    let owned = match OwnedActivation::open_retired(&paths.state, &paths.target) {
+        Ok(owned) => owned,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // A prior unlink may have succeeded before its sync failed. No
+            // authority remains to authorize Reload; this path only reads stock.
+            absence().map_err(preflight)?;
+            service::inspect_unmodified_service_at(&paths.target)
+                .map_err(|error| failure(Stage::Verifying, Cause::Service(error)))?;
+            absence().map_err(|error| failure(Stage::Verifying, Cause::Io(error)))?;
+            state
+                .sync_directory()
+                .map_err(|error| failure(Stage::Verifying, Cause::Io(error)))?;
+            target
+                .sync_directory()
+                .map_err(|error| failure(Stage::Verifying, Cause::Io(error)))?;
+            return Ok(service::Synchronized {
+                definition: DefinitionState::Stock,
+            });
+        }
+        Err(error) => return Err(preflight(error)),
+    };
+    let recheck = || {
+        paths.recheck_activation(&state, &target)?;
+        lock.check()?;
+        owned.recheck()
+    };
+    recheck().map_err(preflight)?;
+    let mut acknowledgement_failure = None;
+    let result = service::acknowledge_retired_service(
+        &owned,
+        || recheck().map_err(|_| ServiceRefusal::Changed),
+        || {
+            let effect = recheck().and_then(|()| owned.acknowledge_retirement());
+            if let Err(error) = effect {
+                acknowledgement_failure = Some(failure(Stage::Applying, Cause::Io(error)));
+                return Err(ServiceRefusal::Changed);
+            }
+            Ok(())
+        },
+    );
+    let synchronized = result.map_err(|error| {
+        acknowledgement_failure.unwrap_or_else(|| failure(Stage::Applying, Cause::Service(error)))
+    })?;
+    absence().map_err(|error| failure(Stage::Verifying, Cause::Io(error)))?;
+    Ok(synchronized)
+}
+
 trait ServiceChecks {
     fn stock(&mut self) -> Result<(), ServiceRefusal>;
     fn owned(&mut self, owned: &OwnedActivation) -> Result<DefinitionState, ServiceRefusal>;
@@ -627,6 +693,10 @@ pub(super) fn recover_removal(home: &Path) -> Result<Removed, Failure> {
 
 pub(super) fn synchronize(home: &Path) -> Result<service::Synchronized, Failure> {
     synchronize_at(&Paths::from_home(home)?)
+}
+
+pub(super) fn acknowledge_removal(home: &Path) -> Result<service::Synchronized, Failure> {
+    acknowledge_removal_at(&Paths::from_home(home)?)
 }
 
 pub(super) fn rollback(home: &Path, expected_revision: &str) -> Result<Prepared, Failure> {
@@ -852,6 +922,14 @@ pub(super) fn recover_removal_private(root: &Path) -> Result<Removed, Failure> {
 #[cfg(test)]
 pub(super) fn synchronize_private(root: &Path) -> Result<service::Synchronized, Failure> {
     synchronize_at(&Paths {
+        state: root.join("state"),
+        target: root.join("units/gnome-terminal-server.service.d"),
+    })
+}
+
+#[cfg(test)]
+pub(super) fn acknowledge_removal_private(root: &Path) -> Result<service::Synchronized, Failure> {
+    acknowledge_removal_at(&Paths {
         state: root.join("state"),
         target: root.join("units/gnome-terminal-server.service.d"),
     })
@@ -1420,6 +1498,40 @@ mod tests {
                 fs::read(paths.state.join(transaction::LAUNCHER)).unwrap(),
                 before
             );
+        }
+    }
+
+    #[test]
+    fn acknowledgement_refuses_active_pending_unknown_or_unlocked_state_before_bus() {
+        for kind in ["active", "pending", "unknown", "missing-lock"] {
+            let (_root, paths) = fixture();
+            let mut checks = Checks::default();
+            prepare_at(&paths, &artifact(), &mut checks).unwrap();
+            match kind {
+                "active" => {}
+                "pending" => {
+                    fs::write(paths.state.join("installation-pending-v1.json"), b"{}").unwrap()
+                }
+                _ => {
+                    remove_at(&paths, &mut checks).unwrap();
+                    if kind == "unknown" {
+                        fs::write(paths.state.join(transaction::RETIRED_REMOVAL), b"unknown")
+                            .unwrap();
+                    } else {
+                        fs::remove_file(paths.state.join(".installation.lock")).unwrap();
+                    }
+                }
+            }
+            assert!(acknowledge_removal_at(&paths).is_err(), "{kind}");
+            if kind == "missing-lock" {
+                assert!(!paths.state.join(".installation.lock").exists());
+            }
+            if kind == "unknown" {
+                assert_eq!(
+                    fs::read(paths.state.join(transaction::RETIRED_REMOVAL)).unwrap(),
+                    b"unknown"
+                );
+            }
         }
     }
 

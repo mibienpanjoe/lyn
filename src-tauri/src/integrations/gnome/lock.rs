@@ -32,8 +32,17 @@ fn check_file(file: &File) -> io::Result<()> {
 
 impl<'a> InstallationLock<'a> {
     pub(super) fn acquire(directory: &'a ManagedDirectory) -> io::Result<Self> {
+        Self::open(directory, true)
+    }
+
+    pub(super) fn acquire_existing(directory: &'a ManagedDirectory) -> io::Result<Self> {
+        Self::open(directory, false)
+    }
+
+    fn open(directory: &'a ManagedDirectory, create: bool) -> io::Result<Self> {
         directory.check_private()?;
-        let file = directory.open(&LOCK_NAME.to_owned(), libc::O_CREAT | libc::O_RDWR)?;
+        let flags = libc::O_RDWR | if create { libc::O_CREAT } else { 0 };
+        let file = directory.open(&LOCK_NAME.to_owned(), flags)?;
         check_file(&file)?;
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             return Err(io::Error::last_os_error());
@@ -89,6 +98,15 @@ mod tests {
             inode
         );
         replacement.check().unwrap();
+    }
+
+    #[test]
+    fn acknowledgement_does_not_create_a_missing_installation_lock() {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let directory = super::super::directories::open_private(root.path(), false).unwrap();
+        assert!(InstallationLock::acquire_existing(&directory).is_err());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
     }
 
     #[test]

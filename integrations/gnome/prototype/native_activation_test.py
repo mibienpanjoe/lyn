@@ -67,7 +67,7 @@ def check_synchronization(root, executable, sdk, environment, mode, expected, ex
             reply = connection.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetNameOwner",
                 GLib.Variant("(s)", ("org.freedesktop.systemd1",)), None, Gio.DBusCallFlags.NO_AUTO_START, 500, None)
             original_owner = reply.unpack()[0]
-            action = "synchronize-with-change" if mode == "sync-during-validation" else "synchronize"
+            action = "acknowledge-remove" if mode.startswith("ack-") else "synchronize-with-change" if mode == "sync-during-validation" else "synchronize"
             sync_environment = dict(environment, LYN_PRIVATE_NATIVE_FILE_ACTION=action, LYN_PRIVATE_SYNC_EXPECTED=expected)
             started = time.monotonic()
             for _ in range(1 if expected == "refused" else 2):
@@ -75,14 +75,20 @@ def check_synchronization(root, executable, sdk, environment, mode, expected, ex
                                 "--test-threads=1"], env=sync_environment, check=True, timeout=8)
             if mode == "sync-hang":
                 assert 1.5 <= time.monotonic() - started <= 4, "Expected the separate two-second Reload cap"
+            if mode == "ack-after-unlink":
+                assert not (root / "state/uninstall-retired-v1.json").exists()
+                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                "--test-threads=1"], env=dict(sync_environment, LYN_PRIVATE_SYNC_EXPECTED="stock"), check=True, timeout=8)
             def property_value(name):
                 reply = connection.call_sync(original_owner, "/org/freedesktop/systemd1", "org.freedesktop.DBus.Properties", "Get",
                     GLib.Variant("(ss)", ("org.freedesktop.systemd1.Manager", name)), None, Gio.DBusCallFlags.NO_AUTO_START, 500, None)
                 return reply.get_child_value(0).get_variant().unpack()
             observed_calls = property_value("ReloadCount")
             assert observed_calls == expected_calls, (mode, observed_calls, expected_calls)
-            if expected != "refused":
+            if expected != "refused" and expected_calls:
                 assert property_value("PostReloadSameClient"), mode
+            if mode.startswith("ack-") and (expected != "refused" or mode == "ack-after-unlink"):
+                assert property_value("PostAckSameClient"), mode
         finally:
             connection.close_sync(None)
 
@@ -270,6 +276,25 @@ def run(module, preserved, executable, sdk, updated_module):
             assert (root / "state/uninstall-retired-v1.json").is_file()
             assert not poller.poll(0) and server.poll() is None
             print("PASS: actual removal-process exit recovered by a fresh Rust process; both modules and exact cached-manager authority retained; live private server unchanged", flush=True)
+            for mode, calls in (("ack-owner", 0), ("ack-stuck", 1)):
+                check_synchronization(root, executable, sdk, action_environment, mode, "refused", calls)
+                assert (root / "state/uninstall-retired-v1.json").is_file()
+            check_synchronization(root, executable, sdk, action_environment, "ack-remove", "stock", 1)
+            assert not (root / "state/uninstall-retired-v1.json").exists()
+            for mode, expected, calls in (("ack-stock", "stock", 0), ("ack-after-unlink", "refused", 1)):
+                reset_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="prepare-again")
+                with simulated_manager(root, "stock", sdk, reset_environment):
+                    subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                    "--test-threads=1"], env=reset_environment, check=True, timeout=8)
+                reset_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "remove"
+                with simulated_manager(root, "loaded", sdk, reset_environment):
+                    subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                    "--test-threads=1"], env=reset_environment, check=True, timeout=8)
+                check_synchronization(root, executable, sdk, action_environment, mode, expected, calls)
+                assert not (root / "state/uninstall-retired-v1.json").exists()
+            assert stored_module.read_bytes() == module.read_bytes() and updated_stored.read_bytes() == updated_module.read_bytes()
+            assert not poller.poll(0) and server.poll() is None
+            print("PASS: stock-verified retirement acknowledgement, same-client post-unlink check, no-RPC fresh retry and private reinstall preserve modules/live server", flush=True)
         finally:
             child.close()
             if server is not None:

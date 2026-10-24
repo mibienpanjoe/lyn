@@ -47,7 +47,8 @@ def run(root, mode, ready, sdk):
         raise RuntimeError("Only the exact private fixture bus is permitted")
     if root.parent != Path("/tmp") or not root.name.startswith("lyn-na-") or ready.parent != root:
         raise RuntimeError("Expected the isolated activation root")
-    sync_modes = ("sync-install", "sync-remove", "sync-stuck", "sync-error", "sync-hang", "sync-changed", "sync-owner", "sync-during-validation")
+    sync_modes = ("sync-install", "sync-remove", "sync-stuck", "sync-error", "sync-hang", "sync-changed", "sync-owner", "sync-during-validation",
+                  "ack-remove", "ack-stock", "ack-owner", "ack-stuck", "ack-after-unlink")
     if mode not in ("stock", "loaded", "pending", "changing", *sync_modes):
         raise RuntimeError("Unknown private manager mode")
     unit = "gnome-terminal-server.service"
@@ -58,7 +59,7 @@ def run(root, mode, ready, sdk):
     server = "/usr/libexec/gnome-terminal-server"
     launcher = str(root / "state/launcher-v1")
     drop_in = str(root / "units" / f"{unit}.d/90-lyn-native.conf")
-    stock = mode in ("stock", "pending") or mode in sync_modes and mode != "sync-remove"
+    stock = mode in ("stock", "pending") or mode in sync_modes and mode not in ("sync-remove", "ack-remove", "ack-stuck", "ack-after-unlink")
     executable = server if stock else launcher
     properties = {
         "LoadState": GLib.Variant("s", "loaded"),
@@ -92,9 +93,12 @@ def run(root, mode, ready, sdk):
     post_same_client = False
     held_invocations = []
     takeover = []
+    first_inspection_sender = None
+    post_ack_same_client = False
+    failed_after_unlink = False
 
     def load_unit(_connection, _sender, _path, _interface, method, arguments, invocation):
-        nonlocal reload_count, reload_sender
+        nonlocal reload_count, reload_sender, first_inspection_sender
         if method == "MutateDefinition":
             if mode != "sync-during-validation" or arguments.unpack() != ():
                 invocation.return_dbus_error("org.lyn.Private.Refused", "Mutation is not enabled in this fixture mode")
@@ -114,7 +118,7 @@ def run(root, mode, ready, sdk):
             if mode == "sync-hang":
                 held_invocations.append(invocation)
                 return
-            if mode in ("sync-install", "sync-remove"):
+            if mode in ("sync-install", "sync-remove", "ack-remove", "ack-after-unlink"):
                 next_executable = launcher if mode == "sync-install" else server
                 properties["ExecStart"] = GLib.Variant("a(sasbttttuii)", [(next_executable, [next_executable], False, 0, 0, 0, 0, 0, 0, 0)])
                 properties["DropInPaths"] = GLib.Variant("as", [drop_in] if mode == "sync-install" else [])
@@ -122,26 +126,36 @@ def run(root, mode, ready, sdk):
             invocation.return_value(GLib.Variant("()", ()))
             return
         assert method == "LoadUnit" and arguments.unpack() == (unit,)
+        if first_inspection_sender is None:
+            first_inspection_sender = _sender
         invocation.return_value(GLib.Variant("(o)", (unit_path,)))
 
     start_reads = 0
 
     def get_property(_connection, _sender, _path, interface, name):
-        nonlocal start_reads, post_same_client
+        nonlocal start_reads, post_same_client, post_ack_same_client, failed_after_unlink
         if interface == manager:
             if name == "ReloadCount":
                 return GLib.Variant("u", reload_count)
             if name == "PostReloadSameClient":
                 return GLib.Variant("b", post_same_client)
+            if name == "PostAckSameClient":
+                return GLib.Variant("b", post_ack_same_client)
             assert name == "UnitPath"
             return GLib.Variant("as", [str(root / "units")])
         if name == "ExecStart":
             start_reads += 1
             if reload_sender is not None and _sender == reload_sender:
                 post_same_client = True
+            if mode.startswith("ack-") and not (root / "state/uninstall-retired-v1.json").exists():
+                if _sender == first_inspection_sender:
+                    post_ack_same_client = True
+                if mode == "ack-after-unlink" and not failed_after_unlink:
+                    failed_after_unlink = True
+                    return GLib.Variant("a(sasbttttuii)", [("/synthetic/unowned", ["/synthetic/unowned"], False, 0, 0, 0, 0, 0, 0, 0)])
             if mode in ("changing", "sync-changed") and start_reads > 1:
                 return GLib.Variant("a(sasbttttuii)", [(executable, [executable], False, 0, 0, 0, 0, 1, 0, 0)])
-            if mode == "sync-owner" and start_reads == 3:
+            if mode in ("sync-owner", "ack-owner") and start_reads == 3:
                 connection.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ReleaseName",
                                      GLib.Variant("(s)", ("org.freedesktop.systemd1",)), None, Gio.DBusCallFlags.NO_AUTO_START, 500, None)
                 replacement = Gio.DBusConnection.new_for_address_sync(address,
@@ -159,7 +173,8 @@ def run(root, mode, ready, sdk):
       <method name="MutateDefinition"/>
       <property name="UnitPath" type="as" access="read"/>
       <property name="ReloadCount" type="u" access="read"/>
-      <property name="PostReloadSameClient" type="b" access="read"/></interface></node>'''
+      <property name="PostReloadSameClient" type="b" access="read"/>
+      <property name="PostAckSameClient" type="b" access="read"/></interface></node>'''
     connection.register_object("/org/freedesktop/systemd1", Gio.DBusNodeInfo.new_for_xml(manager_xml).interfaces[0],
                                load_unit, get_property, None)
     for interface, names in (
