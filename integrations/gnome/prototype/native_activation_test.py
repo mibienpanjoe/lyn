@@ -210,8 +210,15 @@ def run(module, preserved, executable, sdk, updated_module):
                               "branchMatches": True, "duplicateRefused": True, "captureCount": 1,
                               "leaseReleased": True}, result
             print("PASS: persisted-history rollback needs no artifact input, preserves the live server and loads/restores exact capture on owned relaunch", flush=True)
-            action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "remove"
+            action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "interrupt-remove"
             with simulated_manager(root, "loaded", sdk, action_environment):
+                interrupted = subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                              "--test-threads=1"], env=action_environment, timeout=8)
+                assert interrupted.returncode == 77, interrupted.returncode
+                assert (root / "state/uninstall-pending-v1.json").is_file()
+                assert not (root / "units/gnome-terminal-server.service.d/90-lyn-native.conf").exists()
+                assert (root / "state/launcher-v1").is_file()
+                action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "recover-remove"
                 subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
                                 "--test-threads=1"], env=action_environment, check=True, timeout=8)
                 action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "inspect-retired"
@@ -225,7 +232,7 @@ def run(module, preserved, executable, sdk, updated_module):
             poller.register(pin, select.POLLIN)
             assert not poller.poll(0) and server.poll() is None
             assert (root / "state/uninstall-retired-v1.json").is_file()
-            print("PASS: activation removal retains both modules and persistent authority for the exact cached manager definition; live private server unchanged", flush=True)
+            print("PASS: actual removal-process exit recovered by a fresh Rust process; both modules and exact cached-manager authority retained; live private server unchanged", flush=True)
         finally:
             child.close()
             if server is not None:

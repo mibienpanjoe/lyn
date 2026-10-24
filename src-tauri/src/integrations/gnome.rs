@@ -254,6 +254,13 @@ mod tests {
             "remove" => {
                 coordinator::remove_private(root).unwrap();
             }
+            "interrupt-remove" => {
+                coordinator::interrupt_removal_private(root).unwrap();
+                panic!("private removal checkpoint must exit");
+            }
+            "recover-remove" => {
+                coordinator::recover_removal_private(root).unwrap();
+            }
             "rollback" => {
                 let result = coordinator::rollback_private(root).unwrap();
                 assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);

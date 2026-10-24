@@ -295,6 +295,8 @@ fn remove_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result<Removed,
     owned_definition(service, &active.owned, Stage::Applying)?;
     let applying = |error| failure(Stage::Applying, Cause::Io(error));
     active.recheck(paths).map_err(applying)?;
+    #[cfg(test)]
+    service.before_retire(&mut transaction);
     transaction
         .retire_activation(
             &paths.state,
@@ -365,11 +367,74 @@ fn recover_install_at(
     Ok(Prepared { definition })
 }
 
+fn recover_removal_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result<Removed, Failure> {
+    let preflight = |error| failure(Stage::Preflight, Cause::Io(error));
+    let state = directories::open_private(&paths.state, false).map_err(preflight)?;
+    let target = directories::open_drop_ins(&paths.target, false).map_err(preflight)?;
+    let owned = match paths.inspect().map_err(preflight)? {
+        ActivationFilesState::Pending => {
+            OwnedActivation::open_pending_removal(&paths.state, &paths.target)
+        }
+        ActivationFilesState::Absent => OwnedActivation::open_retired(&paths.state, &paths.target),
+        _ => return Err(failure(Stage::Preflight, Cause::Conflict)),
+    }
+    .map_err(preflight)?;
+    paths
+        .recheck_activation(&state, &target)
+        .map_err(preflight)?;
+    owned.recheck().map_err(preflight)?;
+    service
+        .owned(&owned)
+        .map_err(|error| failure(Stage::Preflight, Cause::Service(error)))?;
+    let mut check_failure = None;
+    let result =
+        ActivationTransaction::resume_retirement_checked(&state, &target, &paths.state, || {
+            #[cfg(test)]
+            service.after_activation_lock();
+            let check = (|| {
+                let applying = |error| failure(Stage::Applying, Cause::Io(error));
+                paths
+                    .recheck_activation(&state, &target)
+                    .map_err(applying)?;
+                owned.recheck().map_err(applying)?;
+                service
+                    .owned(&owned)
+                    .map_err(|error| failure(Stage::Applying, Cause::Service(error)))?;
+                paths
+                    .recheck_activation(&state, &target)
+                    .map_err(applying)?;
+                owned.recheck().map_err(applying)
+            })();
+            if let Err(error) = check {
+                check_failure = Some(error);
+                return Err(io::Error::other(
+                    "native removal recovery preflight refused",
+                ));
+            }
+            Ok(())
+        });
+    let _transaction = result.map_err(|error| {
+        check_failure.unwrap_or_else(|| failure(Stage::Applying, Cause::Io(error)))
+    })?;
+    let verifying = |error| failure(Stage::Verifying, Cause::Io(error));
+    let retired = OwnedActivation::open_retired(&paths.state, &paths.target).map_err(verifying)?;
+    service
+        .owned(&retired)
+        .map_err(|error| failure(Stage::Verifying, Cause::Service(error)))?;
+    paths
+        .recheck_activation(&state, &target)
+        .map_err(verifying)?;
+    retired.recheck().map_err(verifying)?;
+    Ok(Removed)
+}
+
 trait ServiceChecks {
     fn stock(&mut self) -> Result<(), ServiceRefusal>;
     fn owned(&mut self, owned: &OwnedActivation) -> Result<DefinitionState, ServiceRefusal>;
     #[cfg(test)]
     fn after_activation_lock(&mut self) {}
+    #[cfg(test)]
+    fn before_retire(&mut self, _transaction: &mut ActivationTransaction<'_>) {}
 }
 
 struct RealService {
@@ -494,6 +559,16 @@ pub(super) fn rollback_offer(home: &Path) -> Result<RollbackOffer, Failure> {
 pub(super) fn recover_install(home: &Path) -> Result<Prepared, Failure> {
     let paths = Paths::from_home(home)?;
     recover_install_at(
+        &paths,
+        &mut RealService {
+            target: paths.target.clone(),
+        },
+    )
+}
+
+pub(super) fn recover_removal(home: &Path) -> Result<Removed, Failure> {
+    let paths = Paths::from_home(home)?;
+    recover_removal_at(
         &paths,
         &mut RealService {
             target: paths.target.clone(),
@@ -674,6 +749,46 @@ pub(super) fn remove_private(root: &Path) -> Result<Removed, Failure> {
         target: root.join("units/gnome-terminal-server.service.d"),
     };
     remove_at(
+        &paths,
+        &mut RealService {
+            target: paths.target.clone(),
+        },
+    )
+}
+
+#[cfg(test)]
+pub(super) fn interrupt_removal_private(root: &Path) -> Result<Removed, Failure> {
+    struct Interrupt(RealService);
+    impl ServiceChecks for Interrupt {
+        fn stock(&mut self) -> Result<(), ServiceRefusal> {
+            self.0.stock()
+        }
+        fn owned(&mut self, owned: &OwnedActivation) -> Result<DefinitionState, ServiceRefusal> {
+            self.0.owned(owned)
+        }
+        fn before_retire(&mut self, transaction: &mut ActivationTransaction<'_>) {
+            transaction.interrupt_removal_after(13, true);
+        }
+    }
+    let paths = Paths {
+        state: root.join("state"),
+        target: root.join("units/gnome-terminal-server.service.d"),
+    };
+    remove_at(
+        &paths,
+        &mut Interrupt(RealService {
+            target: paths.target.clone(),
+        }),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn recover_removal_private(root: &Path) -> Result<Removed, Failure> {
+    let paths = Paths {
+        state: root.join("state"),
+        target: root.join("units/gnome-terminal-server.service.d"),
+    };
+    recover_removal_at(
         &paths,
         &mut RealService {
             target: paths.target.clone(),
@@ -1222,6 +1337,144 @@ mod tests {
         assert_eq!((checks.stock_calls, checks.owned_calls), calls);
         assert!(!paths.state.join(transaction::LAUNCHER).exists());
         assert!(!paths.target.join(transaction::DROP_IN).exists());
+    }
+
+    #[test]
+    fn pending_removal_recovery_finishes_all_prefixes_without_module_or_bundle() {
+        for point in 12..=15 {
+            let (_root, paths) = fixture();
+            let mut checks = Checks::default();
+            let artifact = artifact();
+            prepare_at(&paths, &artifact, &mut checks).unwrap();
+            let active = ExistingActivation::open(&paths).unwrap();
+            {
+                let mut transaction =
+                    ActivationTransaction::open_complete(&active.state, &active.target).unwrap();
+                transaction.interrupt_removal_after(point, false);
+                assert!(
+                    transaction
+                        .retire_activation(
+                            &paths.state,
+                            active.owned.module_digest(),
+                            active.owned.previous_module()
+                        )
+                        .is_err()
+                );
+            }
+            fs::remove_file(active.owned.module_path()).unwrap();
+            let mut recovery = Checks::default();
+            recover_removal_at(&paths, &mut recovery).unwrap();
+            assert_eq!(recovery.stock_calls, 0);
+            assert_eq!(recovery.owned_calls, 3);
+            assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Absent);
+            OwnedActivation::open_retired(&paths.state, &paths.target)
+                .unwrap()
+                .recheck()
+                .unwrap();
+            recover_removal_at(&paths, &mut recovery).unwrap();
+            assert_eq!(recovery.owned_calls, 6);
+        }
+    }
+
+    fn interrupted_removal(paths: &Paths, point: u8) {
+        let mut checks = Checks::default();
+        prepare_at(paths, &artifact(), &mut checks).unwrap();
+        let active = ExistingActivation::open(paths).unwrap();
+        let mut transaction =
+            ActivationTransaction::open_complete(&active.state, &active.target).unwrap();
+        transaction.interrupt_removal_after(point, false);
+        assert!(
+            transaction
+                .retire_activation(
+                    &paths.state,
+                    active.owned.module_digest(),
+                    active.owned.previous_module()
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn pending_removal_recovery_refuses_changed_authority_and_survivors_before_service() {
+        for kind in ["reference", "survivor", "retired", "other-intent"] {
+            let (_root, paths) = fixture();
+            interrupted_removal(&paths, 13);
+            let journal = paths.state.join("uninstall-pending-v1.json");
+            match kind {
+                "reference" => {
+                    let mut body: serde_json::Value =
+                        serde_json::from_slice(&fs::read(&journal).unwrap()).unwrap();
+                    body["activation"]["digest"] = "b".repeat(64).into();
+                    fs::write(&journal, serde_json::to_vec(&body).unwrap()).unwrap();
+                }
+                "survivor" => {
+                    fs::write(paths.state.join(transaction::LAUNCHER), b"foreign").unwrap()
+                }
+                "retired" => {
+                    fs::write(paths.state.join(transaction::RETIRED_REMOVAL), b"foreign").unwrap()
+                }
+                _ => fs::write(paths.state.join("installation-pending-v1.json"), b"{}").unwrap(),
+            }
+            let journal_before = fs::read(&journal).unwrap();
+            let launcher_before = fs::read(paths.state.join(transaction::LAUNCHER)).unwrap();
+            let mut checks = Checks::default();
+            assert!(recover_removal_at(&paths, &mut checks).is_err(), "{kind}");
+            assert_eq!(checks.owned_calls, 0);
+            assert_eq!(fs::read(&journal).unwrap(), journal_before);
+            assert_eq!(
+                fs::read(paths.state.join(transaction::LAUNCHER)).unwrap(),
+                launcher_before
+            );
+            assert!(paths.state.join("installation-v1.json").is_file());
+        }
+    }
+
+    #[test]
+    fn pending_removal_recovery_preserves_survivors_on_late_service_or_reappearance() {
+        struct Refuse {
+            calls: usize,
+            recreate: Option<PathBuf>,
+        }
+        impl ServiceChecks for Refuse {
+            fn stock(&mut self) -> Result<(), ServiceRefusal> {
+                panic!("not stock recovery")
+            }
+            fn owned(
+                &mut self,
+                owned: &OwnedActivation,
+            ) -> Result<DefinitionState, ServiceRefusal> {
+                owned.recheck().unwrap();
+                self.calls += 1;
+                if self.calls == 2 {
+                    Err(ServiceRefusal::Changed)
+                } else {
+                    Ok(DefinitionState::NeedsReload)
+                }
+            }
+            fn after_activation_lock(&mut self) {
+                if let Some(path) = self.recreate.take() {
+                    fs::write(path, b"foreign override").unwrap();
+                }
+            }
+        }
+        for recreate in [false, true] {
+            let (_root, paths) = fixture();
+            interrupted_removal(&paths, 13);
+            let before = fs::read(paths.state.join(transaction::LAUNCHER)).unwrap();
+            let mut checks = Refuse {
+                calls: 0,
+                recreate: recreate.then(|| paths.target.join(transaction::DROP_IN)),
+            };
+            let error = recover_removal_at(&paths, &mut checks).unwrap_err();
+            assert_eq!(error.stage, Stage::Applying);
+            assert_eq!(checks.calls, if recreate { 1 } else { 2 });
+            assert_eq!(
+                fs::read(paths.state.join(transaction::LAUNCHER)).unwrap(),
+                before
+            );
+            assert!(paths.state.join("uninstall-pending-v1.json").is_file());
+            assert!(!paths.state.join(transaction::RETIRED_REMOVAL).exists());
+        }
     }
 
     #[test]

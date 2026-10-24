@@ -9,7 +9,7 @@ mod update;
 pub(super) use inspection::PinnedActivation;
 pub(super) use inspection::{ActivationFilesState, inspect_activation_files};
 pub(super) use recovery::InstallSnapshot;
-pub(super) use removal::{RETIRED_REMOVAL, RetirementSnapshot};
+pub(super) use removal::{RETIRED_REMOVAL, RemovalSnapshot, RetirementSnapshot};
 
 use super::{
     RenderedActivation,
@@ -82,6 +82,11 @@ impl<'a> ActivationTransaction<'a> {
     pub(super) fn interrupt_install_after(&mut self, checkpoint: u8) {
         assert!((1..=4).contains(&checkpoint));
         self.stop_after = Some((checkpoint, false));
+    }
+    #[cfg(test)]
+    pub(super) fn interrupt_removal_after(&mut self, checkpoint: u8, abrupt: bool) {
+        assert!((12..=15).contains(&checkpoint));
+        self.stop_after = Some((checkpoint, abrupt));
     }
     /// Existing complete files only. Never recover an intent as a side effect.
     pub(super) fn open_complete(

@@ -6,7 +6,9 @@ use super::super::{
     directories,
     managed::ManagedDirectory,
     render_activation_with_previous,
-    transaction::{DROP_IN, InstallSnapshot, LAUNCHER, PinnedActivation, RetirementSnapshot},
+    transaction::{
+        DROP_IN, InstallSnapshot, LAUNCHER, PinnedActivation, RemovalSnapshot, RetirementSnapshot,
+    },
 };
 use std::{
     fs, io,
@@ -30,6 +32,7 @@ enum ActivationEvidence {
     Complete(PinnedActivation),
     Installing(InstallSnapshot),
     Retired(RetirementSnapshot),
+    Removing(RemovalSnapshot),
 }
 
 impl ActivationEvidence {
@@ -38,6 +41,7 @@ impl ActivationEvidence {
             Self::Complete(files) => (&files.launcher.content, &files.drop_in.content),
             Self::Installing(files) => (&files.launcher.content, &files.drop_in.content),
             Self::Retired(files) => files.contents(),
+            Self::Removing(files) => files.contents(),
         }
     }
 
@@ -46,6 +50,7 @@ impl ActivationEvidence {
             Self::Complete(files) => files.recheck(state, target),
             Self::Installing(files) => files.recheck(state, target),
             Self::Retired(files) => files.recheck(state, target),
+            Self::Removing(files) => files.recheck(state, target),
         }
     }
 }
@@ -92,6 +97,17 @@ impl OwnedActivation {
 
     pub(super) fn is_retired(&self) -> bool {
         matches!(&self.files, ActivationEvidence::Retired(_))
+    }
+
+    pub(in crate::integrations::gnome) fn open_pending_removal(
+        state_path: &Path,
+        target_path: &Path,
+    ) -> io::Result<Self> {
+        let state = directories::open_private(state_path, false)?;
+        let target = directories::open_drop_ins(target_path, false)?;
+        let files =
+            ActivationEvidence::Removing(RemovalSnapshot::open(&state, &target, state_path)?);
+        Self::from_files(state_path, target_path, state, target, files)
     }
 
     fn from_files(
@@ -208,6 +224,7 @@ impl OwnedActivation {
             }
             ActivationEvidence::Installing(_) => Ok(None),
             ActivationEvidence::Retired(_) => Ok(None),
+            ActivationEvidence::Removing(files) => files.drop_in_metadata(),
         }
     }
 

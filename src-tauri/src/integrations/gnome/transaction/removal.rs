@@ -130,6 +130,130 @@ pub(in crate::integrations::gnome) struct RetirementSnapshot {
     state_path: PathBuf,
 }
 
+pub(in crate::integrations::gnome) struct RemovalSnapshot {
+    journal: OwnedFile,
+    rendered: RenderedActivation,
+    state_path: PathBuf,
+    survivors: [Option<OwnedFile>; 3],
+}
+
+impl RemovalSnapshot {
+    pub(in crate::integrations::gnome) fn open(
+        state: &ManagedDirectory,
+        target: &ManagedDirectory,
+        state_path: &Path,
+    ) -> io::Result<Self> {
+        no_other_intents(state)?;
+        state.require_absent(RETIRED_REMOVAL)?;
+        let journal = state.read_state(PENDING_REMOVAL)?;
+        let body: Removal = serde_json::from_slice(&journal.content).map_err(|_| refused())?;
+        body.validate()?;
+        if body.version != 2 {
+            return Err(refused());
+        }
+        body.launcher.check_directory(state)?;
+        body.drop_in.check_directory(target)?;
+        body.manifest.check_directory(state)?;
+        let rendered = body.render_retired(state_path)?;
+        let reopen =
+            |receipt: &Receipt, directory: &ManagedDirectory| match receipt.reopen(directory) {
+                Ok(file) => Ok(Some(file)),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(error),
+            };
+        let survivors = [
+            reopen(&body.launcher, state)?,
+            reopen(&body.drop_in, target)?,
+            reopen(&body.manifest, state)?,
+        ];
+        if let Some(manifest) = &survivors[2] {
+            body.check_manifest(manifest)?;
+        }
+        Ok(Self {
+            journal,
+            rendered,
+            state_path: state_path.into(),
+            survivors,
+        })
+    }
+
+    pub(in crate::integrations::gnome) fn contents(&self) -> (&[u8], &[u8]) {
+        (
+            self.rendered.launcher.as_bytes(),
+            self.rendered.drop_in.as_bytes(),
+        )
+    }
+
+    pub(in crate::integrations::gnome) fn drop_in_metadata(
+        &self,
+    ) -> io::Result<Option<std::fs::Metadata>> {
+        self.survivors[1]
+            .as_ref()
+            .map(|file| file.file.metadata())
+            .transpose()
+    }
+
+    pub(in crate::integrations::gnome) fn recheck(
+        &self,
+        state: &ManagedDirectory,
+        target: &ManagedDirectory,
+    ) -> io::Result<()> {
+        state.verify(&self.journal)?;
+        let current = Self::open(state, target, &self.state_path)?;
+        for ((before, after), directory) in self
+            .survivors
+            .iter()
+            .zip(&current.survivors)
+            .zip([state, target, state])
+        {
+            match (before, after) {
+                (Some(file), Some(_)) => directory.verify(file)?,
+                (None, None) => {}
+                _ => return Err(refused()),
+            }
+        }
+        state.verify(&self.journal)
+    }
+}
+
+impl<'a> ActivationTransaction<'a> {
+    pub(in crate::integrations::gnome) fn resume_retirement_checked(
+        state: &'a ManagedDirectory,
+        target: &'a ManagedDirectory,
+        state_path: &Path,
+        check: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<Self> {
+        let lock = InstallationLock::acquire(state)?;
+        if super::pending(state, PENDING_REMOVAL)? {
+            let mut snapshot = RemovalSnapshot::open(state, target, state_path)?;
+            check()?;
+            snapshot.recheck(state, target)?;
+            finish(state, target, &lock, &mut snapshot.journal, |_| Ok(()))?;
+        } else {
+            let snapshot = RetirementSnapshot::open(state, target, state_path)?;
+            check()?;
+            snapshot.recheck(state, target)?;
+            // A previous rename may have succeeded before its sync failed.
+            state.sync_directory()?;
+            target.sync_directory()?;
+        }
+        lock.check()?;
+        Ok(Self {
+            state,
+            drop_ins: target,
+            lock,
+            rendered: None,
+            phase: Phase::Removed,
+            files: Vec::new(),
+            stages: Vec::new(),
+            update: None,
+            removal_record: None,
+            #[cfg(test)]
+            stop_after: None,
+        })
+    }
+}
+
 impl RetirementSnapshot {
     pub(in crate::integrations::gnome) fn open(
         state: &ManagedDirectory,
@@ -471,6 +595,40 @@ mod tests {
     }
 
     #[test]
+    fn retirement_rename_sync_failure_reopens_as_guarded_retired_retry() {
+        let (root, state, target, rendered) = retirement_fixture();
+        let state_path = root.path().join("state");
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.apply().unwrap();
+        transaction.stop_after = Some((15, false));
+        assert!(retire(&mut transaction, root.path()).is_err());
+        transaction.stop_after = None;
+        state.fail_directory_sync_after(2);
+        assert!(retire(&mut transaction, root.path()).is_err());
+        drop(transaction);
+        state.fail_directory_sync(false);
+        let original_inode = fs::metadata(state_path.join(RETIRED_REMOVAL))
+            .unwrap()
+            .ino();
+        let recovered =
+            ActivationTransaction::resume_retirement_checked(&state, &target, &state_path, || {
+                Ok(())
+            })
+            .unwrap();
+        assert!(recovered.phase == Phase::Removed);
+        assert_eq!(
+            fs::metadata(state_path.join(RETIRED_REMOVAL))
+                .unwrap()
+                .ino(),
+            original_inode
+        );
+        RetirementSnapshot::open(&state, &target, &state_path)
+            .unwrap()
+            .recheck(&state, &target)
+            .unwrap();
+    }
+
+    #[test]
     fn retirement_refuses_an_occupied_record_before_removing_activation() {
         let (root, state, target, rendered) = retirement_fixture();
         let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
@@ -539,6 +697,15 @@ mod tests {
 
     #[test]
     fn abrupt_uninstall_child() {
+        abrupt_removal_child(false);
+    }
+
+    #[test]
+    fn abrupt_retirement_child() {
+        abrupt_removal_child(true);
+    }
+
+    fn abrupt_removal_child(retain: bool) {
         use std::path::Path;
         let Some(root) = std::env::var_os("LYN_PRIVATE_INSTALL_RECOVERY_ROOT") else {
             return;
@@ -569,16 +736,74 @@ mod tests {
         let target =
             crate::integrations::gnome::directories::open_drop_ins(&root.join("drop-ins"), false)
                 .unwrap();
-        let rendered = crate::integrations::gnome::render_activation(
-            &root.join("native.so"),
-            &state_path.join(LAUNCHER),
-        )
-        .unwrap();
+        let rendered = if retain {
+            ActivationReference {
+                digest: "a".repeat(64),
+                previous: None,
+            }
+            .render(&state_path)
+            .unwrap()
+        } else {
+            crate::integrations::gnome::render_activation(
+                &root.join("native.so"),
+                &state_path.join(LAUNCHER),
+            )
+            .unwrap()
+        };
         let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
         transaction.apply().unwrap();
         transaction.stop_after = Some((point, true));
-        transaction.rollback().unwrap();
+        if retain {
+            transaction
+                .retire_activation(&state_path, &"a".repeat(64), None)
+                .unwrap();
+        } else {
+            transaction.rollback().unwrap();
+        }
         panic!("removal checkpoint did not exit");
+    }
+
+    #[test]
+    fn four_retirement_process_exits_recover_with_exact_factory_authority() {
+        use std::os::unix::fs::PermissionsExt;
+        for point in 12..=15 {
+            let root = tempfile::Builder::new()
+                .prefix("lyn-install-recovery-")
+                .tempdir()
+                .unwrap();
+            fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+            let state_path = root.path().join("state");
+            let state =
+                crate::integrations::gnome::directories::open_private(&state_path, true).unwrap();
+            let target_path = root.path().join("drop-ins");
+            let target =
+                crate::integrations::gnome::directories::open_drop_ins(&target_path, true).unwrap();
+            fs::write(target_path.join("preferences.txt"), b"user settings").unwrap();
+            super::super::recovery::tests::abrupt_exit(
+                root.path(),
+                point,
+                "integrations::gnome::transaction::removal::tests::abrupt_retirement_child",
+            );
+            let journal_inode = fs::metadata(state_path.join(PENDING_REMOVAL))
+                .unwrap()
+                .ino();
+            let recovered = ActivationTransaction::resume_retirement_checked(
+                &state,
+                &target,
+                &state_path,
+                || Ok(()),
+            )
+            .unwrap();
+            assert!(recovered.phase == Phase::Removed);
+            let retired = RetirementSnapshot::open(&state, &target, &state_path).unwrap();
+            assert_eq!(retired.record.file.metadata().unwrap().ino(), journal_inode);
+            retired.recheck(&state, &target).unwrap();
+            assert_eq!(
+                fs::read(target_path.join("preferences.txt")).unwrap(),
+                b"user settings"
+            );
+            assert!(!state_path.join(PENDING_REMOVAL).exists());
+        }
     }
 
     #[test]
