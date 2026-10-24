@@ -733,10 +733,34 @@ pub enum GnomeConnectionStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct GnomeActivationEvidence {
+    pub phase: GnomeActivationPhase,
+    pub revision: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum GnomeActivationPhase {
+    Absent,
+    Configured,
+    Installing,
+    FinishingUpdate,
+    RestoringUpdate,
+    Removing,
+    AwaitingRemovalConfirmation,
+    Changed,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct GnomeIntegrationEvidence {
     pub files: GnomeActivationFilesStatus,
     pub connection: GnomeConnectionStatus,
     pub can_install: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub activation: Option<GnomeActivationEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -857,6 +881,8 @@ pub fn typescript_bindings() -> String {
         IntegrationId::decl(&config),
         GnomeActivationFilesStatus::decl(&config),
         GnomeConnectionStatus::decl(&config),
+        GnomeActivationPhase::decl(&config),
+        GnomeActivationEvidence::decl(&config),
         GnomeIntegrationEvidence::decl(&config),
         IntegrationStatus::decl(&config),
         InstallIntegrationInput::decl(&config),
@@ -1237,6 +1263,7 @@ mod tests {
             files: GnomeActivationFilesStatus::Owned,
             connection: GnomeConnectionStatus::Connected,
             can_install: false,
+            activation: None,
         });
         let payload = serde_json::to_value(status).unwrap();
         assert_eq!(

@@ -62,6 +62,12 @@ fn optional_receipt(
 }
 
 impl CommittedUpdateSnapshot {
+    pub(in crate::integrations::gnome) fn revision(&self) -> io::Result<String> {
+        crate::integrations::gnome::ownership::revision(
+            b"lyn-native-committed-update-revision-v1\0",
+            &self.journal,
+        )
+    }
     /// No locks, directory creation, synchronization or recovery occurs here.
     pub(in crate::integrations::gnome) fn open(
         state: &ManagedDirectory,

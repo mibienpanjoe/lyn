@@ -155,6 +155,9 @@ pub(in crate::integrations::gnome) struct InstallSnapshot {
 }
 
 impl InstallSnapshot {
+    pub(in crate::integrations::gnome) fn revision(&self) -> io::Result<String> {
+        super::super::ownership::revision(b"lyn-native-install-revision-v1\0", &self.pending)
+    }
     pub(in crate::integrations::gnome) fn open(
         state: &ManagedDirectory,
         drop_ins: &ManagedDirectory,

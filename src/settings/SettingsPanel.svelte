@@ -641,9 +641,15 @@
                     {/if}
                     {#if item.id === 'gnome'}
                       <div class="integration-details-text">
-                        {t.gnomeFilesStatus[
-                          item.native?.files ?? 'unavailable'
-                        ]}
+                        {#if item.native?.activation}
+                          {t.gnomeActivationPhase[
+                            item.native.activation.phase
+                          ] ?? t.gnomeFilesStatus.unavailable}
+                        {:else}
+                          {t.gnomeFilesStatus[
+                            item.native?.files ?? 'unavailable'
+                          ]}
+                        {/if}
                         {#if !item.native?.canInstall}
                           {t.gnomeInstallUnavailable}
                         {/if}

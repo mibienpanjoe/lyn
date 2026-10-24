@@ -34,6 +34,23 @@ fn refused() -> io::Error {
     )
 }
 
+/// Opaque freshness marker, never an authority or a filesystem selector.
+pub(super) fn revision(domain: &[u8], file: &OwnedFile) -> io::Result<String> {
+    let metadata = file.file.metadata()?;
+    let mut hash = Sha256::new();
+    hash.update(domain);
+    hash.update(metadata.dev().to_le_bytes());
+    hash.update(metadata.ino().to_le_bytes());
+    hash.update(metadata.ctime().to_le_bytes());
+    hash.update(metadata.ctime_nsec().to_le_bytes());
+    hash.update(&file.content);
+    Ok(hash
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
 impl Receipt {
     pub(super) fn filename(&self) -> &str {
         &self.name

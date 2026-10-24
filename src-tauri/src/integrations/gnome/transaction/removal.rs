@@ -138,6 +138,9 @@ pub(in crate::integrations::gnome) struct RemovalSnapshot {
 }
 
 impl RemovalSnapshot {
+    pub(in crate::integrations::gnome) fn revision(&self) -> io::Result<String> {
+        super::super::ownership::revision(b"lyn-native-removing-revision-v1\0", &self.journal)
+    }
     pub(in crate::integrations::gnome) fn open(
         state: &ManagedDirectory,
         target: &ManagedDirectory,
@@ -255,6 +258,9 @@ impl<'a> ActivationTransaction<'a> {
 }
 
 impl RetirementSnapshot {
+    pub(in crate::integrations::gnome) fn revision(&self) -> io::Result<String> {
+        super::super::ownership::revision(b"lyn-native-retired-revision-v1\0", &self.record)
+    }
     pub(in crate::integrations::gnome) fn open(
         state: &ManagedDirectory,
         target: &ManagedDirectory,

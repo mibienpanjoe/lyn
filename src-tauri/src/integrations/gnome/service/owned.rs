@@ -257,6 +257,20 @@ impl OwnedActivation {
         Ok(revision)
     }
 
+    pub(in crate::integrations::gnome) fn management_revision(&self) -> io::Result<String> {
+        self.recheck()?;
+        let revision = match &self.files {
+            ActivationEvidence::Complete(files) => files.revision(),
+            ActivationEvidence::Installing(files) => files.revision(),
+            ActivationEvidence::Retired(files) => files.revision(),
+            ActivationEvidence::Removing(files) => files.revision(),
+            ActivationEvidence::CommittedUpdate(files) => files.revision(),
+            ActivationEvidence::UncommittedUpdate(files) => files.revision(),
+        }?;
+        self.recheck()?;
+        Ok(revision)
+    }
+
     pub(super) fn drop_in_metadata(&self) -> io::Result<Option<fs::Metadata>> {
         match &self.files {
             ActivationEvidence::Complete(files) => files.drop_in.file.metadata().map(Some),

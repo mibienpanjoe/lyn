@@ -1,6 +1,6 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.15, 2026-10-23
+Version: v1.16, 2026-10-24
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
@@ -23,7 +23,7 @@ Contract status: **Shared primitives, manual and live contexts, capture-session 
 - Timestamps are RFC 3339 UTC strings and are localized only for display.
 - Durations are integer milliseconds.
 - Byte sizes are non-negative integers.
-- Optional fields are explicit `null`, not omitted, in command results, except the additive `IntegrationStatus.native` extension, which is omitted for legacy integration rows.
+- Optional fields are explicit `null`, not omitted, in command results, except the additive `IntegrationStatus.native` and `native.activation` extensions, which are omitted when absent for legacy compatibility.
 - User text is UTF-8 and is not normalized or rewritten by the transport layer.
 - Commands accept media IDs and context IDs, never arbitrary filesystem paths.
 - Enums are lowercase string literals.
@@ -656,6 +656,10 @@ interface GnomeIntegrationEvidence {
   files: GnomeActivationFilesStatus;
   connection: GnomeConnectionStatus;
   canInstall: boolean;
+  activation?: {
+    phase: "absent" | "configured" | "installing" | "finishing_update" | "restoring_update" | "removing" | "awaiting_removal_confirmation" | "changed" | "unavailable";
+    revision: string | null;
+  };
 }
 interface IntegrationStatus {
   id: IntegrationId;
@@ -669,6 +673,8 @@ interface IntegrationStatus {
 ```
 
 The GNOME row keeps file ownership and admitted transport observations separate. `owned` covers the three activation files only; `connected` covers an observed authenticated transport, not the focused source or a verified capture. Missing evidence must display unavailable, never Installed/Ready or an installation action. No private path, PID or source identifier is returned in native evidence. The initial GNOME distribution is not yet available: `installed` and `canInstall` are false even if activation files are owned or a manually activated native producer is connected. The [native protocol contract](gnome_native_protocol.md) owns the precise observation/refusal boundaries.
+
+The additive activation observation distinguishes recognized complete configuration, interrupted first installation, committed update cleanup, uncommitted restoration, removal and retained removal authority. Each recognized owned phase carries an opaque64-hex revision derived from its pinned authority file's identity/change time/content with a phase-specific domain; complete configuration preserves the existing rollback revision. It is a freshness marker for the same recorded configuration/intent, not a credential, a module version, an action permission or an atomic global snapshot. The same intent can retain its revision as recorded cleanup progresses. Absent/changed/unavailable observations have `revision:null`. An identical-byte replacement of the authority changes its fresh revision and invalidates a retained reader. Status creates no locks/directories, performs no manager/provider RPC or transaction recovery and never acknowledges removal. The UI uses localized phase text with legacy file-status fallback and does not display the revision. Mutation commands and their authoritative revision checks remain separate work; this metadata adds no install/reload/restart action.
 
 ### `install_integration`
 

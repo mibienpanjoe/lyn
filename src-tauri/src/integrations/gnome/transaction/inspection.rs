@@ -65,21 +65,7 @@ pub(in crate::integrations::gnome) struct PinnedActivation {
 
 impl PinnedActivation {
     pub(in crate::integrations::gnome) fn revision(&self) -> io::Result<String> {
-        use sha2::{Digest, Sha256};
-        use std::os::unix::fs::MetadataExt;
-        let metadata = self.manifest.file.metadata()?;
-        let mut hash = Sha256::new();
-        hash.update(b"lyn-native-activation-revision-v1\0");
-        hash.update(metadata.dev().to_le_bytes());
-        hash.update(metadata.ino().to_le_bytes());
-        hash.update(metadata.ctime().to_le_bytes());
-        hash.update(metadata.ctime_nsec().to_le_bytes());
-        hash.update(&self.manifest.content);
-        Ok(hash
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect())
+        super::super::ownership::revision(b"lyn-native-activation-revision-v1\0", &self.manifest)
     }
     pub(super) fn into_files(self) -> Vec<(super::Place, OwnedFile)> {
         vec![
@@ -92,6 +78,7 @@ impl PinnedActivation {
         state: &ManagedDirectory,
         target: &ManagedDirectory,
     ) -> io::Result<Self> {
+        state.require_absent(removal::RETIRED_REMOVAL)?;
         if has_intent(Some(state))? {
             return Err(super::refused());
         }
@@ -122,6 +109,7 @@ impl PinnedActivation {
         state: &ManagedDirectory,
         target: &ManagedDirectory,
     ) -> io::Result<()> {
+        state.require_absent(removal::RETIRED_REMOVAL)?;
         if has_intent(Some(state))? {
             return Err(super::refused());
         }
@@ -133,6 +121,7 @@ impl PinnedActivation {
         if has_intent(Some(state))? {
             return Err(super::refused());
         }
+        state.require_absent(removal::RETIRED_REMOVAL)?;
         Ok(())
     }
 }
@@ -179,7 +168,9 @@ pub(in crate::integrations::gnome) fn inspect_activation_files(
                 Some(libc::ELOOP | libc::ENXIO | libc::ENODEV | libc::EISDIR)
             ) || matches!(
                 error.kind(),
-                io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                io::ErrorKind::NotFound
+                    | io::ErrorKind::PermissionDenied
+                    | io::ErrorKind::AlreadyExists
             ) =>
         {
             ActivationFilesState::Changed

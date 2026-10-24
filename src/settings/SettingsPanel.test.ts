@@ -472,6 +472,57 @@ describe('Settings', () => {
     expect(within(card).queryByRole('button')).toBeNull();
   });
 
+  it.each([
+    {
+      language: 'english' as const,
+      label: 'Previous configuration needs to be restored.',
+    },
+    {
+      language: 'french' as const,
+      label: 'Configuration précédente à restaurer.',
+    },
+  ])(
+    'shows the precise GNOME recovery phase in $language without exposing its revision',
+    async ({ language, label }) => {
+      const revision = 'a'.repeat(64);
+      const intClient: IntegrationClient = {
+        list: vi.fn().mockResolvedValue([
+          {
+            id: 'gnome',
+            name: 'GNOME Terminal',
+            description: 'Native context',
+            detected: true,
+            installed: false,
+            details: null,
+            native: {
+              files: 'pending',
+              connection: 'disconnected',
+              canInstall: false,
+              activation: { phase: 'restoring_update', revision },
+            },
+          },
+        ]),
+        install: vi.fn(),
+      };
+      render(SettingsPanel, {
+        client: client({
+          get: vi.fn().mockResolvedValue({ ...initial, language }),
+        }),
+        modelClient,
+        intClient,
+      });
+      expect(
+        await screen.findByText(new RegExp(label.replace('.', '\\.'))),
+      ).toBeVisible();
+      const card = screen
+        .getByText('GNOME Terminal')
+        .closest('.integration-card') as HTMLElement;
+      expect(card.textContent).not.toContain(revision);
+      expect(within(card).queryByRole('button')).toBeNull();
+      expect(intClient.install).not.toHaveBeenCalled();
+    },
+  );
+
   it('handles overlapping list requests and discards out-of-order stale responses', async () => {
     let resolveFirst!: (value: IntegrationStatus[]) => void;
     const firstPromise = new Promise<IntegrationStatus[]>((resolve) => {

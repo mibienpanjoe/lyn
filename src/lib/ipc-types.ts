@@ -172,7 +172,11 @@ export type GnomeActivationFilesStatus = "absent" | "owned" | "changed" | "pendi
 
 export type GnomeConnectionStatus = "connected" | "disconnected" | "busy" | "unavailable";
 
-export type GnomeIntegrationEvidence = { files: GnomeActivationFilesStatus, connection: GnomeConnectionStatus, canInstall: boolean, };
+export type GnomeActivationPhase = "absent" | "configured" | "installing" | "finishing_update" | "restoring_update" | "removing" | "awaiting_removal_confirmation" | "changed" | "unavailable";
+
+export type GnomeActivationEvidence = { phase: GnomeActivationPhase, revision: string | null, };
+
+export type GnomeIntegrationEvidence = { files: GnomeActivationFilesStatus, connection: GnomeConnectionStatus, canInstall: boolean, activation?: GnomeActivationEvidence, };
 
 export type IntegrationStatus = { id: IntegrationId, name: string, description: string, detected: boolean, installed: boolean, details: string | null, native?: GnomeIntegrationEvidence, };
 

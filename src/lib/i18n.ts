@@ -1,5 +1,6 @@
 import type {
   GnomeActivationFilesStatus,
+  GnomeActivationPhase,
   GnomeConnectionStatus,
   LanguageSetting,
 } from './ipc-types';
@@ -50,6 +51,7 @@ export interface Translations {
   btnInstallNative: string;
   gnomeConnectionStatus: Record<GnomeConnectionStatus, string>;
   gnomeFilesStatus: Record<GnomeActivationFilesStatus, string>;
+  gnomeActivationPhase: Record<GnomeActivationPhase, string>;
   gnomeInstallUnavailable: string;
   integrationDescriptions: Record<string, string>;
 
@@ -174,6 +176,17 @@ const en: Translations = {
     unavailable: 'Installation status unavailable.',
   },
   gnomeInstallUnavailable: 'Installation is not available in this build.',
+  gnomeActivationPhase: {
+    absent: 'Not installed.',
+    configured: 'Lyn configuration verified.',
+    installing: 'Installation needs to be completed.',
+    finishing_update: 'Update needs to be completed.',
+    restoring_update: 'Previous configuration needs to be restored.',
+    removing: 'Removal needs to be completed.',
+    awaiting_removal_confirmation: 'Removal needs to be confirmed.',
+    changed: 'Configuration changed; verification is required.',
+    unavailable: 'Installation status unavailable.',
+  },
   integrationDescriptions: {
     gnome: 'Associates captures with the active local GNOME terminal project.',
     cursor: 'Reports the focused Cursor workspace folder to Lyn on capture.',
@@ -310,6 +323,17 @@ const fr: Translations = {
   },
   gnomeInstallUnavailable:
     'L’installation n’est pas disponible dans cette version.',
+  gnomeActivationPhase: {
+    absent: 'Non installé.',
+    configured: 'Configuration de Lyn vérifiée.',
+    installing: 'Installation à terminer.',
+    finishing_update: 'Mise à jour à terminer.',
+    restoring_update: 'Configuration précédente à restaurer.',
+    removing: 'Désinstallation à terminer.',
+    awaiting_removal_confirmation: 'Retrait à confirmer.',
+    changed: 'Configuration modifiée ; vérification nécessaire.',
+    unavailable: 'État de l’installation indisponible.',
+  },
   integrationDescriptions: {
     gnome: 'Associe les captures au projet du terminal GNOME local actif.',
     cursor:

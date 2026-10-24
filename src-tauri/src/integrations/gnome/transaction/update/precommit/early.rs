@@ -218,6 +218,12 @@ fn no_competing_intent(state: &ManagedDirectory) -> io::Result<()> {
 }
 
 impl UncommittedUpdateSnapshot {
+    pub(in crate::integrations::gnome) fn revision(&self) -> io::Result<String> {
+        crate::integrations::gnome::ownership::revision(
+            b"lyn-native-uncommitted-update-revision-v1\0",
+            &self.header,
+        )
+    }
     pub(in crate::integrations::gnome) fn open(
         state: &ManagedDirectory,
         target: &ManagedDirectory,
