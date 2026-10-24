@@ -120,6 +120,8 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 The prototype currently refuses library versions outside its tested GTK 3.24.33 / VTE 0.68.0 reference stack. Matching library numbers alone do not establish installed compatibility; see the [version boundary](docs/gnome_native_protocol.md#boundary-and-lifecycle).
 
+`pnpm provider:gnome:manager:test` checks preparation, definition reload, removal and settled retries against a real private systemd user manager. It requires Bubblewrap, Python GI/GIO, unprivileged namespaces and an already delegated writable user cgroup; it runs only as an ordinary user. It confines writes to a fresh child cgroup and temporary directories, keeps GNOME inactive and never uses your session manager or bus. This proves definition consumption, not module activation or installed-package acceptance.
+
 The backend suite also saves synthetic PNG/WAV captures and checks media preservation through native generation loss and manual context correction. This does not exercise the desktop media controls or microphone; see the [native coverage and limits](docs/gnome_native_protocol.md#capture-integration-and-continuity).
 
 `pnpm provider:gnome:test --pid-reuse` additionally reuses a real PID inside a disposable user/PID/mount namespace and requires the old pidfd-backed peer to remain refused. This optional kernel test needs `/usr/bin/unshare` with unprivileged user namespaces enabled, runs only as an ordinary non-root user, and never writes the host PID counter. It is not GNOME window-ID reuse or installed-package acceptance.
