@@ -8,6 +8,7 @@ mod update;
 
 pub(super) use inspection::PinnedActivation;
 pub(super) use inspection::{ActivationFilesState, inspect_activation_files};
+pub(super) use recovery::InstallSnapshot;
 
 use super::{
     RenderedActivation,
@@ -76,6 +77,11 @@ fn pending(directory: &ManagedDirectory, name: &str) -> io::Result<bool> {
 }
 
 impl<'a> ActivationTransaction<'a> {
+    #[cfg(test)]
+    pub(super) fn interrupt_install_after(&mut self, checkpoint: u8) {
+        assert!((1..=4).contains(&checkpoint));
+        self.stop_after = Some((checkpoint, false));
+    }
     /// Existing complete files only. Never recover an intent as a side effect.
     pub(super) fn open_complete(
         state: &'a ManagedDirectory,
@@ -137,6 +143,26 @@ impl<'a> ActivationTransaction<'a> {
         drop_ins: &'a ManagedDirectory,
     ) -> io::Result<Self> {
         let lock = InstallationLock::acquire(state)?;
+        Self::resume_locked(state, drop_ins, lock)
+    }
+
+    pub(super) fn resume_install_checked(
+        state: &'a ManagedDirectory,
+        drop_ins: &'a ManagedDirectory,
+        check: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<Self> {
+        let lock = InstallationLock::acquire(state)?;
+        let snapshot = InstallSnapshot::open(state, drop_ins)?;
+        check()?;
+        snapshot.recheck(state, drop_ins)?;
+        Self::resume_locked(state, drop_ins, lock)
+    }
+
+    fn resume_locked(
+        state: &'a ManagedDirectory,
+        drop_ins: &'a ManagedDirectory,
+        lock: InstallationLock<'a>,
+    ) -> io::Result<Self> {
         if removal::recover_removal(state, drop_ins, &lock)? {
             return Ok(Self {
                 state,

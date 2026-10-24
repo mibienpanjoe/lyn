@@ -6,7 +6,7 @@ use super::super::{
     directories,
     managed::ManagedDirectory,
     render_activation_with_previous,
-    transaction::{DROP_IN, LAUNCHER, PinnedActivation},
+    transaction::{DROP_IN, InstallSnapshot, LAUNCHER, PinnedActivation},
 };
 use std::{
     fs, io,
@@ -19,11 +19,32 @@ pub(in crate::integrations::gnome) struct OwnedActivation {
     target_path: PathBuf,
     state: ManagedDirectory,
     target: ManagedDirectory,
-    files: PinnedActivation,
+    files: ActivationEvidence,
     launcher_path: String,
     drop_in_path: String,
     module_path: PathBuf,
     previous_module: Option<String>,
+}
+
+enum ActivationEvidence {
+    Complete(PinnedActivation),
+    Installing(InstallSnapshot),
+}
+
+impl ActivationEvidence {
+    fn contents(&self) -> (&[u8], &[u8]) {
+        match self {
+            Self::Complete(files) => (&files.launcher.content, &files.drop_in.content),
+            Self::Installing(files) => (&files.launcher.content, &files.drop_in.content),
+        }
+    }
+
+    fn recheck(&self, state: &ManagedDirectory, target: &ManagedDirectory) -> io::Result<()> {
+        match self {
+            Self::Complete(files) => files.recheck(state, target),
+            Self::Installing(files) => files.recheck(state, target),
+        }
+    }
 }
 
 fn refused() -> io::Error {
@@ -41,7 +62,27 @@ impl OwnedActivation {
     ) -> io::Result<Self> {
         let state = directories::open_private(state_path, false)?;
         let target = directories::open_drop_ins(target_path, false)?;
-        let files = PinnedActivation::open(&state, &target)?;
+        let files = ActivationEvidence::Complete(PinnedActivation::open(&state, &target)?);
+        Self::from_files(state_path, target_path, state, target, files)
+    }
+
+    pub(in crate::integrations::gnome) fn open_pending_install(
+        state_path: &Path,
+        target_path: &Path,
+    ) -> io::Result<Self> {
+        let state = directories::open_private(state_path, false)?;
+        let target = directories::open_drop_ins(target_path, false)?;
+        let files = ActivationEvidence::Installing(InstallSnapshot::open(&state, &target)?);
+        Self::from_files(state_path, target_path, state, target, files)
+    }
+
+    fn from_files(
+        state_path: &Path,
+        target_path: &Path,
+        state: ManagedDirectory,
+        target: ManagedDirectory,
+        files: ActivationEvidence,
+    ) -> io::Result<Self> {
         let launcher_path = state_path
             .join(LAUNCHER)
             .to_str()
@@ -55,7 +96,8 @@ impl OwnedActivation {
         // Decode only the factory's single-quoted literal, then require the
         // entire launcher and drop-in to round-trip byte for byte. This is not
         // a generic shell parser and never executes the supplied text.
-        let text = std::str::from_utf8(&files.launcher.content).map_err(|_| refused())?;
+        let (launcher_bytes, drop_in_bytes) = files.contents();
+        let text = std::str::from_utf8(launcher_bytes).map_err(|_| refused())?;
         let literal = text
             .lines()
             .nth(2)
@@ -87,8 +129,8 @@ impl OwnedActivation {
             previous_module,
         )
         .map_err(|_| refused())?;
-        if rendered.launcher.as_bytes() != files.launcher.content
-            || rendered.drop_in.as_bytes() != files.drop_in.content
+        if rendered.launcher.as_bytes() != launcher_bytes
+            || rendered.drop_in.as_bytes() != drop_in_bytes
         {
             return Err(refused());
         }
@@ -130,13 +172,24 @@ impl OwnedActivation {
 
     pub(in crate::integrations::gnome) fn revision(&self) -> io::Result<String> {
         self.recheck()?;
-        let revision = self.files.revision()?;
+        let ActivationEvidence::Complete(files) = &self.files else {
+            return Err(refused());
+        };
+        let revision = files.revision()?;
         self.recheck()?;
         Ok(revision)
     }
 
-    pub(super) fn drop_in_metadata(&self) -> io::Result<fs::Metadata> {
-        self.files.drop_in.file.metadata()
+    pub(super) fn drop_in_metadata(&self) -> io::Result<Option<fs::Metadata>> {
+        match &self.files {
+            ActivationEvidence::Complete(files) => files.drop_in.file.metadata().map(Some),
+            ActivationEvidence::Installing(files)
+                if files.drop_in.name.to_bytes() == DROP_IN.as_bytes() =>
+            {
+                files.drop_in.file.metadata().map(Some)
+            }
+            ActivationEvidence::Installing(_) => Ok(None),
+        }
     }
 
     pub(in crate::integrations::gnome) fn recheck(&self) -> io::Result<()> {

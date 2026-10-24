@@ -305,6 +305,55 @@ fn remove_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result<Removed,
     Ok(Removed)
 }
 
+fn recover_install_at(
+    paths: &Paths,
+    service: &mut impl ServiceChecks,
+) -> Result<Prepared, Failure> {
+    let preflight = |error| failure(Stage::Preflight, Cause::Io(error));
+    let active = ExistingActivation {
+        state: directories::open_private(&paths.state, false).map_err(preflight)?,
+        target: directories::open_drop_ins(&paths.target, false).map_err(preflight)?,
+        owned: OwnedActivation::open_pending_install(&paths.state, &paths.target)
+            .map_err(preflight)?,
+    };
+    active.recheck(paths).map_err(preflight)?;
+    let module = PreviousModule::open(paths, &active).map_err(preflight)?;
+    owned_definition(service, &active.owned, Stage::Preflight)?;
+    let mut check_failure = None;
+    let result =
+        ActivationTransaction::resume_install_checked(&active.state, &active.target, || {
+            #[cfg(test)]
+            service.after_activation_lock();
+            let check = (|| {
+                let applying = |error| failure(Stage::Applying, Cause::Io(error));
+                active.recheck(paths).map_err(applying)?;
+                module.recheck(paths, &active).map_err(applying)?;
+                owned_definition(service, &active.owned, Stage::Applying)?;
+                active.recheck(paths).map_err(applying)?;
+                module.recheck(paths, &active).map_err(applying)
+            })();
+            if let Err(error) = check {
+                check_failure = Some(error);
+                return Err(io::Error::other(
+                    "native install recovery preflight refused",
+                ));
+            }
+            Ok(())
+        });
+    let _transaction = result.map_err(|error| {
+        check_failure.unwrap_or_else(|| failure(Stage::Applying, Cause::Io(error)))
+    })?;
+    let verifying = |error| failure(Stage::Verifying, Cause::Io(error));
+    let current = OwnedActivation::open(&paths.state, &paths.target).map_err(verifying)?;
+    if current.module_path() != active.owned.module_path() {
+        return Err(failure(Stage::Verifying, Cause::Conflict));
+    }
+    let definition = owned_definition(service, &current, Stage::Verifying)?;
+    current.recheck().map_err(verifying)?;
+    module.recheck(paths, &active).map_err(verifying)?;
+    Ok(Prepared { definition })
+}
+
 trait ServiceChecks {
     fn stock(&mut self) -> Result<(), ServiceRefusal>;
     fn owned(&mut self, owned: &OwnedActivation) -> Result<DefinitionState, ServiceRefusal>;
@@ -422,6 +471,16 @@ pub(super) fn prepare_update(home: &Path) -> Result<Prepared, Failure> {
 
 pub(super) fn rollback_offer(home: &Path) -> Result<RollbackOffer, Failure> {
     rollback_offer_at(&Paths::from_home(home)?)
+}
+
+pub(super) fn recover_install(home: &Path) -> Result<Prepared, Failure> {
+    let paths = Paths::from_home(home)?;
+    recover_install_at(
+        &paths,
+        &mut RealService {
+            target: paths.target.clone(),
+        },
+    )
 }
 
 pub(super) fn rollback(home: &Path, expected_revision: &str) -> Result<Prepared, Failure> {
@@ -547,6 +606,39 @@ pub(super) fn update_private(root: &Path, artifact: &Artifact) -> Result<Prepare
 }
 
 #[cfg(test)]
+pub(super) fn recover_interrupted_private(
+    root: &Path,
+    checkpoint: u8,
+) -> Result<Prepared, Failure> {
+    // Called only after the cfg(test) entry's private filesystem-bus guard.
+    // Exercise a dropped transaction, not a production fault-injection option.
+    let paths = Paths {
+        state: root.join("state"),
+        target: root.join("units/gnome-terminal-server.service.d"),
+    };
+    let active = ExistingActivation::open(&paths)?;
+    let rendered = render_activation(
+        active.owned.module_path(),
+        &paths.state.join(transaction::LAUNCHER),
+    )
+    .map_err(|_| failure(Stage::Preflight, Cause::Conflict))?;
+    let mut service = RealService {
+        target: paths.target.clone(),
+    };
+    remove_at(&paths, &mut service)?;
+    {
+        let mut transaction = ActivationTransaction::begin(&active.state, &active.target, rendered)
+            .map_err(|error| failure(Stage::Preparing, Cause::Io(error)))?;
+        transaction.interrupt_install_after(checkpoint);
+        assert!(
+            transaction.apply().is_err(),
+            "private checkpoint must interrupt installation"
+        );
+    }
+    recover_install_at(&paths, &mut service)
+}
+
+#[cfg(test)]
 pub(super) fn remove_private(root: &Path) -> Result<Removed, Failure> {
     let paths = Paths {
         state: root.join("state"),
@@ -581,6 +673,7 @@ mod tests {
     use super::*;
     use std::{fs, os::unix::fs::PermissionsExt};
 
+    #[derive(Default)]
     struct Checks {
         stock_calls: usize,
         owned_calls: usize,
@@ -648,6 +741,161 @@ mod tests {
             .collect();
         other.bytes = bytes.leak();
         other
+    }
+
+    fn interrupted_install(paths: &Paths, checkpoint: u8) {
+        let artifact = artifact();
+        let mut checks = Checks::default();
+        prepare_at(paths, &artifact, &mut checks).unwrap();
+        remove_at(paths, &mut checks).unwrap();
+        let state = directories::open_private(&paths.state, false).unwrap();
+        let target = directories::open_drop_ins(&paths.target, false).unwrap();
+        let module = paths
+            .state
+            .join("modules")
+            .join(&artifact.manifest.sha256)
+            .join(artifact::format::MODULE_NAME);
+        let rendered =
+            render_activation(&module, &paths.state.join(transaction::LAUNCHER)).unwrap();
+        let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
+        transaction.interrupt_install_after(checkpoint);
+        assert!(transaction.apply().is_err());
+    }
+
+    #[test]
+    fn pending_install_recovery_uses_owned_history_at_each_publication_prefix() {
+        for point in 1..=4 {
+            let (_root, paths) = fixture();
+            interrupted_install(&paths, point);
+            assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Pending);
+            let mut checks = Checks::default();
+            assert_eq!(
+                recover_install_at(&paths, &mut checks).unwrap().definition,
+                DefinitionState::NeedsReload
+            );
+            assert_eq!(checks.owned_calls, 3);
+            assert_eq!(checks.stock_calls, 0);
+            assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Owned);
+            assert!(recover_install_at(&paths, &mut checks).is_err());
+            assert_eq!(checks.owned_calls, 3);
+        }
+    }
+
+    #[test]
+    fn pending_install_recovery_refuses_changed_module_before_service_or_publication() {
+        let (_root, paths) = fixture();
+        interrupted_install(&paths, 1);
+        let module = paths
+            .state
+            .join("modules")
+            .join(artifact().manifest.sha256)
+            .join(artifact::format::MODULE_NAME);
+        fs::set_permissions(&module, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&module, b"changed").unwrap();
+        let mut checks = Checks::default();
+        assert!(recover_install_at(&paths, &mut checks).is_err());
+        assert_eq!(checks.owned_calls, 0);
+        assert!(!paths.state.join(transaction::LAUNCHER).exists());
+        assert!(!paths.target.join(transaction::DROP_IN).exists());
+        assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Pending);
+    }
+
+    #[test]
+    fn pending_install_recovery_preserves_authority_on_service_or_namespace_refusal() {
+        struct Refuse {
+            calls: usize,
+            refuse_at: usize,
+            replace: Option<PathBuf>,
+        }
+        impl ServiceChecks for Refuse {
+            fn stock(&mut self) -> Result<(), ServiceRefusal> {
+                panic!("not stock recovery")
+            }
+            fn owned(
+                &mut self,
+                owned: &OwnedActivation,
+            ) -> Result<DefinitionState, ServiceRefusal> {
+                owned.recheck().unwrap();
+                self.calls += 1;
+                if self.calls == self.refuse_at {
+                    Err(ServiceRefusal::Changed)
+                } else {
+                    Ok(DefinitionState::NeedsReload)
+                }
+            }
+            fn after_activation_lock(&mut self) {
+                if let Some(path) = self.replace.take() {
+                    fs::rename(&path, path.with_extension("old")).unwrap();
+                    fs::create_dir(&path).unwrap();
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+                }
+            }
+        }
+        for refused in 1..=3 {
+            let (_root, paths) = fixture();
+            interrupted_install(&paths, 1);
+            let mut checks = Refuse {
+                calls: 0,
+                refuse_at: refused,
+                replace: (refused == 3).then(|| paths.state.clone()),
+            };
+            let error = recover_install_at(&paths, &mut checks).unwrap_err();
+            assert_eq!(
+                error.stage,
+                if refused == 1 {
+                    Stage::Preflight
+                } else {
+                    Stage::Applying
+                }
+            );
+            if refused < 3 {
+                assert!(matches!(
+                    error.cause,
+                    Cause::Service(ServiceRefusal::Changed)
+                ));
+                assert_eq!(checks.calls, refused);
+                assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Pending);
+            } else {
+                assert_eq!(checks.calls, 1);
+                assert_eq!(fs::read_dir(&paths.state).unwrap().count(), 0);
+                assert!(
+                    paths
+                        .state
+                        .with_extension("old")
+                        .join("installation-pending-v1.json")
+                        .exists()
+                );
+            }
+            assert!(!paths.state.join(transaction::LAUNCHER).exists());
+            assert!(!paths.target.join(transaction::DROP_IN).exists());
+        }
+    }
+
+    #[test]
+    fn pending_install_recovery_refuses_occupied_slots_and_competing_intents() {
+        for kind in ["occupied", "other-intent", "edited-journal"] {
+            let (_root, paths) = fixture();
+            interrupted_install(&paths, 1);
+            match kind {
+                "occupied" => {
+                    fs::write(paths.target.join(transaction::DROP_IN), b"foreign").unwrap()
+                }
+                "other-intent" => {
+                    fs::write(paths.state.join("uninstall-pending-v1.json"), b"{}").unwrap()
+                }
+                _ => fs::write(paths.state.join("installation-pending-v1.json"), b"{}").unwrap(),
+            }
+            let mut checks = Checks::default();
+            assert!(recover_install_at(&paths, &mut checks).is_err(), "{kind}");
+            assert_eq!(checks.owned_calls, 0);
+            assert!(!paths.state.join(transaction::LAUNCHER).exists());
+            if kind == "occupied" {
+                assert_eq!(
+                    fs::read(paths.target.join(transaction::DROP_IN)).unwrap(),
+                    b"foreign"
+                );
+            }
+        }
     }
 
     #[test]

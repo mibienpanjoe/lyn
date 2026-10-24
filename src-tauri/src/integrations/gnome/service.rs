@@ -371,7 +371,11 @@ pub(super) fn inspect_unmodified_service_at(target: &std::path::Path) -> Result<
 pub(super) fn inspect_owned_service(owned: &OwnedActivation) -> Result<DefinitionState> {
     let address =
         std::env::var("DBUS_SESSION_BUS_ADDRESS").map_err(|_| ServiceRefusal::Unavailable)?;
-    inspect_address_for(&address, Some(owned), None)
+    inspect_address_for(
+        &address,
+        Some(owned),
+        std::path::Path::new(owned.paths().1).parent(),
+    )
 }
 
 fn inspect_address_for(
@@ -389,9 +393,14 @@ fn inspect_address_for(
             let metadata = owned
                 .drop_in_metadata()
                 .map_err(|_| ServiceRefusal::Changed)?;
-            overrides::OwnedDropIn::pin(std::path::Path::new(owned.paths().1), &metadata)
+            metadata
+                .map(|metadata| {
+                    overrides::OwnedDropIn::pin(std::path::Path::new(owned.paths().1), &metadata)
+                })
+                .transpose()
         })
-        .transpose()?;
+        .transpose()?
+        .flatten();
     let connection = gio::DBusConnection::for_address_sync(
         &address,
         gio::DBusConnectionFlags::AUTHENTICATION_CLIENT

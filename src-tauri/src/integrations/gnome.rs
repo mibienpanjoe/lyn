@@ -229,6 +229,11 @@ mod tests {
         let artifact = private_native_artifact();
         let result = coordinator::prepare_private(root, &artifact).unwrap();
         assert_eq!(result.definition, service::DefinitionState::NeedsReload);
+        for checkpoint in 1..=4 {
+            let result = coordinator::recover_interrupted_private(root, checkpoint).unwrap();
+            assert_eq!(result.definition, service::DefinitionState::NeedsReload);
+        }
+        println!("PASS: private service-guarded install recovery at all four publication prefixes");
     }
 
     #[test]

@@ -147,36 +147,91 @@ fn locate(
     }
 }
 
+pub(in crate::integrations::gnome) struct InstallSnapshot {
+    pending: OwnedFile,
+    pub(in crate::integrations::gnome) launcher: OwnedFile,
+    pub(in crate::integrations::gnome) drop_in: OwnedFile,
+    manifest: Option<OwnedFile>,
+}
+
+impl InstallSnapshot {
+    pub(in crate::integrations::gnome) fn open(
+        state: &ManagedDirectory,
+        drop_ins: &ManagedDirectory,
+    ) -> io::Result<Self> {
+        for name in [
+            super::removal::PENDING_REMOVAL,
+            super::update::CLEANUP_PENDING,
+            super::update::PRECOMMIT_PENDING,
+            super::update::COMPENSATION_PENDING,
+        ]
+        .into_iter()
+        .chain(super::update::EXCHANGE_NAMES)
+        {
+            state.require_absent(name)?;
+        }
+        let pending = state.read_state(PENDING_INSTALL)?;
+        let intent: InstallIntent =
+            serde_json::from_slice(&pending.content).map_err(|_| refused())?;
+        intent.validate()?;
+        // Preflight both slots before moving either. Unknown names, modified bytes
+        // and a missing journaled inode refuse, without adopting replacement files.
+        let launcher = locate(state, &intent.launcher, &intent.launcher_name(), LAUNCHER)?;
+        let drop_in = locate(drop_ins, &intent.drop_in, &intent.drop_in_name(), DROP_IN)?;
+        let existing_manifest = match state.read_state(MANIFEST) {
+            Ok(existing) => {
+                if launcher.name.to_bytes() != LAUNCHER.as_bytes()
+                    || drop_in.name.to_bytes() != DROP_IN.as_bytes()
+                    || existing.content != manifest_bytes(state, drop_ins, &launcher, &drop_in)?
+                {
+                    return Err(refused());
+                }
+                Some(existing)
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        Ok(Self {
+            pending,
+            launcher,
+            drop_in,
+            manifest: existing_manifest,
+        })
+    }
+
+    pub(in crate::integrations::gnome) fn recheck(
+        &self,
+        state: &ManagedDirectory,
+        target: &ManagedDirectory,
+    ) -> io::Result<()> {
+        state.verify(&self.pending)?;
+        let current = Self::open(state, target)?;
+        state.verify(&self.launcher)?;
+        target.verify(&self.drop_in)?;
+        match (&self.manifest, &current.manifest) {
+            (Some(file), Some(_)) => state.verify(file)?,
+            (None, None) => {}
+            _ => return Err(refused()),
+        }
+        Ok(())
+    }
+}
+
 pub(super) fn recover_pending(
     state: &ManagedDirectory,
     drop_ins: &ManagedDirectory,
     lock: &InstallationLock<'_>,
 ) -> io::Result<()> {
     lock.check()?;
-    let pending = match state.read_state(PENDING_INSTALL) {
-        Ok(pending) => pending,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    let intent: InstallIntent = serde_json::from_slice(&pending.content).map_err(|_| refused())?;
-    intent.validate()?;
-    // Preflight both slots before moving either. Unknown names, modified bytes
-    // and a missing journaled inode refuse, without adopting replacement files.
-    let mut launcher = locate(state, &intent.launcher, &intent.launcher_name(), LAUNCHER)?;
-    let mut drop_in = locate(drop_ins, &intent.drop_in, &intent.drop_in_name(), DROP_IN)?;
-    let existing_manifest = match state.read_state(MANIFEST) {
-        Ok(existing) => {
-            if launcher.name.to_bytes() != LAUNCHER.as_bytes()
-                || drop_in.name.to_bytes() != DROP_IN.as_bytes()
-                || existing.content != manifest_bytes(state, drop_ins, &launcher, &drop_in)?
-            {
-                return Err(refused());
-            }
-            Some(existing)
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error),
-    };
+    if !super::pending(state, PENDING_INSTALL)? {
+        return Ok(());
+    }
+    let InstallSnapshot {
+        pending,
+        mut launcher,
+        mut drop_in,
+        manifest: existing_manifest,
+    } = InstallSnapshot::open(state, drop_ins)?;
     lock.check()?;
     if launcher.name.to_bytes() != LAUNCHER.as_bytes() {
         state
