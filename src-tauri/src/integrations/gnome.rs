@@ -261,6 +261,33 @@ mod tests {
             "recover-remove" => {
                 coordinator::recover_removal_private(root).unwrap();
             }
+            "synchronize" => {
+                let expected = std::env::var("LYN_PRIVATE_SYNC_EXPECTED").unwrap();
+                let result = coordinator::synchronize_private(root);
+                match expected.as_str() {
+                    "managed" => assert_eq!(
+                        result.unwrap().definition,
+                        service::DefinitionState::ManagedLoaded
+                    ),
+                    "stock" => {
+                        assert_eq!(result.unwrap().definition, service::DefinitionState::Stock)
+                    }
+                    "refused" => assert!(result.is_err()),
+                    _ => panic!("unknown private sync expectation"),
+                }
+            }
+            "synchronize-with-change" => {
+                let state = directories::open_private(&root.join("state"), false).unwrap();
+                let lock = lock::InstallationLock::acquire(&state).unwrap();
+                let owned = service::OwnedActivation::open(
+                    &root.join("state"),
+                    &root.join("units/gnome-terminal-server.service.d"),
+                )
+                .unwrap();
+                assert!(service::synchronize_changed_fixture(&owned).is_err());
+                lock.check().unwrap();
+                owned.recheck().unwrap();
+            }
             "rollback" => {
                 let result = coordinator::rollback_private(root).unwrap();
                 assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);

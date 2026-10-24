@@ -1,4 +1,5 @@
-//! Read-only service compatibility. Never starts, stops or reloads a service.
+//! Read-only compatibility and explicit guarded definition synchronization.
+//! Never starts, stops or restarts a service.
 
 mod overrides;
 mod owned;
@@ -137,7 +138,9 @@ struct Budget {
 }
 impl Budget {
     fn new() -> Result<Self> {
-        let duration = Duration::from_secs(1);
+        Self::with_duration(Duration::from_secs(1))
+    }
+    fn with_duration(duration: Duration) -> Result<Self> {
         let deadline = Instant::now() + duration;
         let cancel = gio::Cancellable::new();
         let watched = cancel.clone();
@@ -161,11 +164,14 @@ impl Budget {
         })
     }
     fn remaining(&self) -> Result<i32> {
+        self.remaining_cap(500)
+    }
+    fn remaining_cap(&self, cap: u128) -> Result<i32> {
         let remaining = self
             .deadline
             .checked_duration_since(Instant::now())
             .ok_or(ServiceRefusal::Unavailable)?;
-        Ok(remaining.as_millis().clamp(1, 500) as i32)
+        Ok(remaining.as_millis().clamp(1, cap) as i32)
     }
 }
 impl Drop for Budget {
@@ -186,6 +192,28 @@ fn call(
     method: &str,
     parameters: glib::Variant,
 ) -> Result<glib::Variant> {
+    call_capped(
+        connection,
+        budget,
+        destination,
+        path,
+        interface,
+        method,
+        parameters,
+        500,
+    )
+}
+
+fn call_capped(
+    connection: &gio::DBusConnection,
+    budget: &Budget,
+    destination: &str,
+    path: &str,
+    interface: &str,
+    method: &str,
+    parameters: glib::Variant,
+    cap: u128,
+) -> Result<glib::Variant> {
     let reply = connection
         .call_sync(
             Some(destination),
@@ -195,7 +223,7 @@ fn call(
             Some(&parameters),
             None,
             gio::DBusCallFlags::NO_AUTO_START,
-            budget.remaining()?,
+            budget.remaining_cap(cap)?,
             Some(&budget.cancel),
         )
         .map_err(|_| ServiceRefusal::Unavailable)?;
@@ -399,10 +427,87 @@ fn inspect_address_for(
     owned: Option<&OwnedActivation>,
     required_target: Option<&std::path::Path>,
 ) -> Result<DefinitionState> {
+    if let Some(owned) = owned {
+        owned.recheck().map_err(|_| ServiceRefusal::Changed)?;
+    }
+    let budget = Budget::new()?;
+    let connection = connect(address, &budget)?;
+    let manager = owner(&connection, &budget)?;
+    inspect_connected(&connection, &budget, &manager, owned, required_target)
+        .map(|inspection| inspection.definition)
+}
+
+fn connect(address: &str, budget: &Budget) -> Result<gio::DBusConnection> {
     if address.len() > 4096 || !address.starts_with("unix:path=/") || address.contains(';') {
         return Err(ServiceRefusal::Unavailable);
     }
-    let budget = Budget::new()?;
+    let connection = gio::DBusConnection::for_address_sync(
+        address,
+        gio::DBusConnectionFlags::AUTHENTICATION_CLIENT
+            | gio::DBusConnectionFlags::MESSAGE_BUS_CONNECTION,
+        None,
+        Some(&budget.cancel),
+    )
+    .map_err(|_| ServiceRefusal::Unavailable)?;
+    connection.set_exit_on_close(false);
+    Ok(connection)
+}
+
+struct ServiceInspection {
+    definition: DefinitionState,
+    properties: Properties,
+    path: glib::variant::ObjectPath,
+    paths: Vec<String>,
+    vendor: TrustedFile,
+    executable: TrustedFile,
+    activation: TrustedFile,
+    disk: overrides::Snapshot,
+    allowed: Option<overrides::OwnedDropIn>,
+}
+
+impl ServiceInspection {
+    fn recheck_files(&self, paths: &[String], owned: &OwnedActivation) -> Result<()> {
+        if self.paths != paths {
+            return Err(ServiceRefusal::Changed);
+        }
+        self.vendor.recheck()?;
+        self.executable.recheck()?;
+        self.activation.recheck()?;
+        self.disk.recheck_for(
+            paths,
+            (self.vendor.metadata.dev(), self.vendor.metadata.ino()),
+            self.allowed.as_ref(),
+        )?;
+        owned.recheck().map_err(|_| ServiceRefusal::Changed)
+    }
+
+    fn recheck(
+        &self,
+        connection: &gio::DBusConnection,
+        budget: &Budget,
+        manager: &str,
+        owned: &OwnedActivation,
+    ) -> Result<()> {
+        if properties(connection, budget, manager, self.path.as_str())? != self.properties
+            || unit_paths(connection, budget, manager)? != self.paths
+            || owner(connection, budget)? != manager
+        {
+            return Err(ServiceRefusal::Changed);
+        }
+        self.recheck_files(&self.paths, owned)
+    }
+}
+
+fn inspect_connected(
+    connection: &gio::DBusConnection,
+    budget: &Budget,
+    manager: &str,
+    owned: Option<&OwnedActivation>,
+    required_target: Option<&std::path::Path>,
+) -> Result<ServiceInspection> {
+    if owner(connection, budget)? != manager {
+        return Err(ServiceRefusal::Changed);
+    }
     let allowed = owned
         .map(|owned| {
             owned.recheck().map_err(|_| ServiceRefusal::Changed)?;
@@ -417,16 +522,6 @@ fn inspect_address_for(
         })
         .transpose()?
         .flatten();
-    let connection = gio::DBusConnection::for_address_sync(
-        &address,
-        gio::DBusConnectionFlags::AUTHENTICATION_CLIENT
-            | gio::DBusConnectionFlags::MESSAGE_BUS_CONNECTION,
-        None,
-        Some(&budget.cancel),
-    )
-    .map_err(|_| ServiceRefusal::Unavailable)?;
-    connection.set_exit_on_close(false);
-    let manager = owner(&connection, &budget)?;
     let reply = call(
         &connection,
         &budget,
@@ -501,12 +596,141 @@ fn inspect_address_for(
         owned.recheck().map_err(|_| ServiceRefusal::Changed)?;
     }
     budget.remaining()?;
-    Ok(definition)
+    Ok(ServiceInspection {
+        definition,
+        properties: first,
+        path,
+        paths,
+        vendor,
+        executable,
+        activation,
+        disk,
+        allowed,
+    })
+}
+
+#[derive(Debug)]
+pub(super) struct Synchronized {
+    pub(super) definition: DefinitionState,
+}
+
+fn ordinary_manager_uid(reply: &glib::Variant, expected_uid: u32) -> Result<()> {
+    let (uid,) = reply.get::<(u32,)>().ok_or(ServiceRefusal::Unsupported)?;
+    if uid == 0 || uid != expected_uid {
+        return Err(ServiceRefusal::Unsupported);
+    }
+    Ok(())
+}
+
+/// Called only by the coordinator while its installation lock/evidence is held.
+pub(super) fn synchronize_owned_service(
+    owned: &OwnedActivation,
+    before_reload: impl FnOnce() -> Result<()>,
+) -> Result<Synchronized> {
+    owned.recheck().map_err(|_| ServiceRefusal::Changed)?;
+    let address =
+        std::env::var("DBUS_SESSION_BUS_ADDRESS").map_err(|_| ServiceRefusal::Unavailable)?;
+    let budget = Budget::with_duration(Duration::from_secs(5))?;
+    let connection = connect(&address, &budget)?;
+    let manager = owner(&connection, &budget)?;
+    let reply = call(
+        &connection,
+        &budget,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "GetConnectionUnixUser",
+        (manager.as_str(),).to_variant(),
+    )?;
+    ordinary_manager_uid(&reply, unsafe { libc::geteuid() })?;
+    let target = std::path::Path::new(owned.paths().1).parent();
+    let before = inspect_connected(&connection, &budget, &manager, Some(owned), target)?;
+    let expected = if owned.is_retired() {
+        DefinitionState::Stock
+    } else {
+        DefinitionState::ManagedLoaded
+    };
+    if before.definition == expected {
+        before.recheck(&connection, &budget, &manager, owned)?;
+        return Ok(Synchronized {
+            definition: expected,
+        });
+    }
+    before_reload()?;
+    before.recheck(&connection, &budget, &manager, owned)?;
+    if owner(&connection, &budget)? != manager {
+        return Err(ServiceRefusal::Changed);
+    }
+    let reply = call_capped(
+        &connection,
+        &budget,
+        &manager,
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        "Reload",
+        ().to_variant(),
+        2000,
+    )?;
+    if reply.get::<()>().is_none() {
+        return Err(ServiceRefusal::Unsupported);
+    }
+    let after = inspect_connected(&connection, &budget, &manager, Some(owned), target)?;
+    if after.definition != expected {
+        return Err(ServiceRefusal::Changed);
+    }
+    before.recheck_files(&after.paths, owned)?;
+    budget.remaining()?;
+    Ok(Synchronized {
+        definition: expected,
+    })
+}
+
+#[cfg(test)]
+pub(super) fn synchronize_changed_fixture(owned: &OwnedActivation) -> Result<Synchronized> {
+    // Called only after the private native root/bus guard and with its lock.
+    synchronize_owned_service(owned, || {
+        let budget = Budget::new()?;
+        let address =
+            std::env::var("DBUS_SESSION_BUS_ADDRESS").map_err(|_| ServiceRefusal::Unavailable)?;
+        let connection = connect(&address, &budget)?;
+        let manager = owner(&connection, &budget)?;
+        call(
+            &connection,
+            &budget,
+            &manager,
+            "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager",
+            "MutateDefinition",
+            ().to_variant(),
+        )?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manager_uid_requires_the_bus_uint32_reply_and_same_nonroot_user() {
+        assert_eq!(ordinary_manager_uid(&(1000u32,).to_variant(), 1000), Ok(()));
+        for reply in [
+            (0u32,).to_variant(),
+            (1001u32,).to_variant(),
+            (1000u64,).to_variant(),
+            ("1000",).to_variant(),
+            ().to_variant(),
+        ] {
+            assert_eq!(
+                ordinary_manager_uid(&reply, 1000),
+                Err(ServiceRefusal::Unsupported)
+            );
+        }
+        assert_eq!(
+            ordinary_manager_uid(&(0u32,).to_variant(), 0),
+            Err(ServiceRefusal::Unsupported)
+        );
+    }
 
     #[test]
     fn first_install_target_must_be_in_the_actual_lookup_roots_once() {

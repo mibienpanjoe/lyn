@@ -428,6 +428,55 @@ fn recover_removal_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result
     Ok(Removed)
 }
 
+fn synchronize_at(paths: &Paths) -> Result<service::Synchronized, Failure> {
+    let preflight = |error| failure(Stage::Preflight, Cause::Io(error));
+    let state = directories::open_private(&paths.state, false).map_err(preflight)?;
+    let target = directories::open_drop_ins(&paths.target, false).map_err(preflight)?;
+    let owned = match paths.inspect().map_err(preflight)? {
+        ActivationFilesState::Owned => {
+            paths.require_no_retirement().map_err(preflight)?;
+            OwnedActivation::open(&paths.state, &paths.target)
+        }
+        ActivationFilesState::Absent => OwnedActivation::open_retired(&paths.state, &paths.target),
+        _ => return Err(failure(Stage::Preflight, Cause::Conflict)),
+    }
+    .map_err(preflight)?;
+    let module = if owned.is_retired() {
+        None
+    } else {
+        let directory =
+            directories::open_private_child(&state, "modules", false).map_err(preflight)?;
+        paths
+            .recheck(&state, &target, &directory)
+            .map_err(preflight)?;
+        let stored =
+            module_store::read_existing(&directory, owned.module_digest()).map_err(preflight)?;
+        Some((directory, stored))
+    };
+    let recheck = || {
+        paths.recheck_activation(&state, &target)?;
+        owned.recheck()?;
+        if let Some((directory, stored)) = &module {
+            paths.require_no_retirement()?;
+            paths.recheck(&state, &target, directory)?;
+            module_store::verify_existing(directory, stored)?;
+        }
+        Ok::<(), io::Error>(())
+    };
+    recheck().map_err(preflight)?;
+    let lock = super::lock::InstallationLock::acquire(&state)
+        .map_err(|error| failure(Stage::Preparing, Cause::Io(error)))?;
+    recheck().map_err(|error| failure(Stage::Applying, Cause::Io(error)))?;
+    let result = service::synchronize_owned_service(&owned, || {
+        recheck().map_err(|_| ServiceRefusal::Changed)
+    })
+    .map_err(|error| failure(Stage::Applying, Cause::Service(error)))?;
+    lock.check()
+        .map_err(|error| failure(Stage::Verifying, Cause::Io(error)))?;
+    recheck().map_err(|error| failure(Stage::Verifying, Cause::Io(error)))?;
+    Ok(result)
+}
+
 trait ServiceChecks {
     fn stock(&mut self) -> Result<(), ServiceRefusal>;
     fn owned(&mut self, owned: &OwnedActivation) -> Result<DefinitionState, ServiceRefusal>;
@@ -574,6 +623,10 @@ pub(super) fn recover_removal(home: &Path) -> Result<Removed, Failure> {
             target: paths.target.clone(),
         },
     )
+}
+
+pub(super) fn synchronize(home: &Path) -> Result<service::Synchronized, Failure> {
+    synchronize_at(&Paths::from_home(home)?)
 }
 
 pub(super) fn rollback(home: &Path, expected_revision: &str) -> Result<Prepared, Failure> {
@@ -794,6 +847,14 @@ pub(super) fn recover_removal_private(root: &Path) -> Result<Removed, Failure> {
             target: paths.target.clone(),
         },
     )
+}
+
+#[cfg(test)]
+pub(super) fn synchronize_private(root: &Path) -> Result<service::Synchronized, Failure> {
+    synchronize_at(&Paths {
+        state: root.join("state"),
+        target: root.join("units/gnome-terminal-server.service.d"),
+    })
 }
 
 #[cfg(test)]
@@ -1337,6 +1398,29 @@ mod tests {
         assert_eq!((checks.stock_calls, checks.owned_calls), calls);
         assert!(!paths.state.join(transaction::LAUNCHER).exists());
         assert!(!paths.target.join(transaction::DROP_IN).exists());
+    }
+
+    #[test]
+    fn synchronization_refuses_broken_module_pending_or_retired_conflict_before_bus() {
+        for kind in ["module", "pending", "retired-conflict"] {
+            let (_root, paths) = fixture();
+            prepare_at(&paths, &artifact(), &mut Checks::default()).unwrap();
+            let owned = OwnedActivation::open(&paths.state, &paths.target).unwrap();
+            let before = fs::read(paths.state.join(transaction::LAUNCHER)).unwrap();
+            match kind {
+                "module" => fs::remove_file(owned.module_path()).unwrap(),
+                "pending" => {
+                    fs::write(paths.state.join("installation-pending-v1.json"), b"{}").unwrap()
+                }
+                _ => fs::write(paths.state.join(transaction::RETIRED_REMOVAL), b"unknown").unwrap(),
+            }
+            let error = synchronize_at(&paths).unwrap_err();
+            assert_eq!(error.stage, Stage::Preflight, "{kind}");
+            assert_eq!(
+                fs::read(paths.state.join(transaction::LAUNCHER)).unwrap(),
+                before
+            );
+        }
     }
 
     #[test]

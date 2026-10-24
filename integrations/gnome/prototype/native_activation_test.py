@@ -57,6 +57,36 @@ def check_managed_service(root, executable, sdk, environment):
     print("PASS: private simulated manager API distinguishes pending/loaded definitions and refuses changed properties; no service action", flush=True)
 
 
+def check_synchronization(root, executable, sdk, environment, mode, expected, expected_calls):
+    from gi.repository import Gio, GLib
+    with simulated_manager(root, mode, sdk, environment):
+        connection = Gio.DBusConnection.new_for_address_sync(environment["DBUS_SESSION_BUS_ADDRESS"],
+            Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+        connection.set_exit_on_close(False)
+        try:
+            reply = connection.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetNameOwner",
+                GLib.Variant("(s)", ("org.freedesktop.systemd1",)), None, Gio.DBusCallFlags.NO_AUTO_START, 500, None)
+            original_owner = reply.unpack()[0]
+            action = "synchronize-with-change" if mode == "sync-during-validation" else "synchronize"
+            sync_environment = dict(environment, LYN_PRIVATE_NATIVE_FILE_ACTION=action, LYN_PRIVATE_SYNC_EXPECTED=expected)
+            started = time.monotonic()
+            for _ in range(1 if expected == "refused" else 2):
+                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                "--test-threads=1"], env=sync_environment, check=True, timeout=8)
+            if mode == "sync-hang":
+                assert 1.5 <= time.monotonic() - started <= 4, "Expected the separate two-second Reload cap"
+            def property_value(name):
+                reply = connection.call_sync(original_owner, "/org/freedesktop/systemd1", "org.freedesktop.DBus.Properties", "Get",
+                    GLib.Variant("(ss)", ("org.freedesktop.systemd1.Manager", name)), None, Gio.DBusCallFlags.NO_AUTO_START, 500, None)
+                return reply.get_child_value(0).get_variant().unpack()
+            observed_calls = property_value("ReloadCount")
+            assert observed_calls == expected_calls, (mode, observed_calls, expected_calls)
+            if expected != "refused":
+                assert property_value("PostReloadSameClient"), mode
+        finally:
+            connection.close_sync(None)
+
+
 def run(module, preserved, executable, sdk, updated_module):
     require_owned_display(sdk)
     private_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
@@ -75,6 +105,10 @@ def run(module, preserved, executable, sdk, updated_module):
         assert stored_module.read_bytes() == module.read_bytes()
         assert stored_module.stat().st_mode & 0o7777 == 0o400
         check_managed_service(root, executable, sdk, fixture_environment)
+        for mode, calls in (("sync-during-validation", 0), ("sync-changed", 0), ("sync-owner", 0), ("sync-stuck", 1), ("sync-error", 1), ("sync-hang", 1)):
+            check_synchronization(root, executable, sdk, fixture_environment, mode, "refused", calls)
+        check_synchronization(root, executable, sdk, fixture_environment, "sync-install", "managed", 1)
+        print("PASS: guarded private manager synchronization refuses changed/owner-swapped/stuck/error/silent cases; one Reload and same-client postflight, settled retry skips Reload", flush=True)
         broker = RustProbe(root, executable, published=True)
         server = None
         pin = None
@@ -232,6 +266,9 @@ def run(module, preserved, executable, sdk, updated_module):
             poller.register(pin, select.POLLIN)
             assert not poller.poll(0) and server.poll() is None
             assert (root / "state/uninstall-retired-v1.json").is_file()
+            check_synchronization(root, executable, sdk, action_environment, "sync-remove", "stock", 1)
+            assert (root / "state/uninstall-retired-v1.json").is_file()
+            assert not poller.poll(0) and server.poll() is None
             print("PASS: actual removal-process exit recovered by a fresh Rust process; both modules and exact cached-manager authority retained; live private server unchanged", flush=True)
         finally:
             child.close()

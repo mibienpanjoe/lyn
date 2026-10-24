@@ -95,7 +95,7 @@ impl OwnedActivation {
         Self::from_files(state_path, target_path, state, target, files)
     }
 
-    pub(super) fn is_retired(&self) -> bool {
+    pub(in crate::integrations::gnome) fn is_retired(&self) -> bool {
         matches!(&self.files, ActivationEvidence::Retired(_))
     }
 

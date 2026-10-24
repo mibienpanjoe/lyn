@@ -1,4 +1,4 @@
-"""Simulated read-only systemd API on the fixture's existing private bus."""
+"""Simulated systemd API, including guarded test-only definition reload."""
 
 import os
 from pathlib import Path
@@ -47,7 +47,9 @@ def run(root, mode, ready, sdk):
         raise RuntimeError("Only the exact private fixture bus is permitted")
     if root.parent != Path("/tmp") or not root.name.startswith("lyn-na-") or ready.parent != root:
         raise RuntimeError("Expected the isolated activation root")
-    assert mode in ("stock", "loaded", "pending", "changing")
+    sync_modes = ("sync-install", "sync-remove", "sync-stuck", "sync-error", "sync-hang", "sync-changed", "sync-owner", "sync-during-validation")
+    if mode not in ("stock", "loaded", "pending", "changing", *sync_modes):
+        raise RuntimeError("Unknown private manager mode")
     unit = "gnome-terminal-server.service"
     unit_path = "/org/freedesktop/systemd1/unit/gnome_2dterminal_2dserver_2eservice"
     manager = "org.freedesktop.systemd1.Manager"
@@ -56,11 +58,12 @@ def run(root, mode, ready, sdk):
     server = "/usr/libexec/gnome-terminal-server"
     launcher = str(root / "state/launcher-v1")
     drop_in = str(root / "units" / f"{unit}.d/90-lyn-native.conf")
-    executable = server if mode in ("stock", "pending") else launcher
+    stock = mode in ("stock", "pending") or mode in sync_modes and mode != "sync-remove"
+    executable = server if stock else launcher
     properties = {
         "LoadState": GLib.Variant("s", "loaded"),
         "FragmentPath": GLib.Variant("s", f"/usr/lib/systemd/user/{unit}"),
-        "DropInPaths": GLib.Variant("as", [] if mode in ("stock", "pending") else [drop_in]),
+        "DropInPaths": GLib.Variant("as", [] if stock else [drop_in]),
         "NeedDaemonReload": GLib.Variant("b", mode == "pending"),
         "Transient": GLib.Variant("b", False),
         "Names": GLib.Variant("as", [unit]),
@@ -84,26 +87,79 @@ def run(root, mode, ready, sdk):
         assert time.monotonic() < deadline, "Private fixture manager name is occupied"
         time.sleep(.005)
 
+    reload_count = 0
+    reload_sender = None
+    post_same_client = False
+    held_invocations = []
+    takeover = []
+
     def load_unit(_connection, _sender, _path, _interface, method, arguments, invocation):
+        nonlocal reload_count, reload_sender
+        if method == "MutateDefinition":
+            if mode != "sync-during-validation" or arguments.unpack() != ():
+                invocation.return_dbus_error("org.lyn.Private.Refused", "Mutation is not enabled in this fixture mode")
+                return
+            properties["ExecStart"] = GLib.Variant("a(sasbttttuii)", [("/synthetic/unowned", ["/synthetic/unowned"], False, 0, 0, 0, 0, 0, 0, 0)])
+            invocation.return_value(GLib.Variant("()", ()))
+            return
+        if method == "Reload":
+            if mode not in sync_modes or arguments.unpack() != ():
+                invocation.return_dbus_error("org.lyn.Private.Refused", "Reload is not enabled in this fixture mode")
+                return
+            reload_count += 1
+            reload_sender = _sender
+            if mode == "sync-error":
+                invocation.return_dbus_error("org.lyn.Private.Refused", "Synthetic reload error")
+                return
+            if mode == "sync-hang":
+                held_invocations.append(invocation)
+                return
+            if mode in ("sync-install", "sync-remove"):
+                next_executable = launcher if mode == "sync-install" else server
+                properties["ExecStart"] = GLib.Variant("a(sasbttttuii)", [(next_executable, [next_executable], False, 0, 0, 0, 0, 0, 0, 0)])
+                properties["DropInPaths"] = GLib.Variant("as", [drop_in] if mode == "sync-install" else [])
+                properties["NeedDaemonReload"] = GLib.Variant("b", False)
+            invocation.return_value(GLib.Variant("()", ()))
+            return
         assert method == "LoadUnit" and arguments.unpack() == (unit,)
         invocation.return_value(GLib.Variant("(o)", (unit_path,)))
 
     start_reads = 0
 
     def get_property(_connection, _sender, _path, interface, name):
-        nonlocal start_reads
+        nonlocal start_reads, post_same_client
         if interface == manager:
+            if name == "ReloadCount":
+                return GLib.Variant("u", reload_count)
+            if name == "PostReloadSameClient":
+                return GLib.Variant("b", post_same_client)
             assert name == "UnitPath"
             return GLib.Variant("as", [str(root / "units")])
-        if name == "ExecStart" and mode == "changing":
+        if name == "ExecStart":
             start_reads += 1
-            if start_reads > 1:
+            if reload_sender is not None and _sender == reload_sender:
+                post_same_client = True
+            if mode in ("changing", "sync-changed") and start_reads > 1:
                 return GLib.Variant("a(sasbttttuii)", [(executable, [executable], False, 0, 0, 0, 0, 1, 0, 0)])
+            if mode == "sync-owner" and start_reads == 3:
+                connection.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ReleaseName",
+                                     GLib.Variant("(s)", ("org.freedesktop.systemd1",)), None, Gio.DBusCallFlags.NO_AUTO_START, 500, None)
+                replacement = Gio.DBusConnection.new_for_address_sync(address,
+                    Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+                replacement.set_exit_on_close(False)
+                reply = replacement.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName",
+                    GLib.Variant("(su)", ("org.freedesktop.systemd1", 4)), None, Gio.DBusCallFlags.NO_AUTO_START, 500, None)
+                assert reply.unpack() == (1,)
+                takeover.append(replacement)
         return properties[name]
 
     manager_xml = f'''<node><interface name="{manager}">
       <method name="LoadUnit"><arg type="s" direction="in"/><arg type="o" direction="out"/></method>
-      <property name="UnitPath" type="as" access="read"/></interface></node>'''
+      <method name="Reload"/>
+      <method name="MutateDefinition"/>
+      <property name="UnitPath" type="as" access="read"/>
+      <property name="ReloadCount" type="u" access="read"/>
+      <property name="PostReloadSameClient" type="b" access="read"/></interface></node>'''
     connection.register_object("/org/freedesktop/systemd1", Gio.DBusNodeInfo.new_for_xml(manager_xml).interfaces[0],
                                load_unit, get_property, None)
     for interface, names in (
