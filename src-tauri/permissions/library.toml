@@ -2,7 +2,7 @@
 identifier = "library-commands"
 description = """
 Commands available to the Library window: chronology, search, committed media
-playback/open, settings, and optional local speech model lifecycle.
+playback/open, settings, native GNOME activation management, and optional speech model lifecycle.
 """
 permissions = [
   "allow-list-contexts",
@@ -17,6 +17,7 @@ permissions = [
   "allow-get-settings",
   "allow-update-settings",
   "allow-get-integration-statuses",
+  "allow-manage-gnome-activation",
   "allow-install-integration",
   "allow-get-speech-model-status",
   "allow-install-speech-model",

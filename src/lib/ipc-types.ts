@@ -176,6 +176,12 @@ export type GnomeActivationPhase = "absent" | "configured" | "installing" | "fin
 
 export type GnomeActivationEvidence = { phase: GnomeActivationPhase, revision: string | null, };
 
+export type GnomeManagementAction = "update" | "rollback" | "remove" | "recover_install" | "finish_update" | "restore_update" | "recover_removal" | "synchronize" | "confirm_removal";
+
+export type ManageGnomeActivationInput = { action: GnomeManagementAction, expectedRevision: string, };
+
+export type ManageGnomeActivationResult = { action: GnomeManagementAction, activation: GnomeActivationEvidence, };
+
 export type GnomeIntegrationEvidence = { files: GnomeActivationFilesStatus, connection: GnomeConnectionStatus, canInstall: boolean, activation?: GnomeActivationEvidence, };
 
 export type IntegrationStatus = { id: IntegrationId, name: string, description: string, detected: boolean, installed: boolean, details: string | null, native?: GnomeIntegrationEvidence, };

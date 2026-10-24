@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-manage-gnome-activation"
+description = "Enables the manage_gnome_activation command without any pre-configured scope."
+commands.allow = ["manage_gnome_activation"]
+
+[[permission]]
+identifier = "deny-manage-gnome-activation"
+description = "Denies the manage_gnome_activation command without any pre-configured scope."
+commands.deny = ["manage_gnome_activation"]

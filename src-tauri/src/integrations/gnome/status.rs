@@ -62,7 +62,11 @@ fn phase(phase: GnomeActivationPhase) -> GnomeActivationEvidence {
     }
 }
 
-fn activation(state: &Path, target: &Path, files: ActivationFilesState) -> GnomeActivationEvidence {
+pub(super) fn activation(
+    state: &Path,
+    target: &Path,
+    files: ActivationFilesState,
+) -> GnomeActivationEvidence {
     use GnomeActivationPhase as Phase;
     fn owned(
         phase: Phase,

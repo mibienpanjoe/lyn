@@ -92,6 +92,7 @@ fn main() {
         "get_settings",
         "update_settings",
         "get_integration_statuses",
+        "manage_gnome_activation",
         "install_integration",
         "get_speech_model_status",
         "install_speech_model",

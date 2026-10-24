@@ -232,6 +232,7 @@ fn desktop_builder(helper_root: Option<std::path::PathBuf>) -> tauri::Builder<ta
             commands::settings::update_settings,
             #[cfg(target_os = "linux")]
             commands::integrations::get_integration_statuses,
+            commands::integrations::manage_gnome_activation,
             #[cfg(target_os = "linux")]
             commands::integrations::install_integration,
             commands::model::get_speech_model_status,

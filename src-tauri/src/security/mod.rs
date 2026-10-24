@@ -110,12 +110,14 @@ mod tests {
             "allow-search-captures",
             "allow-play-media",
             "allow-update-settings",
+            "allow-manage-gnome-activation",
         ] {
             assert!(
                 !capture.contains(forbidden),
                 "capture window unexpectedly allows {forbidden}"
             );
         }
+        assert!(library.contains("allow-manage-gnome-activation"));
         for forbidden in [
             "allow-save-text-capture",
             "allow-start-audio-recording",

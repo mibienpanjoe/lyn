@@ -1,9 +1,15 @@
-//! Guarded activation-file preparation/update/removal. No service actions or UI paths.
+//! Guarded activation lifecycle. Manager synchronization is explicit; no UI paths.
 
 #![allow(dead_code)] // Application command wiring follows private acceptance.
 
+mod management;
 mod recovery_update;
+mod revision;
+pub(super) use management::manage;
+#[cfg(test)]
+pub(super) use management::manage_private;
 use recovery_update::{recover_committed_update_at, recover_uncommitted_update_at};
+use revision::{WithRevision, check_service_revision, require_management_revision};
 
 use super::{
     artifact::{self, Artifact},
@@ -212,6 +218,7 @@ fn owned_definition(
     owned: &OwnedActivation,
     stage: Stage,
 ) -> Result<DefinitionState, Failure> {
+    check_service_revision(service, owned, stage)?;
     let definition = service
         .owned(owned)
         .map_err(|error| failure(stage, Cause::Service(error)))?;
@@ -241,6 +248,7 @@ fn update_at(
     service.after_activation_lock();
     active.recheck(paths).map_err(preparing)?;
     old.recheck(paths, &active).map_err(preparing)?;
+    check_service_revision(service, &active.owned, Stage::Preparing)?;
     let store = ModuleStore::open(&old.directory).map_err(preparing)?;
     let candidate = store.retain(artifact).map_err(preparing)?;
     let mut definition = owned_definition(service, &active.owned, Stage::Applying)?;
@@ -289,6 +297,9 @@ fn update_at(
 fn remove_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result<Removed, Failure> {
     let preflight = |error| failure(Stage::Preflight, Cause::Io(error));
     if paths.inspect().map_err(preflight)? == ActivationFilesState::Absent {
+        if service.expected_revision().is_some() {
+            return Err(failure(Stage::Preflight, Cause::StaleRevision));
+        }
         return Ok(Removed);
     }
     let active = ExistingActivation::open(paths)?;
@@ -390,6 +401,7 @@ fn recover_removal_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result
         .recheck_activation(&state, &target)
         .map_err(preflight)?;
     owned.recheck().map_err(preflight)?;
+    check_service_revision(service, &owned, Stage::Preflight)?;
     service
         .owned(&owned)
         .map_err(|error| failure(Stage::Preflight, Cause::Service(error)))?;
@@ -404,6 +416,7 @@ fn recover_removal_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result
                     .recheck_activation(&state, &target)
                     .map_err(applying)?;
                 owned.recheck().map_err(applying)?;
+                check_service_revision(service, &owned, Stage::Applying)?;
                 service
                     .owned(&owned)
                     .map_err(|error| failure(Stage::Applying, Cause::Service(error)))?;
@@ -436,6 +449,13 @@ fn recover_removal_at(paths: &Paths, service: &mut impl ServiceChecks) -> Result
 }
 
 fn synchronize_at(paths: &Paths) -> Result<service::Synchronized, Failure> {
+    synchronize_at_revision(paths, None)
+}
+
+fn synchronize_at_revision(
+    paths: &Paths,
+    expected: Option<&str>,
+) -> Result<service::Synchronized, Failure> {
     let preflight = |error| failure(Stage::Preflight, Cause::Io(error));
     let state = directories::open_private(&paths.state, false).map_err(preflight)?;
     let target = directories::open_drop_ins(&paths.target, false).map_err(preflight)?;
@@ -448,6 +468,7 @@ fn synchronize_at(paths: &Paths) -> Result<service::Synchronized, Failure> {
         _ => return Err(failure(Stage::Preflight, Cause::Conflict)),
     }
     .map_err(preflight)?;
+    require_management_revision(&owned, expected, Stage::Preflight)?;
     let module = if owned.is_retired() {
         None
     } else {
@@ -473,9 +494,14 @@ fn synchronize_at(paths: &Paths) -> Result<service::Synchronized, Failure> {
     recheck().map_err(preflight)?;
     let lock = super::lock::InstallationLock::acquire(&state)
         .map_err(|error| failure(Stage::Preparing, Cause::Io(error)))?;
+    require_management_revision(&owned, expected, Stage::Applying)?;
     recheck().map_err(|error| failure(Stage::Applying, Cause::Io(error)))?;
+    lock.check()
+        .map_err(|error| failure(Stage::Applying, Cause::Io(error)))?;
     let result = service::synchronize_owned_service(&owned, || {
-        recheck().map_err(|_| ServiceRefusal::Changed)
+        recheck()
+            .and_then(|()| lock.check())
+            .map_err(|_| ServiceRefusal::Changed)
     })
     .map_err(|error| failure(Stage::Applying, Cause::Service(error)))?;
     lock.check()
@@ -485,6 +511,13 @@ fn synchronize_at(paths: &Paths) -> Result<service::Synchronized, Failure> {
 }
 
 fn acknowledge_removal_at(paths: &Paths) -> Result<service::Synchronized, Failure> {
+    acknowledge_removal_at_revision(paths, None)
+}
+
+fn acknowledge_removal_at_revision(
+    paths: &Paths,
+    expected: Option<&str>,
+) -> Result<service::Synchronized, Failure> {
     let preflight = |error| failure(Stage::Preflight, Cause::Io(error));
     let state = directories::open_private(&paths.state, false).map_err(preflight)?;
     let target = directories::open_drop_ins(&paths.target, false).map_err(preflight)?;
@@ -506,6 +539,9 @@ fn acknowledge_removal_at(paths: &Paths) -> Result<service::Synchronized, Failur
     let owned = match OwnedActivation::open_retired(&paths.state, &paths.target) {
         Ok(owned) => owned,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if expected.is_some() {
+                return Err(failure(Stage::Preflight, Cause::StaleRevision));
+            }
             // A prior unlink may have succeeded before its sync failed. No
             // authority remains to authorize Reload; this path only reads stock.
             absence().map_err(preflight)?;
@@ -524,6 +560,7 @@ fn acknowledge_removal_at(paths: &Paths) -> Result<service::Synchronized, Failur
         }
         Err(error) => return Err(preflight(error)),
     };
+    require_management_revision(&owned, expected, Stage::Applying)?;
     let recheck = || {
         paths.recheck_activation(&state, &target)?;
         lock.check()?;
@@ -551,6 +588,9 @@ fn acknowledge_removal_at(paths: &Paths) -> Result<service::Synchronized, Failur
 }
 
 trait ServiceChecks {
+    fn expected_revision(&self) -> Option<&str> {
+        None
+    }
     fn stock(&mut self) -> Result<(), ServiceRefusal>;
     fn owned(&mut self, owned: &OwnedActivation) -> Result<DefinitionState, ServiceRefusal>;
     #[cfg(test)]
@@ -1165,6 +1205,124 @@ mod tests {
         let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
         transaction.interrupt_install_after(checkpoint);
         assert!(transaction.apply().is_err());
+    }
+
+    #[test]
+    fn stale_management_revision_refuses_before_service_or_new_module_data() {
+        for action in ["update", "remove", "install", "finish", "restore"] {
+            let (_root, paths) = fixture();
+            match action {
+                "install" => interrupted_install(&paths, 1),
+                "finish" => interrupted_committed_update(&paths, 1),
+                "restore" => interrupted_uncommitted_update(&paths, 8),
+                _ => {
+                    prepare_at(&paths, &artifact(), &mut Checks::default()).unwrap();
+                }
+            }
+            let before = (
+                fs::read_dir(&paths.state).unwrap().count(),
+                fs::read_dir(paths.state.join("modules")).unwrap().count(),
+            );
+            let mut service = WithRevision {
+                inner: Checks::default(),
+                expected: "f".repeat(64),
+            };
+            let result = match action {
+                "update" => update_at(&paths, &other_artifact(), &mut service).map(|_| ()),
+                "remove" => remove_at(&paths, &mut service).map(|_| ()),
+                "install" => recover_install_at(&paths, &mut service).map(|_| ()),
+                "finish" => recover_committed_update_at(&paths, &mut service).map(|_| ()),
+                "restore" => recover_uncommitted_update_at(&paths, &mut service).map(|_| ()),
+                _ => unreachable!(),
+            };
+            assert!(matches!(result.unwrap_err().cause, Cause::StaleRevision));
+            assert_eq!(service.inner.owned_calls, 0);
+            assert_eq!(
+                before,
+                (
+                    fs::read_dir(&paths.state).unwrap().count(),
+                    fs::read_dir(paths.state.join("modules")).unwrap().count()
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn management_revision_is_checked_again_under_the_lock_before_update_storage() {
+        struct Changed {
+            revision: String,
+            locked: bool,
+            calls: usize,
+        }
+        impl ServiceChecks for Changed {
+            fn expected_revision(&self) -> Option<&str> {
+                Some(if self.locked {
+                    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                } else {
+                    &self.revision
+                })
+            }
+            fn stock(&mut self) -> Result<(), ServiceRefusal> {
+                panic!("owned action")
+            }
+            fn owned(
+                &mut self,
+                owned: &OwnedActivation,
+            ) -> Result<DefinitionState, ServiceRefusal> {
+                owned.recheck().unwrap();
+                self.calls += 1;
+                Ok(DefinitionState::NeedsReload)
+            }
+            fn after_activation_lock(&mut self) {
+                self.locked = true;
+            }
+        }
+        let (_root, paths) = fixture();
+        prepare_at(&paths, &artifact(), &mut Checks::default()).unwrap();
+        let revision = ExistingActivation::open(&paths)
+            .unwrap()
+            .owned
+            .management_revision()
+            .unwrap();
+        let mut service = Changed {
+            revision,
+            locked: false,
+            calls: 0,
+        };
+        let error = update_at(&paths, &other_artifact(), &mut service).unwrap_err();
+        assert!(matches!(error.cause, Cause::StaleRevision));
+        assert_eq!(error.stage, Stage::Preparing);
+        assert_eq!(service.calls, 1);
+        assert!(
+            !paths
+                .state
+                .join("modules")
+                .join(other_artifact().manifest.sha256)
+                .exists()
+        );
+        assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Owned);
+    }
+
+    #[test]
+    fn stale_manager_actions_refuse_before_bus_and_keep_retirement_authority() {
+        let (_root, paths) = fixture();
+        prepare_at(&paths, &artifact(), &mut Checks::default()).unwrap();
+        assert!(matches!(
+            synchronize_at_revision(&paths, Some(&"f".repeat(64)))
+                .unwrap_err()
+                .cause,
+            Cause::StaleRevision
+        ));
+        remove_at(&paths, &mut Checks::default()).unwrap();
+        let record = paths.state.join(transaction::RETIRED_REMOVAL);
+        let before = fs::read(&record).unwrap();
+        for result in [
+            synchronize_at_revision(&paths, Some(&"f".repeat(64))),
+            acknowledge_removal_at_revision(&paths, Some(&"f".repeat(64))),
+        ] {
+            assert!(matches!(result.unwrap_err().cause, Cause::StaleRevision));
+        }
+        assert_eq!(fs::read(record).unwrap(), before);
     }
 
     #[test]

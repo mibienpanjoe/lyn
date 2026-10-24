@@ -111,7 +111,7 @@ def run(module, preserved, executable, sdk, updated_module):
         assert stored_module.read_bytes() == module.read_bytes()
         assert stored_module.stat().st_mode & 0o7777 == 0o400
         check_managed_service(root, executable, sdk, fixture_environment)
-        for mode, calls in (("sync-during-validation", 0), ("sync-changed", 0), ("sync-owner", 0), ("sync-stuck", 1), ("sync-error", 1), ("sync-hang", 1)):
+        for mode, calls in (("sync-during-validation", 0), ("sync-changed", 0), ("sync-owner", 0), ("sync-lock", 0), ("sync-stuck", 1), ("sync-error", 1), ("sync-hang", 1)):
             check_synchronization(root, executable, sdk, fixture_environment, mode, "refused", calls)
         check_synchronization(root, executable, sdk, fixture_environment, "sync-install", "managed", 1)
         print("PASS: guarded private manager synchronization refuses changed/owner-swapped/stuck/error/silent cases; one Reload and same-client postflight, settled retry skips Reload", flush=True)

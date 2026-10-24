@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use crate::{
     commands::is_empty_input,
-    contract::{InstallIntegrationInput, InstallIntegrationResult, IntegrationStatus},
+    contract::{
+        InstallIntegrationInput, InstallIntegrationResult, IntegrationStatus,
+        ManageGnomeActivationInput, ManageGnomeActivationResult,
+    },
     error::{AppError, CommandResult, ErrorCode, ErrorDetailKey, ErrorDetailValue, ErrorDetails},
     integrations::{install_integration_by_id, list_integration_statuses, user_home_dir},
 };
@@ -59,6 +62,48 @@ fn validate_status_input(input: &serde_json::Value) -> Result<(), AppError> {
     }
 }
 
+fn parse_management_input(
+    input: serde_json::Value,
+) -> Result<ManageGnomeActivationInput, AppError> {
+    let input: ManageGnomeActivationInput =
+        serde_json::from_value(input).map_err(|_| validation_error("input"))?;
+    if !input.valid_revision() {
+        return Err(validation_error("expectedRevision"));
+    }
+    Ok(input)
+}
+
+#[tauri::command]
+pub(crate) async fn manage_gnome_activation(
+    input: serde_json::Value,
+) -> CommandResult<ManageGnomeActivationResult> {
+    let input = match parse_management_input(input) {
+        Ok(input) => input,
+        Err(error) => return CommandResult::failure(error),
+    };
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = input;
+        CommandResult::failure(AppError {
+            code: ErrorCode::PermissionDenied,
+            message: "Native GNOME management is only available on Linux.".into(),
+            retryable: false,
+            details: ErrorDetails::default(),
+        })
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let home = user_home_dir();
+        match tauri::async_runtime::spawn_blocking(move || crate::integrations::gnome::management::execute(&home, input)).await {
+            Ok(Ok(result)) => CommandResult::success(result),
+            Ok(Err(error)) => CommandResult::failure(error),
+            Err(_) => CommandResult::failure(AppError { code: ErrorCode::InternalError,
+                message: "Native management could not be completed. Refresh its status before acting again.".into(),
+                retryable: false, details: ErrorDetails::default() }),
+        }
+    }
+}
+
 #[tauri::command]
 pub(crate) fn install_integration(
     input: serde_json::Value,
@@ -100,6 +145,23 @@ fn validation_error(field: &str) -> AppError {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn management_input_is_closed_and_requires_a_canonical_revision() {
+        let revision = "a".repeat(64);
+        assert!(
+            parse_management_input(json!({"action":"remove", "expectedRevision":revision})).is_ok()
+        );
+        for input in [
+            json!({"action":"restart", "expectedRevision":revision}),
+            json!({"action":"remove", "expectedRevision":revision, "path":"/untrusted"}),
+            json!({"action":"remove"}),
+            json!({"action":"remove", "expectedRevision":"A".repeat(64)}),
+            json!({"action":"remove", "expectedRevision":"a".repeat(65)}),
+        ] {
+            assert!(parse_management_input(input).is_err());
+        }
+    }
 
     #[test]
     fn get_integration_statuses_rejects_non_empty_input() {

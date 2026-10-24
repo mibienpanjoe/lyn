@@ -740,6 +740,44 @@ pub struct GnomeActivationEvidence {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+pub enum GnomeManagementAction {
+    Update,
+    Rollback,
+    Remove,
+    RecoverInstall,
+    FinishUpdate,
+    RestoreUpdate,
+    RecoverRemoval,
+    Synchronize,
+    ConfirmRemoval,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ManageGnomeActivationInput {
+    pub action: GnomeManagementAction,
+    pub expected_revision: String,
+}
+
+impl ManageGnomeActivationInput {
+    pub fn valid_revision(&self) -> bool {
+        self.expected_revision.len() == 64
+            && self
+                .expected_revision
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ManageGnomeActivationResult {
+    pub action: GnomeManagementAction,
+    pub activation: GnomeActivationEvidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
 pub enum GnomeActivationPhase {
     Absent,
     Configured,
@@ -883,6 +921,9 @@ pub fn typescript_bindings() -> String {
         GnomeConnectionStatus::decl(&config),
         GnomeActivationPhase::decl(&config),
         GnomeActivationEvidence::decl(&config),
+        GnomeManagementAction::decl(&config),
+        ManageGnomeActivationInput::decl(&config),
+        ManageGnomeActivationResult::decl(&config),
         GnomeIntegrationEvidence::decl(&config),
         IntegrationStatus::decl(&config),
         InstallIntegrationInput::decl(&config),

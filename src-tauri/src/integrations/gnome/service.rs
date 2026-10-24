@@ -630,14 +630,14 @@ fn ordinary_manager_uid(reply: &glib::Variant, expected_uid: u32) -> Result<()> 
 /// Called only by the coordinator while its installation lock/evidence is held.
 pub(super) fn synchronize_owned_service(
     owned: &OwnedActivation,
-    before_reload: impl FnOnce() -> Result<()>,
+    before_reload: impl FnMut() -> Result<()>,
 ) -> Result<Synchronized> {
     synchronize_verified(owned, before_reload, |_, _, _, _| Ok(()))
 }
 
 fn synchronize_verified(
     owned: &OwnedActivation,
-    before_reload: impl FnOnce() -> Result<()>,
+    mut before_reload: impl FnMut() -> Result<()>,
     on_verified: impl FnOnce(&gio::DBusConnection, &Budget, &str, &ServiceInspection) -> Result<()>,
 ) -> Result<Synchronized> {
     owned.recheck().map_err(|_| ServiceRefusal::Changed)?;
@@ -676,6 +676,8 @@ fn synchronize_verified(
     if owner(&connection, &budget)? != manager {
         return Err(ServiceRefusal::Changed);
     }
+    // Recheck caller-owned lock/module evidence after the final D-Bus fence too.
+    before_reload()?;
     let reply = call_capped(
         &connection,
         &budget,
@@ -703,7 +705,7 @@ fn synchronize_verified(
 
 pub(super) fn acknowledge_retired_service(
     owned: &OwnedActivation,
-    before_reload: impl FnOnce() -> Result<()>,
+    before_reload: impl FnMut() -> Result<()>,
     acknowledge: impl FnOnce() -> Result<()>,
 ) -> Result<Synchronized> {
     if !owned.is_retired() {

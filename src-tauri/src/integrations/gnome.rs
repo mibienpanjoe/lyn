@@ -1,4 +1,4 @@
-//! Private GNOME activation primitives. No user-session writes or restart here.
+//! Native GNOME activation. Writes require an explicit management gateway.
 
 use std::path::Path;
 
@@ -7,6 +7,7 @@ mod coordinator;
 mod directories;
 mod lock;
 mod managed;
+pub(crate) mod management;
 mod module_store;
 mod ownership;
 mod replacement;
@@ -257,8 +258,23 @@ mod tests {
                 panic!("private committed update checkpoint must exit");
             }
             "recover-update-commit" => {
-                let result = coordinator::recover_committed_update_private(root).unwrap();
-                assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);
+                let owned = service::OwnedActivation::open_committed_update(
+                    &root.join("state"),
+                    &root.join("units/gnome-terminal-server.service.d"),
+                )
+                .unwrap();
+                let result = coordinator::manage_private(
+                    root,
+                    crate::contract::ManageGnomeActivationInput {
+                        action: crate::contract::GnomeManagementAction::FinishUpdate,
+                        expected_revision: owned.management_revision().unwrap(),
+                    },
+                )
+                .unwrap();
+                assert_eq!(
+                    result.activation.phase,
+                    crate::contract::GnomeActivationPhase::Configured
+                );
             }
             "interrupt-update-precommit" => {
                 coordinator::interrupt_uncommitted_update_private(root, &private_native_artifact())
@@ -266,11 +282,42 @@ mod tests {
                 panic!("private uncommitted update checkpoint must exit");
             }
             "recover-update-precommit" => {
-                let result = coordinator::recover_uncommitted_update_private(root).unwrap();
-                assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);
+                let owned = service::OwnedActivation::open_uncommitted_update(
+                    &root.join("state"),
+                    &root.join("units/gnome-terminal-server.service.d"),
+                )
+                .unwrap();
+                let result = coordinator::manage_private(
+                    root,
+                    crate::contract::ManageGnomeActivationInput {
+                        action: crate::contract::GnomeManagementAction::RestoreUpdate,
+                        expected_revision: owned.management_revision().unwrap(),
+                    },
+                )
+                .unwrap();
+                assert_eq!(
+                    result.activation.phase,
+                    crate::contract::GnomeActivationPhase::Configured
+                );
             }
             "remove" => {
-                coordinator::remove_private(root).unwrap();
+                let owned = service::OwnedActivation::open(
+                    &root.join("state"),
+                    &root.join("units/gnome-terminal-server.service.d"),
+                )
+                .unwrap();
+                let result = coordinator::manage_private(
+                    root,
+                    crate::contract::ManageGnomeActivationInput {
+                        action: crate::contract::GnomeManagementAction::Remove,
+                        expected_revision: owned.management_revision().unwrap(),
+                    },
+                )
+                .unwrap();
+                assert_eq!(
+                    result.activation.phase,
+                    crate::contract::GnomeActivationPhase::AwaitingRemovalConfirmation
+                );
             }
             "interrupt-remove" => {
                 coordinator::interrupt_removal_private(root).unwrap();

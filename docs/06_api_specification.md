@@ -1,6 +1,6 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.16, 2026-10-24
+Version: v1.17, 2026-10-24
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
@@ -674,7 +674,19 @@ interface IntegrationStatus {
 
 The GNOME row keeps file ownership and admitted transport observations separate. `owned` covers the three activation files only; `connected` covers an observed authenticated transport, not the focused source or a verified capture. Missing evidence must display unavailable, never Installed/Ready or an installation action. No private path, PID or source identifier is returned in native evidence. The initial GNOME distribution is not yet available: `installed` and `canInstall` are false even if activation files are owned or a manually activated native producer is connected. The [native protocol contract](gnome_native_protocol.md) owns the precise observation/refusal boundaries.
 
-The additive activation observation distinguishes recognized complete configuration, interrupted first installation, committed update cleanup, uncommitted restoration, removal and retained removal authority. Each recognized owned phase carries an opaque64-hex revision derived from its pinned authority file's identity/change time/content with a phase-specific domain; complete configuration preserves the existing rollback revision. It is a freshness marker for the same recorded configuration/intent, not a credential, a module version, an action permission or an atomic global snapshot. The same intent can retain its revision as recorded cleanup progresses. Absent/changed/unavailable observations have `revision:null`. An identical-byte replacement of the authority changes its fresh revision and invalidates a retained reader. Status creates no locks/directories, performs no manager/provider RPC or transaction recovery and never acknowledges removal. The UI uses localized phase text with legacy file-status fallback and does not display the revision. Mutation commands and their authoritative revision checks remain separate work; this metadata adds no install/reload/restart action.
+The additive activation observation distinguishes recognized complete configuration, interrupted first installation, committed update cleanup, uncommitted restoration, removal and retained removal authority. Each recognized owned phase carries an opaque64-hex revision derived from its pinned authority file's identity/change time/content with a phase-specific domain; complete configuration preserves the existing rollback revision. It is a freshness marker for the same recorded configuration/intent, not a credential, a module version, an action permission or an atomic global snapshot. The same intent can retain its revision as recorded cleanup progresses. Absent/changed/unavailable observations have `revision:null`. An identical-byte replacement of the authority changes its fresh revision and invalidates a retained reader. Status creates no locks/directories, performs no manager/provider RPC or transaction recovery and never acknowledges removal. The UI uses localized phase text with legacy file-status fallback and does not display the revision. The separate `manage_gnome_activation` command below consumes an expected revision with authoritative checks; this metadata itself performs no mutation.
+
+### `manage_gnome_activation`
+
+Library-only Linux command, registered through the command allowlist and the Library permission set, never the capture window. Runs on a blocking worker.
+
+**Input:** `{ action, expectedRevision }`, rejecting all additional fields. `expectedRevision` must be exactly64 lowercase hexadecimal characters obtained from recognized `native.activation` evidence. `action` is one of `update`, `rollback`, `remove`, `recover_install`, `finish_update`, `restore_update`, `recover_removal`, `synchronize`, `confirm_removal`. No paths, module/digest selector, process identity, first-install or terminal restart action is accepted. Update uses only the build-time embedded bundle; a build without one refuses before writes.
+
+**Success:** `{ action, activation: GnomeActivationEvidence }` in the standard envelope. The coordinator completed the requested operation; `activation` is a subsequent read-only observation, not atomic with that effect and not proof of a running native module/capture. A retired removal may be synchronized/confirmed without an embedded bundle; a completed absent-record confirmation cannot reuse a retired revision.
+
+The expected revision is validated before service work and again under the same installation lock before mutation; update checks before module-store writes. Snapshot/inode continuity remains checked through callbacks and postflight, which inspects the new authority rather than comparing it to the displaced request revision. Synchronization checks the lock immediately before service entry and again after the final manager fence before `Manager.Reload`; acknowledgement checks it before unlink. No automatic retry, context/capture query or terminal restart occurs.
+
+**Errors:** malformed/unknown input or noncanonical revisions return `VALIDATION_ERROR`. Linux management refusals use `PERMISSION_DENIED` with one closed `details.state`: `stale_revision`, `artifact_unavailable`, `location_unavailable`, `configuration_changed`, `service_unavailable` or `configuration_unavailable`. Non-Linux use is refused. No raw OS error or private path is returned. Management failures are not automatically retryable: they may follow filesystem changes or an effective manager reload; refresh status before a new explicit action. First-install availability, action buttons and packaged/installed acceptance remain separate.
 
 ### `install_integration`
 

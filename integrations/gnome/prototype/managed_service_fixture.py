@@ -47,7 +47,7 @@ def run(root, mode, ready, sdk):
         raise RuntimeError("Only the exact private fixture bus is permitted")
     if root.parent != Path("/tmp") or not root.name.startswith("lyn-na-") or ready.parent != root:
         raise RuntimeError("Expected the isolated activation root")
-    sync_modes = ("sync-install", "sync-remove", "sync-stuck", "sync-error", "sync-hang", "sync-changed", "sync-owner", "sync-during-validation",
+    sync_modes = ("sync-install", "sync-remove", "sync-stuck", "sync-error", "sync-hang", "sync-changed", "sync-owner", "sync-during-validation", "sync-lock",
                   "ack-remove", "ack-stock", "ack-owner", "ack-stuck", "ack-after-unlink")
     if mode not in ("stock", "loaded", "pending", "changing", *sync_modes):
         raise RuntimeError("Unknown private manager mode")
@@ -145,6 +145,17 @@ def run(root, mode, ready, sdk):
             return GLib.Variant("as", [str(root / "units")])
         if name == "ExecStart":
             start_reads += 1
+            if mode == "sync-lock" and start_reads == 3:
+                # Owned private fault only: retain the displaced lock rather
+                # than unlinking it. No manager or user directory is selected.
+                lock = root / "state/.installation.lock"
+                displaced = root / "state/.installation.lock.displaced-test"
+                assert not displaced.exists()
+                metadata = lock.lstat()
+                assert stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.geteuid() and metadata.st_nlink == 1
+                lock.rename(displaced)
+                descriptor = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                os.close(descriptor)
             if reload_sender is not None and _sender == reload_sender:
                 post_same_client = True
             if mode.startswith("ack-") and not (root / "state/uninstall-retired-v1.json").exists():
