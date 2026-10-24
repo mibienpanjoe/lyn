@@ -2,6 +2,7 @@
 
 mod cleanup;
 mod precommit;
+pub(in crate::integrations::gnome) use cleanup::CommittedUpdateSnapshot;
 pub(super) use cleanup::{CLEANUP_PENDING, recover_cleanup};
 pub(super) use precommit::{
     COMPENSATION_PENDING, EXCHANGE_NAMES, PRECOMMIT_PENDING, recover_early,

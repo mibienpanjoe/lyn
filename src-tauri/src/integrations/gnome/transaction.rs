@@ -10,6 +10,7 @@ pub(super) use inspection::PinnedActivation;
 pub(super) use inspection::{ActivationFilesState, inspect_activation_files};
 pub(super) use recovery::InstallSnapshot;
 pub(super) use removal::{RETIRED_REMOVAL, RemovalSnapshot, RetirementSnapshot};
+pub(super) use update::CommittedUpdateSnapshot;
 
 use super::{
     RenderedActivation,
@@ -88,12 +89,25 @@ impl<'a> ActivationTransaction<'a> {
         assert!((12..=15).contains(&checkpoint));
         self.stop_after = Some((checkpoint, abrupt));
     }
+    #[cfg(test)]
+    pub(super) fn interrupt_committed_update_after(&mut self, checkpoint: u8, abrupt: bool) {
+        assert!((1..=4).contains(&checkpoint));
+        self.stop_after = Some((checkpoint, abrupt));
+    }
     /// Existing complete files only. Never recover an intent as a side effect.
     pub(super) fn open_complete(
         state: &'a ManagedDirectory,
         drop_ins: &'a ManagedDirectory,
     ) -> io::Result<Self> {
         let lock = InstallationLock::acquire(state)?;
+        Self::complete_locked(state, drop_ins, lock)
+    }
+
+    fn complete_locked(
+        state: &'a ManagedDirectory,
+        drop_ins: &'a ManagedDirectory,
+        lock: InstallationLock<'a>,
+    ) -> io::Result<Self> {
         let files = PinnedActivation::open(state, drop_ins)?.into_files();
         lock.check()?;
         Ok(Self {
@@ -163,6 +177,21 @@ impl<'a> ActivationTransaction<'a> {
         check()?;
         snapshot.recheck(state, drop_ins)?;
         Self::resume_locked(state, drop_ins, lock)
+    }
+
+    pub(super) fn resume_committed_update_checked(
+        state: &'a ManagedDirectory,
+        drop_ins: &'a ManagedDirectory,
+        check: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<Self> {
+        let lock = InstallationLock::acquire(state)?;
+        let snapshot = CommittedUpdateSnapshot::open(state, drop_ins)?;
+        check()?;
+        snapshot.recheck(state, drop_ins)?;
+        snapshot.finish(state, drop_ins, &lock)?;
+        // Do not dispatch generic recovery here: newly appeared, unrelated
+        // intents must refuse rather than be consumed under this authority.
+        Self::complete_locked(state, drop_ins, lock)
     }
 
     fn resume_locked(

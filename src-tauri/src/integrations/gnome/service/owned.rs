@@ -7,7 +7,8 @@ use super::super::{
     managed::ManagedDirectory,
     render_activation_with_previous,
     transaction::{
-        DROP_IN, InstallSnapshot, LAUNCHER, PinnedActivation, RemovalSnapshot, RetirementSnapshot,
+        CommittedUpdateSnapshot, DROP_IN, InstallSnapshot, LAUNCHER, PinnedActivation,
+        RemovalSnapshot, RetirementSnapshot,
     },
 };
 use std::{
@@ -33,6 +34,7 @@ enum ActivationEvidence {
     Installing(InstallSnapshot),
     Retired(RetirementSnapshot),
     Removing(RemovalSnapshot),
+    CommittedUpdate(CommittedUpdateSnapshot),
 }
 
 impl ActivationEvidence {
@@ -42,6 +44,7 @@ impl ActivationEvidence {
             Self::Installing(files) => (&files.launcher.content, &files.drop_in.content),
             Self::Retired(files) => files.contents(),
             Self::Removing(files) => files.contents(),
+            Self::CommittedUpdate(files) => (&files.launcher.content, &files.drop_in.content),
         }
     }
 
@@ -51,6 +54,7 @@ impl ActivationEvidence {
             Self::Installing(files) => files.recheck(state, target),
             Self::Retired(files) => files.recheck(state, target),
             Self::Removing(files) => files.recheck(state, target),
+            Self::CommittedUpdate(files) => files.recheck(state, target),
         }
     }
 }
@@ -81,6 +85,17 @@ impl OwnedActivation {
         let state = directories::open_private(state_path, false)?;
         let target = directories::open_drop_ins(target_path, false)?;
         let files = ActivationEvidence::Installing(InstallSnapshot::open(&state, &target)?);
+        Self::from_files(state_path, target_path, state, target, files)
+    }
+
+    pub(in crate::integrations::gnome) fn open_committed_update(
+        state_path: &Path,
+        target_path: &Path,
+    ) -> io::Result<Self> {
+        let state = directories::open_private(state_path, false)?;
+        let target = directories::open_drop_ins(target_path, false)?;
+        let files =
+            ActivationEvidence::CommittedUpdate(CommittedUpdateSnapshot::open(&state, &target)?);
         Self::from_files(state_path, target_path, state, target, files)
     }
 
@@ -217,6 +232,7 @@ impl OwnedActivation {
     pub(super) fn drop_in_metadata(&self) -> io::Result<Option<fs::Metadata>> {
         match &self.files {
             ActivationEvidence::Complete(files) => files.drop_in.file.metadata().map(Some),
+            ActivationEvidence::CommittedUpdate(files) => files.drop_in.file.metadata().map(Some),
             ActivationEvidence::Installing(files)
                 if files.drop_in.name.to_bytes() == DROP_IN.as_bytes() =>
             {

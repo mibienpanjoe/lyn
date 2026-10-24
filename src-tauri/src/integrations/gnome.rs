@@ -251,6 +251,15 @@ mod tests {
                 let result = coordinator::update_private(root, &private_native_artifact()).unwrap();
                 assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);
             }
+            "interrupt-update-commit" => {
+                coordinator::interrupt_committed_update_private(root, &private_native_artifact())
+                    .unwrap();
+                panic!("private committed update checkpoint must exit");
+            }
+            "recover-update-commit" => {
+                let result = coordinator::recover_committed_update_private(root).unwrap();
+                assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);
+            }
             "remove" => {
                 coordinator::remove_private(root).unwrap();
             }

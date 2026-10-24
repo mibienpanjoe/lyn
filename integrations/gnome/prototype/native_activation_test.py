@@ -209,10 +209,18 @@ def run(module, preserved, executable, sdk, updated_module):
             print("PASS: actual GTK new-tab child excludes Lyn and preserves the existing module", flush=True)
             # The coordinator changes files; it must not restart our server.
             action_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(updated_module),
-                                      LYN_PRIVATE_NATIVE_FILE_ACTION="update")
+                                      LYN_PRIVATE_NATIVE_FILE_ACTION="interrupt-update-commit")
             with simulated_manager(root, "loaded", sdk, action_environment):
+                interrupted = subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                "--test-threads=1"], env=action_environment, timeout=8)
+                assert interrupted.returncode == 77, "Expected actual committed-update process interruption"
+                assert (root / "state/update-cleanup-pending-v1.json").is_file()
+                recovered_environment = dict(action_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="recover-update-commit",
+                                             LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(root / "absent-bundle.so"))
                 subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
-                                "--test-threads=1"], env=action_environment, check=True, timeout=8)
+                                "--test-threads=1"], env=recovered_environment, check=True, timeout=8)
+                assert not (root / "state/update-cleanup-pending-v1.json").exists()
+                print("PASS: committed update process exit recovered in a fresh Rust process without an input bundle", flush=True)
             import hashlib
             updated_stored = root / "state/modules" / hashlib.sha256(updated_module.read_bytes()).hexdigest() / module.name
             assert updated_stored != stored_module and updated_stored.read_bytes() == updated_module.read_bytes()

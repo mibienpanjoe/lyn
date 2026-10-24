@@ -2,6 +2,9 @@
 
 #![allow(dead_code)] // Application command wiring follows private acceptance.
 
+mod recovery_update;
+use recovery_update::recover_committed_update_at;
+
 use super::{
     artifact::{self, Artifact},
     directories,
@@ -260,6 +263,8 @@ fn update_at(
         transaction.update(rendered).map_err(applying)?;
         old.recheck(paths, &active).map_err(applying)?;
         store.verify(&candidate, artifact).map_err(applying)?;
+        #[cfg(test)]
+        service.before_finish_update(&mut transaction);
         transaction.finish_update().map_err(applying)?;
         let verifying = |error| failure(Stage::Verifying, Cause::Io(error));
         let current = OwnedActivation::open(&paths.state, &paths.target).map_err(verifying)?;
@@ -550,6 +555,8 @@ trait ServiceChecks {
     fn after_activation_lock(&mut self) {}
     #[cfg(test)]
     fn before_retire(&mut self, _transaction: &mut ActivationTransaction<'_>) {}
+    #[cfg(test)]
+    fn before_finish_update(&mut self, _transaction: &mut ActivationTransaction<'_>) {}
 }
 
 struct RealService {
@@ -674,6 +681,16 @@ pub(super) fn rollback_offer(home: &Path) -> Result<RollbackOffer, Failure> {
 pub(super) fn recover_install(home: &Path) -> Result<Prepared, Failure> {
     let paths = Paths::from_home(home)?;
     recover_install_at(
+        &paths,
+        &mut RealService {
+            target: paths.target.clone(),
+        },
+    )
+}
+
+pub(super) fn recover_committed_update(home: &Path) -> Result<Prepared, Failure> {
+    let paths = Paths::from_home(home)?;
+    recover_committed_update_at(
         &paths,
         &mut RealService {
             target: paths.target.clone(),
@@ -818,6 +835,50 @@ pub(super) fn update_private(root: &Path, artifact: &Artifact) -> Result<Prepare
     update_at(
         &paths,
         artifact,
+        &mut RealService {
+            target: paths.target.clone(),
+        },
+    )
+}
+
+#[cfg(test)]
+pub(super) fn interrupt_committed_update_private(
+    root: &Path,
+    artifact: &Artifact,
+) -> Result<Prepared, Failure> {
+    struct Interrupt(RealService);
+    impl ServiceChecks for Interrupt {
+        fn stock(&mut self) -> Result<(), ServiceRefusal> {
+            self.0.stock()
+        }
+        fn owned(&mut self, owned: &OwnedActivation) -> Result<DefinitionState, ServiceRefusal> {
+            self.0.owned(owned)
+        }
+        fn before_finish_update(&mut self, transaction: &mut ActivationTransaction<'_>) {
+            transaction.interrupt_committed_update_after(1, true);
+        }
+    }
+    let paths = Paths {
+        state: root.join("state"),
+        target: root.join("units/gnome-terminal-server.service.d"),
+    };
+    update_at(
+        &paths,
+        artifact,
+        &mut Interrupt(RealService {
+            target: paths.target.clone(),
+        }),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn recover_committed_update_private(root: &Path) -> Result<Prepared, Failure> {
+    let paths = Paths {
+        state: root.join("state"),
+        target: root.join("units/gnome-terminal-server.service.d"),
+    };
+    recover_committed_update_at(
+        &paths,
         &mut RealService {
             target: paths.target.clone(),
         },
@@ -1046,6 +1107,166 @@ mod tests {
         let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
         transaction.interrupt_install_after(checkpoint);
         assert!(transaction.apply().is_err());
+    }
+
+    #[test]
+    fn committed_update_recovery_preserves_the_chosen_version_at_each_cleanup_prefix() {
+        for point in 1..=4 {
+            let (_root, paths) = fixture();
+            interrupted_committed_update(&paths, point);
+            let mut checks = Checks::default();
+            assert_eq!(
+                recover_committed_update_at(&paths, &mut checks)
+                    .unwrap()
+                    .definition,
+                DefinitionState::NeedsReload
+            );
+            assert_eq!(checks.owned_calls, 3);
+            assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Owned);
+            let active = ExistingActivation::open(&paths).unwrap();
+            assert_eq!(
+                active.owned.module_digest(),
+                other_artifact().manifest.sha256
+            );
+            assert_eq!(
+                active.owned.previous_module(),
+                Some(artifact().manifest.sha256.as_str())
+            );
+            assert!(recover_committed_update_at(&paths, &mut checks).is_err());
+            assert_eq!(checks.owned_calls, 3);
+        }
+    }
+
+    fn interrupted_committed_update(paths: &Paths, point: u8) {
+        struct Interrupt {
+            point: u8,
+            checks: Checks,
+        }
+        impl ServiceChecks for Interrupt {
+            fn stock(&mut self) -> Result<(), ServiceRefusal> {
+                self.checks.stock()
+            }
+            fn owned(
+                &mut self,
+                owned: &OwnedActivation,
+            ) -> Result<DefinitionState, ServiceRefusal> {
+                self.checks.owned(owned)
+            }
+            fn before_finish_update(&mut self, transaction: &mut ActivationTransaction<'_>) {
+                transaction.interrupt_committed_update_after(self.point, false);
+            }
+        }
+        prepare_at(paths, &artifact(), &mut Checks::default()).unwrap();
+        assert!(
+            update_at(
+                paths,
+                &other_artifact(),
+                &mut Interrupt {
+                    point,
+                    checks: Checks::default()
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Pending);
+    }
+
+    #[test]
+    fn committed_update_recovery_refuses_service_change_under_the_lock() {
+        struct Refuse {
+            calls: usize,
+        }
+        impl ServiceChecks for Refuse {
+            fn stock(&mut self) -> Result<(), ServiceRefusal> {
+                panic!("owned recovery only")
+            }
+            fn owned(
+                &mut self,
+                owned: &OwnedActivation,
+            ) -> Result<DefinitionState, ServiceRefusal> {
+                owned.recheck().unwrap();
+                self.calls += 1;
+                if self.calls == 2 {
+                    Err(ServiceRefusal::Changed)
+                } else {
+                    Ok(DefinitionState::NeedsReload)
+                }
+            }
+        }
+        let (_root, paths) = fixture();
+        interrupted_committed_update(&paths, 1);
+        let count = fs::read_dir(&paths.state).unwrap().count();
+        let mut checks = Refuse { calls: 0 };
+        let error = recover_committed_update_at(&paths, &mut checks).unwrap_err();
+        assert!(matches!(
+            error.cause,
+            Cause::Service(ServiceRefusal::Changed)
+        ));
+        assert_eq!(checks.calls, 2);
+        assert_eq!(fs::read_dir(&paths.state).unwrap().count(), count);
+        assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Pending);
+    }
+
+    #[test]
+    fn committed_update_recovery_refuses_a_replaced_namespace_after_the_lock() {
+        struct Replace {
+            state: PathBuf,
+        }
+        impl ServiceChecks for Replace {
+            fn stock(&mut self) -> Result<(), ServiceRefusal> {
+                panic!("owned recovery only")
+            }
+            fn owned(
+                &mut self,
+                owned: &OwnedActivation,
+            ) -> Result<DefinitionState, ServiceRefusal> {
+                owned.recheck().unwrap();
+                Ok(DefinitionState::NeedsReload)
+            }
+            fn after_activation_lock(&mut self) {
+                fs::rename(&self.state, self.state.with_extension("preserved")).unwrap();
+                fs::create_dir(&self.state).unwrap();
+                fs::set_permissions(&self.state, fs::Permissions::from_mode(0o700)).unwrap();
+            }
+        }
+        let (_root, paths) = fixture();
+        interrupted_committed_update(&paths, 1);
+        let count = fs::read_dir(&paths.state).unwrap().count();
+        assert!(
+            recover_committed_update_at(
+                &paths,
+                &mut Replace {
+                    state: paths.state.clone()
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read_dir(&paths.state).unwrap().count(), 0);
+        assert_eq!(
+            fs::read_dir(paths.state.with_extension("preserved"))
+                .unwrap()
+                .count(),
+            count
+        );
+    }
+
+    #[test]
+    fn committed_update_recovery_refuses_changed_module_before_service_and_cleanup() {
+        let (_root, paths) = fixture();
+        interrupted_committed_update(&paths, 1);
+        let module = paths
+            .state
+            .join("modules")
+            .join(other_artifact().manifest.sha256)
+            .join(artifact::format::MODULE_NAME);
+        fs::set_permissions(&module, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(&module, b"changed").unwrap();
+        let count = fs::read_dir(&paths.state).unwrap().count();
+        let mut checks = Checks::default();
+        assert!(recover_committed_update_at(&paths, &mut checks).is_err());
+        assert_eq!(checks.owned_calls, 0);
+        assert_eq!(fs::read_dir(&paths.state).unwrap().count(), count);
+        assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Pending);
     }
 
     #[test]

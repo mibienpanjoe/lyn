@@ -1,5 +1,8 @@
 //! Persistent authority for cleanup after an explicitly committed update.
 
+mod snapshot;
+pub(in crate::integrations::gnome) use snapshot::CommittedUpdateSnapshot;
+
 use super::super::{ActivationTransaction, DROP_IN, LAUNCHER, MANIFEST, Manifest, Place, refused};
 use super::{EXCHANGE_NAMES, PRECOMMIT_PENDING};
 use crate::integrations::gnome::{
@@ -212,79 +215,13 @@ pub(in crate::integrations::gnome::transaction) fn recover_cleanup(
     lock: &InstallationLock<'_>,
 ) -> io::Result<()> {
     lock.check()?;
-    let journal = match state.read_state(CLEANUP_PENDING) {
-        Ok(record) => record,
-        // A prior retirement may have unlinked the record before its directory
-        // sync failed. No in-memory retired flag survives a fresh resume.
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return state.sync_directory(),
-        Err(error) => return Err(error),
-    };
-    let snapshot: CleanupRecord =
-        serde_json::from_slice(&journal.content).map_err(|_| refused())?;
-    state.require_absent(super::COMPENSATION_PENDING)?;
-    snapshot.validate()?;
-    // Hold all current inodes and preflight every extant backup before removing
-    // any. Missing backups are allowed only under this durable cleanup decision.
-    let _launcher = snapshot.current.launcher.reopen(state)?;
-    let _drop_in = snapshot.current.drop_in.reopen(drop_ins)?;
-    let manifest_file = snapshot.current.manifest.reopen(state)?;
-    validate_manifest(state, drop_ins, &manifest_file)?;
-    let precommit = if let Some(receipt) = &snapshot.precommit {
-        match receipt.reopen(state) {
-            Ok(file) => Some(file),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error),
-        }
-    } else {
-        // Old cleanup records carry no authority over a new refusal marker.
-        state.require_absent(PRECOMMIT_PENDING)?;
-        None
-    };
-    let mut backups: Vec<(&ManagedDirectory, OwnedFile)> = Vec::new();
-    let mut exchange_records = Vec::new();
-    for (role, name) in EXCHANGE_NAMES.into_iter().enumerate() {
-        let receipt = snapshot.exchanges.get(role).and_then(Option::as_ref);
-        if let Some(receipt) = receipt {
-            match receipt.reopen(state) {
-                Ok(file) => exchange_records.push(file),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
-            }
-        } else {
-            state.require_absent(name)?;
-        }
+    match state.read_state(CLEANUP_PENDING) {
+        Ok(_) => CommittedUpdateSnapshot::open(state, drop_ins)?.finish(state, drop_ins, lock),
+        // A fresh generic resume can retry a prior journal unlink's failed sync.
+        // The dedicated checked entry requires the journal to still exist.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => state.sync_directory(),
+        Err(error) => Err(error),
     }
-    for (directory, receipt) in [
-        (state, &snapshot.backups.manifest),
-        (drop_ins, &snapshot.backups.drop_in),
-        (state, &snapshot.backups.launcher),
-    ] {
-        match receipt.reopen(directory) {
-            Ok(file) => backups.push((directory, file)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-    }
-    state.verify(&journal)?;
-    // Publication may have succeeded before its directory sync failed. Establish
-    // the cleanup authority's durability before the first destructive action.
-    state.sync_directory()?;
-    for (directory, file) in backups {
-        lock.check()?;
-        directory.remove(&file)?;
-    }
-    state.sync_directory()?;
-    drop_ins.sync_directory()?;
-    for record in exchange_records.into_iter().rev() {
-        lock.check()?;
-        state.remove(&record)?;
-    }
-    if let Some(precommit) = precommit {
-        lock.check()?;
-        state.remove(&precommit)?;
-    }
-    lock.check()?;
-    state.remove(&journal)
 }
 
 #[cfg(test)]
@@ -297,6 +234,90 @@ mod tests {
         os::unix::fs::{MetadataExt, PermissionsExt},
         path::Path,
     };
+
+    #[test]
+    fn committed_snapshot_is_read_only_and_fences_reappearing_backups() {
+        let (root, state, target, initial) = fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, initial).unwrap();
+        transaction.apply().unwrap();
+        transaction
+            .update(
+                render_activation(
+                    &root.path().join("v2.so"),
+                    &root.path().join("state").join(LAUNCHER),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        transaction.stop_after = Some((2, false));
+        assert!(transaction.finish_update().is_err());
+        drop(transaction);
+        let before = fs::read_dir(root.path().join("state")).unwrap().count();
+        let snapshot = CommittedUpdateSnapshot::open(&state, &target).unwrap();
+        snapshot.recheck(&state, &target).unwrap();
+        assert_eq!(
+            fs::read_dir(root.path().join("state")).unwrap().count(),
+            before
+        );
+        let journal = state.read_state(CLEANUP_PENDING).unwrap();
+        let body: CleanupRecord = serde_json::from_slice(&journal.content).unwrap();
+        let candidates = [
+            root.path()
+                .join("state")
+                .join(body.backups.manifest.filename()),
+            root.path()
+                .join("state")
+                .join(body.backups.launcher.filename()),
+            root.path()
+                .join("drop-ins")
+                .join(body.backups.drop_in.filename()),
+        ];
+        let absent = candidates.iter().find(|path| !path.exists()).unwrap();
+        fs::write(absent, b"unknown replacement").unwrap();
+        assert!(snapshot.recheck(&state, &target).is_err());
+        assert!(root.path().join("state").join(CLEANUP_PENDING).exists());
+        assert_eq!(fs::read(absent).unwrap(), b"unknown replacement");
+    }
+
+    #[test]
+    fn checked_committed_recovery_refusal_never_deletes_backups() {
+        let (root, state, target, initial) = fixture();
+        let mut transaction = ActivationTransaction::begin(&state, &target, initial).unwrap();
+        transaction.apply().unwrap();
+        transaction
+            .update(
+                render_activation(
+                    &root.path().join("v2.so"),
+                    &root.path().join("state").join(LAUNCHER),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        transaction.stop_after = Some((1, false));
+        assert!(transaction.finish_update().is_err());
+        drop(transaction);
+        let before = fs::read_dir(root.path().join("state")).unwrap().count();
+        assert!(
+            ActivationTransaction::resume_committed_update_checked(&state, &target, || Err(
+                io::Error::other("private service refusal")
+            ))
+            .is_err()
+        );
+        assert_eq!(
+            fs::read_dir(root.path().join("state")).unwrap().count(),
+            before
+        );
+        assert!(root.path().join("state").join(CLEANUP_PENDING).exists());
+        let resumed =
+            ActivationTransaction::resume_committed_update_checked(&state, &target, || Ok(()))
+                .unwrap();
+        assert!(!root.path().join("state").join(CLEANUP_PENDING).exists());
+        drop(resumed);
+        assert!(
+            ActivationTransaction::resume_committed_update_checked(&state, &target, || Ok(()))
+                .is_err()
+        );
+    }
 
     #[test]
     fn abrupt_cleanup_child() {
