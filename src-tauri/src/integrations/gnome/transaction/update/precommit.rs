@@ -3,6 +3,7 @@
 mod compensation;
 mod early;
 pub(in crate::integrations::gnome::transaction) use compensation::COMPENSATION_PENDING;
+pub(in crate::integrations::gnome) use early::UncommittedUpdateSnapshot;
 pub(in crate::integrations::gnome::transaction) use early::recover_early;
 
 pub(in crate::integrations::gnome::transaction) const EXCHANGE_NAMES: [&str; 3] = [

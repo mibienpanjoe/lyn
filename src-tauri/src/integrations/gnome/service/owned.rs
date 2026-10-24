@@ -8,7 +8,7 @@ use super::super::{
     render_activation_with_previous,
     transaction::{
         CommittedUpdateSnapshot, DROP_IN, InstallSnapshot, LAUNCHER, PinnedActivation,
-        RemovalSnapshot, RetirementSnapshot,
+        RemovalSnapshot, RetirementSnapshot, UncommittedUpdateSnapshot,
     },
 };
 use std::{
@@ -35,6 +35,7 @@ enum ActivationEvidence {
     Retired(RetirementSnapshot),
     Removing(RemovalSnapshot),
     CommittedUpdate(CommittedUpdateSnapshot),
+    UncommittedUpdate(UncommittedUpdateSnapshot),
 }
 
 impl ActivationEvidence {
@@ -45,6 +46,7 @@ impl ActivationEvidence {
             Self::Retired(files) => files.contents(),
             Self::Removing(files) => files.contents(),
             Self::CommittedUpdate(files) => (&files.launcher.content, &files.drop_in.content),
+            Self::UncommittedUpdate(files) => files.contents(),
         }
     }
 
@@ -55,6 +57,7 @@ impl ActivationEvidence {
             Self::Retired(files) => files.recheck(state, target),
             Self::Removing(files) => files.recheck(state, target),
             Self::CommittedUpdate(files) => files.recheck(state, target),
+            Self::UncommittedUpdate(files) => files.recheck(state, target),
         }
     }
 }
@@ -64,6 +67,53 @@ fn refused() -> io::Error {
         io::ErrorKind::PermissionDenied,
         "unrecognized managed GNOME activation",
     )
+}
+
+fn decode_factory(
+    state_path: &Path,
+    launcher_path: &str,
+    launcher_bytes: &[u8],
+    drop_in_bytes: &[u8],
+) -> io::Result<(PathBuf, Option<String>)> {
+    // Decode only the factory's single-quoted literal, then require the
+    // entire launcher and drop-in to round-trip byte for byte. This is not
+    // a generic shell parser and never executes the supplied text.
+    let text = std::str::from_utf8(launcher_bytes).map_err(|_| refused())?;
+    let literal = text
+        .lines()
+        .nth(2)
+        .and_then(|line| line.strip_prefix("lyn_module='"))
+        .and_then(|line| line.strip_suffix('\''))
+        .ok_or_else(refused)?;
+    let module_path = PathBuf::from(literal.replace("'\\''", "'"));
+    let version = module_path.parent().ok_or_else(refused)?;
+    let digest = version
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(refused)?;
+    if module_path.file_name() != Some(std::ffi::OsStr::new(format::MODULE_NAME))
+        || version.parent() != Some(state_path.join("modules").as_path())
+        || digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(refused());
+    }
+    let previous_module = text
+        .lines()
+        .last()
+        .and_then(|line| line.strip_prefix(PREVIOUS_MODULE_PREFIX));
+    let rendered =
+        render_activation_with_previous(&module_path, Path::new(launcher_path), previous_module)
+            .map_err(|_| refused())?;
+    if rendered.launcher.as_bytes() != launcher_bytes
+        || rendered.drop_in.as_bytes() != drop_in_bytes
+    {
+        return Err(refused());
+    }
+    let previous_module = previous_module.map(str::to_owned);
+    Ok((module_path, previous_module))
 }
 
 impl OwnedActivation {
@@ -114,6 +164,18 @@ impl OwnedActivation {
         matches!(&self.files, ActivationEvidence::Retired(_))
     }
 
+    pub(in crate::integrations::gnome) fn open_uncommitted_update(
+        state_path: &Path,
+        target_path: &Path,
+    ) -> io::Result<Self> {
+        let state = directories::open_private(state_path, false)?;
+        let target = directories::open_drop_ins(target_path, false)?;
+        let files = ActivationEvidence::UncommittedUpdate(UncommittedUpdateSnapshot::open(
+            &state, &target,
+        )?);
+        Self::from_files(state_path, target_path, state, target, files)
+    }
+
     pub(in crate::integrations::gnome) fn open_pending_removal(
         state_path: &Path,
         target_path: &Path,
@@ -142,48 +204,14 @@ impl OwnedActivation {
             .to_str()
             .ok_or_else(refused)?
             .to_owned();
-        // Decode only the factory's single-quoted literal, then require the
-        // entire launcher and drop-in to round-trip byte for byte. This is not
-        // a generic shell parser and never executes the supplied text.
         let (launcher_bytes, drop_in_bytes) = files.contents();
-        let text = std::str::from_utf8(launcher_bytes).map_err(|_| refused())?;
-        let literal = text
-            .lines()
-            .nth(2)
-            .and_then(|line| line.strip_prefix("lyn_module='"))
-            .and_then(|line| line.strip_suffix('\''))
-            .ok_or_else(refused)?;
-        let module_path = PathBuf::from(literal.replace("'\\''", "'"));
-        let version = module_path.parent().ok_or_else(refused)?;
-        let digest = version
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(refused)?;
-        if module_path.file_name() != Some(std::ffi::OsStr::new(format::MODULE_NAME))
-            || version.parent() != Some(state_path.join("modules").as_path())
-            || digest.len() != 64
-            || !digest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(refused());
+        let (module_path, previous_module) =
+            decode_factory(state_path, &launcher_path, launcher_bytes, drop_in_bytes)?;
+        if let ActivationEvidence::UncommittedUpdate(snapshot) = &files {
+            if let Some((launcher, drop_in)) = snapshot.replacement_contents() {
+                decode_factory(state_path, &launcher_path, launcher, drop_in)?;
+            }
         }
-        let previous_module = text
-            .lines()
-            .last()
-            .and_then(|line| line.strip_prefix(PREVIOUS_MODULE_PREFIX));
-        let rendered = render_activation_with_previous(
-            &module_path,
-            Path::new(&launcher_path),
-            previous_module,
-        )
-        .map_err(|_| refused())?;
-        if rendered.launcher.as_bytes() != launcher_bytes
-            || rendered.drop_in.as_bytes() != drop_in_bytes
-        {
-            return Err(refused());
-        }
-        let previous_module = previous_module.map(str::to_owned);
         let result = Self {
             state_path: state_path.into(),
             target_path: target_path.into(),
@@ -233,6 +261,7 @@ impl OwnedActivation {
         match &self.files {
             ActivationEvidence::Complete(files) => files.drop_in.file.metadata().map(Some),
             ActivationEvidence::CommittedUpdate(files) => files.drop_in.file.metadata().map(Some),
+            ActivationEvidence::UncommittedUpdate(files) => files.drop_in_metadata(),
             ActivationEvidence::Installing(files)
                 if files.drop_in.name.to_bytes() == DROP_IN.as_bytes() =>
             {

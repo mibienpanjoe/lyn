@@ -11,6 +11,7 @@ pub(super) use inspection::{ActivationFilesState, inspect_activation_files};
 pub(super) use recovery::InstallSnapshot;
 pub(super) use removal::{RETIRED_REMOVAL, RemovalSnapshot, RetirementSnapshot};
 pub(super) use update::CommittedUpdateSnapshot;
+pub(super) use update::UncommittedUpdateSnapshot;
 
 use super::{
     RenderedActivation,
@@ -33,7 +34,7 @@ struct Manifest {
     drop_in: Receipt,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Place {
     State,
     DropIns,
@@ -93,6 +94,19 @@ impl<'a> ActivationTransaction<'a> {
     pub(super) fn interrupt_committed_update_after(&mut self, checkpoint: u8, abrupt: bool) {
         assert!((1..=4).contains(&checkpoint));
         self.stop_after = Some((checkpoint, abrupt));
+    }
+    #[cfg(test)]
+    pub(super) fn interrupt_uncommitted_update_after(&mut self, checkpoint: u8, abrupt: bool) {
+        assert!((5..=8).contains(&checkpoint));
+        self.stop_after = Some((checkpoint, abrupt));
+    }
+    #[cfg(test)]
+    pub(super) fn interrupt_compensation_before_exchange(&mut self) {
+        self.state.fail_directory_sync_after(2);
+        let result = self.rollback_update();
+        self.state.fail_directory_sync(false);
+        assert!(result.is_err());
+        assert!(self.state.read_state(update::COMPENSATION_PENDING).is_ok());
     }
     /// Existing complete files only. Never recover an intent as a side effect.
     pub(super) fn open_complete(
@@ -191,6 +205,19 @@ impl<'a> ActivationTransaction<'a> {
         snapshot.finish(state, drop_ins, &lock)?;
         // Do not dispatch generic recovery here: newly appeared, unrelated
         // intents must refuse rather than be consumed under this authority.
+        Self::complete_locked(state, drop_ins, lock)
+    }
+
+    pub(super) fn resume_uncommitted_update_checked(
+        state: &'a ManagedDirectory,
+        drop_ins: &'a ManagedDirectory,
+        check: impl FnOnce() -> io::Result<()>,
+    ) -> io::Result<Self> {
+        let lock = InstallationLock::acquire(state)?;
+        let snapshot = UncommittedUpdateSnapshot::open(state, drop_ins)?;
+        check()?;
+        snapshot.recheck(state, drop_ins)?;
+        snapshot.finish(state, drop_ins, &lock)?;
         Self::complete_locked(state, drop_ins, lock)
     }
 

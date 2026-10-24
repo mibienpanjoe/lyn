@@ -208,6 +208,24 @@ def run(module, preserved, executable, sdk, updated_module):
                                            "moduleEnvironmentAbsent": True}, payload
             print("PASS: actual GTK new-tab child excludes Lyn and preserves the existing module", flush=True)
             # The coordinator changes files; it must not restart our server.
+            original_launcher = (root / "state/launcher-v1").read_bytes()
+            preparation_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(updated_module),
+                                           LYN_PRIVATE_NATIVE_FILE_ACTION="interrupt-update-precommit")
+            with simulated_manager(root, "loaded", sdk, preparation_environment):
+                interrupted = subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                "--test-threads=1"], env=preparation_environment, timeout=8)
+                assert interrupted.returncode == 77, "Expected actual precommit process interruption"
+                assert (root / "state/update-precommit-pending-v1.json").is_file()
+                restored_environment = dict(preparation_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="recover-update-precommit",
+                                            LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(root / "absent-bundle.so"))
+                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                "--test-threads=1"], env=restored_environment, check=True, timeout=8)
+            assert (root / "state/launcher-v1").read_bytes() == original_launcher
+            assert not (root / "state/update-precommit-pending-v1.json").exists()
+            alive = select.poll()
+            alive.register(pin, select.POLLIN)
+            assert not alive.poll(0) and server.poll() is None
+            print("PASS: uncommitted writer exit recovered in a fresh Rust process to the original factory; existing private server unchanged", flush=True)
             action_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(updated_module),
                                       LYN_PRIVATE_NATIVE_FILE_ACTION="interrupt-update-commit")
             with simulated_manager(root, "loaded", sdk, action_environment):

@@ -3,7 +3,7 @@
 #![allow(dead_code)] // Application command wiring follows private acceptance.
 
 mod recovery_update;
-use recovery_update::recover_committed_update_at;
+use recovery_update::{recover_committed_update_at, recover_uncommitted_update_at};
 
 use super::{
     artifact::{self, Artifact},
@@ -260,6 +260,8 @@ fn update_at(
             Some(active.owned.module_digest()),
         )
         .map_err(|_| failure(Stage::Applying, Cause::InvalidLocation))?;
+        #[cfg(test)]
+        service.before_update(&mut transaction);
         transaction.update(rendered).map_err(applying)?;
         old.recheck(paths, &active).map_err(applying)?;
         store.verify(&candidate, artifact).map_err(applying)?;
@@ -557,6 +559,8 @@ trait ServiceChecks {
     fn before_retire(&mut self, _transaction: &mut ActivationTransaction<'_>) {}
     #[cfg(test)]
     fn before_finish_update(&mut self, _transaction: &mut ActivationTransaction<'_>) {}
+    #[cfg(test)]
+    fn before_update(&mut self, _transaction: &mut ActivationTransaction<'_>) {}
 }
 
 struct RealService {
@@ -691,6 +695,16 @@ pub(super) fn recover_install(home: &Path) -> Result<Prepared, Failure> {
 pub(super) fn recover_committed_update(home: &Path) -> Result<Prepared, Failure> {
     let paths = Paths::from_home(home)?;
     recover_committed_update_at(
+        &paths,
+        &mut RealService {
+            target: paths.target.clone(),
+        },
+    )
+}
+
+pub(super) fn recover_uncommitted_update(home: &Path) -> Result<Prepared, Failure> {
+    let paths = Paths::from_home(home)?;
+    recover_uncommitted_update_at(
         &paths,
         &mut RealService {
             target: paths.target.clone(),
@@ -868,6 +882,50 @@ pub(super) fn interrupt_committed_update_private(
         &mut Interrupt(RealService {
             target: paths.target.clone(),
         }),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn interrupt_uncommitted_update_private(
+    root: &Path,
+    artifact: &Artifact,
+) -> Result<Prepared, Failure> {
+    struct Interrupt(RealService);
+    impl ServiceChecks for Interrupt {
+        fn stock(&mut self) -> Result<(), ServiceRefusal> {
+            self.0.stock()
+        }
+        fn owned(&mut self, owned: &OwnedActivation) -> Result<DefinitionState, ServiceRefusal> {
+            self.0.owned(owned)
+        }
+        fn before_update(&mut self, transaction: &mut ActivationTransaction<'_>) {
+            transaction.interrupt_uncommitted_update_after(8, true);
+        }
+    }
+    let paths = Paths {
+        state: root.join("state"),
+        target: root.join("units/gnome-terminal-server.service.d"),
+    };
+    update_at(
+        &paths,
+        artifact,
+        &mut Interrupt(RealService {
+            target: paths.target.clone(),
+        }),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn recover_uncommitted_update_private(root: &Path) -> Result<Prepared, Failure> {
+    let paths = Paths {
+        state: root.join("state"),
+        target: root.join("units/gnome-terminal-server.service.d"),
+    };
+    recover_uncommitted_update_at(
+        &paths,
+        &mut RealService {
+            target: paths.target.clone(),
+        },
     )
 }
 
@@ -1107,6 +1165,159 @@ mod tests {
         let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
         transaction.interrupt_install_after(checkpoint);
         assert!(transaction.apply().is_err());
+    }
+
+    #[test]
+    fn uncommitted_update_recovery_resumes_interrupted_compensation() {
+        struct Interrupt(Checks);
+        impl ServiceChecks for Interrupt {
+            fn stock(&mut self) -> Result<(), ServiceRefusal> {
+                self.0.stock()
+            }
+            fn owned(
+                &mut self,
+                owned: &OwnedActivation,
+            ) -> Result<DefinitionState, ServiceRefusal> {
+                self.0.owned(owned)
+            }
+            fn before_finish_update(&mut self, transaction: &mut ActivationTransaction<'_>) {
+                transaction.interrupt_compensation_before_exchange();
+            }
+        }
+        let (_root, paths) = fixture();
+        prepare_at(&paths, &artifact(), &mut Checks::default()).unwrap();
+        assert!(update_at(&paths, &other_artifact(), &mut Interrupt(Checks::default())).is_err());
+        assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Pending);
+        recover_uncommitted_update_at(&paths, &mut Checks::default()).unwrap();
+        let active = ExistingActivation::open(&paths).unwrap();
+        assert_eq!(active.owned.module_digest(), artifact().manifest.sha256);
+        assert_eq!(active.owned.previous_module(), None);
+        assert!(
+            paths
+                .state
+                .join("modules")
+                .join(other_artifact().manifest.sha256)
+                .exists()
+        );
+    }
+
+    #[test]
+    fn uncommitted_update_recovery_refuses_an_unrecognized_replacement_factory() {
+        let (root, paths) = fixture();
+        prepare_at(&paths, &artifact(), &mut Checks::default()).unwrap();
+        let state = directories::open_private(&paths.state, false).unwrap();
+        let target = directories::open_drop_ins(&paths.target, false).unwrap();
+        let mut transaction = ActivationTransaction::open_complete(&state, &target).unwrap();
+        transaction
+            .update(
+                render_activation(
+                    &root.path().join("outside.so"),
+                    &paths.state.join(transaction::LAUNCHER),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        drop(transaction);
+        let count = fs::read_dir(&paths.state).unwrap().count();
+        let mut checks = Checks::default();
+        assert!(recover_uncommitted_update_at(&paths, &mut checks).is_err());
+        assert_eq!(checks.owned_calls, 0);
+        assert_eq!(fs::read_dir(&paths.state).unwrap().count(), count);
+    }
+
+    #[test]
+    fn uncommitted_update_recovery_checks_old_target_and_preserves_modified_new_module() {
+        for corrupt_old in [false, true] {
+            let (_root, paths) = fixture();
+            interrupted_uncommitted_update(&paths, 8);
+            let digest = if corrupt_old {
+                artifact().manifest.sha256
+            } else {
+                other_artifact().manifest.sha256
+            };
+            let module = paths
+                .state
+                .join("modules")
+                .join(digest)
+                .join(artifact::format::MODULE_NAME);
+            fs::set_permissions(&module, fs::Permissions::from_mode(0o600)).unwrap();
+            fs::write(&module, b"modified retained module").unwrap();
+            let mut checks = Checks::default();
+            let result = recover_uncommitted_update_at(&paths, &mut checks);
+            assert_eq!(result.is_err(), corrupt_old);
+            assert_eq!(checks.owned_calls, if corrupt_old { 0 } else { 3 });
+            assert_eq!(fs::read(&module).unwrap(), b"modified retained module");
+            assert_eq!(
+                paths.inspect().unwrap(),
+                if corrupt_old {
+                    ActivationFilesState::Pending
+                } else {
+                    ActivationFilesState::Owned
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn uncommitted_update_recovery_restores_original_factory_at_each_exchange_prefix() {
+        for point in 5..=8 {
+            let (_root, paths) = fixture();
+            interrupted_uncommitted_update(&paths, point);
+            let mut checks = Checks::default();
+            assert_eq!(
+                recover_uncommitted_update_at(&paths, &mut checks)
+                    .unwrap()
+                    .definition,
+                DefinitionState::NeedsReload
+            );
+            assert_eq!(checks.owned_calls, 3);
+            assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Owned);
+            let active = ExistingActivation::open(&paths).unwrap();
+            assert_eq!(active.owned.module_digest(), artifact().manifest.sha256);
+            assert_eq!(active.owned.previous_module(), None);
+            assert!(
+                paths
+                    .state
+                    .join("modules")
+                    .join(other_artifact().manifest.sha256)
+                    .exists()
+            );
+            assert!(recover_uncommitted_update_at(&paths, &mut checks).is_err());
+        }
+    }
+
+    fn interrupted_uncommitted_update(paths: &Paths, point: u8) {
+        struct Interrupt {
+            point: u8,
+            checks: Checks,
+        }
+        impl ServiceChecks for Interrupt {
+            fn stock(&mut self) -> Result<(), ServiceRefusal> {
+                self.checks.stock()
+            }
+            fn owned(
+                &mut self,
+                owned: &OwnedActivation,
+            ) -> Result<DefinitionState, ServiceRefusal> {
+                self.checks.owned(owned)
+            }
+            fn before_update(&mut self, transaction: &mut ActivationTransaction<'_>) {
+                transaction.interrupt_uncommitted_update_after(self.point, false);
+            }
+        }
+        prepare_at(paths, &artifact(), &mut Checks::default()).unwrap();
+        assert!(
+            update_at(
+                paths,
+                &other_artifact(),
+                &mut Interrupt {
+                    point,
+                    checks: Checks::default()
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Pending);
     }
 
     #[test]

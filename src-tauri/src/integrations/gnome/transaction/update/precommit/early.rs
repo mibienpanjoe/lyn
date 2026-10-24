@@ -1,6 +1,6 @@
 //! Inverse replay for recorded exchanges before explicit update commitment.
 
-use super::super::super::{DROP_IN, LAUNCHER, MANIFEST, Manifest, refused};
+use super::super::super::{DROP_IN, LAUNCHER, MANIFEST, Manifest, Place, refused};
 use super::{
     COMPENSATION_PENDING, EXCHANGE_NAMES, ExchangeRecord, PRECOMMIT_PENDING, PreparedUpdate,
 };
@@ -189,115 +189,137 @@ fn manifest_nodes(
     Ok((original, replacement, restored))
 }
 
-pub(in crate::integrations::gnome::transaction) fn recover_early(
-    state: &ManagedDirectory,
-    target: &ManagedDirectory,
-    lock: &InstallationLock<'_>,
-) -> io::Result<()> {
-    lock.check()?;
-    let Some(header) = optional_state(state, PRECOMMIT_PENDING)? else {
-        state.require_absent(COMPENSATION_PENDING)?;
-        for name in EXCHANGE_NAMES {
-            state.require_absent(name)?;
+pub(in crate::integrations::gnome) struct UncommittedUpdateSnapshot {
+    header: OwnedFile,
+    exchanges: Vec<Option<(OwnedFile, ExchangeRecord)>>,
+    compensation: Option<(OwnedFile, ExchangeRecord)>,
+    current: Option<OwnedFile>,
+    launcher: Slot,
+    drop_in: Slot,
+    already_canonical: bool,
+    undo_name: String,
+    original_manifest: Option<OwnedFile>,
+    replacement_manifest: Option<OwnedFile>,
+    compensation_manifest: Option<OwnedFile>,
+    absent: Vec<(Place, String)>,
+}
+
+fn no_competing_intent(state: &ManagedDirectory) -> io::Result<()> {
+    use super::super::super::{recovery, removal};
+    for name in [
+        recovery::PENDING_INSTALL,
+        removal::PENDING_REMOVAL,
+        removal::RETIRED_REMOVAL,
+        super::super::CLEANUP_PENDING,
+    ] {
+        state.require_absent(name)?;
+    }
+    Ok(())
+}
+
+impl UncommittedUpdateSnapshot {
+    pub(in crate::integrations::gnome) fn open(
+        state: &ManagedDirectory,
+        target: &ManagedDirectory,
+    ) -> io::Result<Self> {
+        no_competing_intent(state)?;
+        let header = state.read_state(PRECOMMIT_PENDING)?;
+        let prepared: PreparedUpdate =
+            serde_json::from_slice(&header.content).map_err(|_| refused())?;
+        prepared.validate()?;
+        let mut exchanges = Vec::new();
+        for (role, name) in EXCHANGE_NAMES.into_iter().enumerate() {
+            let entry = if let Some(file) = optional_state(state, name)? {
+                let body: ExchangeRecord =
+                    serde_json::from_slice(&file.content).map_err(|_| refused())?;
+                let expected = match role {
+                    0 => &prepared.previous_launcher,
+                    1 => &prepared.previous_drop_in,
+                    2 => &prepared.previous_manifest,
+                    _ => return Err(refused()),
+                };
+                let mode = if role == 0 { 0o700 } else { 0o600 };
+                body.candidate.validate()?;
+                if body.version != 1
+                    || body.role != role as u8
+                    || body.previous != *expected
+                    || !body.precommit.is_for(PRECOMMIT_PENDING, 0o600)
+                    || !super::super::cleanup::candidate(&body.candidate, mode)
+                {
+                    return Err(refused());
+                }
+                let _authority = body.precommit.reopen(state)?;
+                Some((file, body))
+            } else {
+                None
+            };
+            exchanges.push(entry);
         }
-        return state.sync_directory();
-    };
-    let prepared: PreparedUpdate =
-        serde_json::from_slice(&header.content).map_err(|_| refused())?;
-    prepared.validate()?;
-    let mut exchanges = Vec::new();
-    for (role, name) in EXCHANGE_NAMES.into_iter().enumerate() {
-        let entry = if let Some(file) = optional_state(state, name)? {
+        let current = optional_state(state, MANIFEST)?;
+        let manifest_exchange = exchanges[2].as_ref().map(|entry| &entry.1);
+        let compensation = if let Some(file) = optional_state(state, COMPENSATION_PENDING)? {
             let body: ExchangeRecord =
                 serde_json::from_slice(&file.content).map_err(|_| refused())?;
-            let expected = match role {
-                0 => &prepared.previous_launcher,
-                1 => &prepared.previous_drop_in,
-                2 => &prepared.previous_manifest,
-                _ => return Err(refused()),
-            };
-            let mode = if role == 0 { 0o700 } else { 0o600 };
-            body.candidate.validate()?;
-            if body.version != 1
-                || body.role != role as u8
-                || body.previous != *expected
-                || !body.precommit.is_for(PRECOMMIT_PENDING, 0o600)
-                || !super::super::cleanup::candidate(&body.candidate, mode)
-            {
-                return Err(refused());
-            }
-            let _authority = body.precommit.reopen(state)?;
+            super::compensation::validate(state, &body, &prepared, manifest_exchange)?;
             Some((file, body))
         } else {
             None
         };
-        exchanges.push(entry);
-    }
-    let current = optional_state(state, MANIFEST)?;
-    let manifest_exchange = exchanges[2].as_ref().map(|entry| &entry.1);
-    let compensation = if let Some(file) = optional_state(state, COMPENSATION_PENDING)? {
-        let body: ExchangeRecord = serde_json::from_slice(&file.content).map_err(|_| refused())?;
-        super::compensation::validate(state, &body, &prepared, manifest_exchange)?;
-        Some((file, body))
-    } else {
-        None
-    };
-    if let Some((_, body)) = &compensation {
-        // With compensation authority, content alone cannot authorize an
-        // unknown active inode. Both permissible active identities are logged.
-        if body
-            .candidate
-            .reopen_exchange_slot(state, MANIFEST)
-            .is_err()
-        {
-            body.previous.reopen_exchange_slot(state, MANIFEST)?;
+        if let Some((_, body)) = &compensation {
+            // With compensation authority, content alone cannot authorize an
+            // unknown active inode. Both permissible active identities are logged.
+            if body
+                .candidate
+                .reopen_exchange_slot(state, MANIFEST)
+                .is_err()
+            {
+                body.previous.reopen_exchange_slot(state, MANIFEST)?;
+            }
         }
-    }
-    let restored = restored_receipts(
-        state,
-        target,
-        &prepared,
-        current.as_ref(),
-        manifest_exchange,
-    )?;
-    let mut launcher = load_slot(
-        state,
-        &prepared.previous_launcher,
-        exchanges[0].as_ref().map(|entry| &entry.1),
-        restored.as_ref().map(|receipts| &receipts[0]),
-        LAUNCHER,
-    )?;
-    let mut drop_in = load_slot(
-        target,
-        &prepared.previous_drop_in,
-        exchanges[1].as_ref().map(|entry| &entry.1),
-        restored.as_ref().map(|receipts| &receipts[1]),
-        DROP_IN,
-    )?;
-    let mut already_canonical = if !launcher.swapped && !drop_in.swapped {
-        if let Some(file) = &current {
-            file.content == canonical(state, target, &launcher.original, &drop_in.original)?
+        let restored = restored_receipts(
+            state,
+            target,
+            &prepared,
+            current.as_ref(),
+            manifest_exchange,
+        )?;
+        let launcher = load_slot(
+            state,
+            &prepared.previous_launcher,
+            exchanges[0].as_ref().map(|entry| &entry.1),
+            restored.as_ref().map(|receipts| &receipts[0]),
+            LAUNCHER,
+        )?;
+        let drop_in = load_slot(
+            target,
+            &prepared.previous_drop_in,
+            exchanges[1].as_ref().map(|entry| &entry.1),
+            restored.as_ref().map(|receipts| &receipts[1]),
+            DROP_IN,
+        )?;
+        let mut already_canonical = if !launcher.swapped && !drop_in.swapped {
+            if let Some(file) = &current {
+                file.content == canonical(state, target, &launcher.original, &drop_in.original)?
+            } else {
+                false
+            }
         } else {
             false
+        };
+        if let Some((_, body)) = &compensation {
+            if launcher.swapped || drop_in.swapped {
+                return Err(refused());
+            }
+            already_canonical = body.candidate.reopen_exchange_slot(state, MANIFEST).is_ok();
+            if already_canonical
+                && current.as_ref().ok_or_else(refused)?.content
+                    != canonical(state, target, &launcher.original, &drop_in.original)?
+            {
+                return Err(refused());
+            }
         }
-    } else {
-        false
-    };
-    if let Some((_, body)) = &compensation {
-        if launcher.swapped || drop_in.swapped {
-            return Err(refused());
-        }
-        already_canonical = body.candidate.reopen_exchange_slot(state, MANIFEST).is_ok();
-        if already_canonical
-            && current.as_ref().ok_or_else(refused)?.content
-                != canonical(state, target, &launcher.original, &drop_in.original)?
-        {
-            return Err(refused());
-        }
-    }
-    let undo_name = format!(".lyn-undo-{}-manifest", prepared.nonce);
-    let (mut original_manifest, mut replacement_manifest, mut compensation_manifest) =
-        manifest_nodes(
+        let undo_name = format!(".lyn-undo-{}-manifest", prepared.nonce);
+        let (original_manifest, replacement_manifest, compensation_manifest) = manifest_nodes(
             state,
             &prepared,
             manifest_exchange,
@@ -305,136 +327,336 @@ pub(in crate::integrations::gnome::transaction) fn recover_early(
             already_canonical,
             &undo_name,
         )?;
-    state.verify(&header)?;
-    for (file, _) in exchanges.iter().flatten() {
-        state.verify(file)?;
-    }
-    if let Some((file, _)) = &compensation {
-        state.verify(file)?;
-    }
-    if compensation.is_some() && !already_canonical {
-        let candidate = compensation_manifest.as_ref().ok_or_else(refused)?;
-        if candidate.content != canonical(state, target, &launcher.original, &drop_in.original)? {
-            return Err(refused());
+        state.verify(&header)?;
+        for (file, _) in exchanges.iter().flatten() {
+            state.verify(file)?;
         }
-    }
-    state.sync_directory()?;
-    if compensation.is_some() && !already_canonical {
-        let previous = if original_manifest
-            .as_ref()
-            .is_some_and(|file| file.name.to_bytes() == MANIFEST.as_bytes())
-        {
-            original_manifest.as_mut().ok_or_else(refused)?
-        } else {
-            replacement_manifest.as_mut().ok_or_else(refused)?
+        if let Some((file, _)) = &compensation {
+            state.verify(file)?;
+        }
+        if compensation.is_some() && !already_canonical {
+            let candidate = compensation_manifest.as_ref().ok_or_else(refused)?;
+            if candidate.content != canonical(state, target, &launcher.original, &drop_in.original)?
+            {
+                return Err(refused());
+            }
+        }
+
+        let mut result = Self {
+            header,
+            exchanges,
+            compensation,
+            current,
+            launcher,
+            drop_in,
+            already_canonical,
+            undo_name,
+            original_manifest,
+            replacement_manifest,
+            compensation_manifest,
+            absent: Vec::new(),
         };
-        lock.check()?;
-        state
-            .exchange(
-                previous,
-                compensation_manifest.as_mut().ok_or_else(refused)?,
-            )?
-            .durability?;
-        // The recorded candidate is now the active canonical manifest; no
-        // unjournaled manifest publication is needed during recovery.
-        compensation_manifest = None;
-        already_canonical = true;
+        let present: Vec<_> = result
+            .files()
+            .into_iter()
+            .map(|(place, file)| {
+                file.name
+                    .to_str()
+                    .map(|name| (place, name.to_owned()))
+                    .map_err(|_| refused())
+            })
+            .collect::<io::Result<_>>()?;
+        for (place, name) in result.names() {
+            if !present.iter().any(|(p, n)| *p == place && n == &name) {
+                directory(place, state, target).require_absent(&name)?;
+                result.absent.push((place, name));
+            }
+        }
+        result.recheck(state, target)?;
+        Ok(result)
     }
-    for (directory, slot) in [(target, &mut drop_in), (state, &mut launcher)] {
+
+    fn files(&self) -> Vec<(Place, &OwnedFile)> {
+        use super::super::super::Place::{DropIns, State};
+        let mut files = vec![
+            (State, &self.header),
+            (State, &self.launcher.original),
+            (DropIns, &self.drop_in.original),
+        ];
+        for (file, _) in self.exchanges.iter().flatten() {
+            files.push((State, file));
+        }
+        if let Some((file, _)) = &self.compensation {
+            files.push((State, file));
+        }
+        if let Some(file) = &self.launcher.replacement {
+            files.push((State, file));
+        }
+        if let Some(file) = &self.drop_in.replacement {
+            files.push((DropIns, file));
+        }
+        for file in [
+            &self.current,
+            &self.original_manifest,
+            &self.replacement_manifest,
+            &self.compensation_manifest,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            files.push((State, file));
+        }
+        files
+    }
+
+    fn names(&self) -> Vec<(Place, String)> {
+        use super::super::super::Place::{DropIns, State};
+        let mut names = vec![
+            (State, PRECOMMIT_PENDING.into()),
+            (State, COMPENSATION_PENDING.into()),
+            (State, LAUNCHER.into()),
+            (State, MANIFEST.into()),
+            (State, self.undo_name.clone()),
+            (DropIns, DROP_IN.into()),
+        ];
+        names.extend(EXCHANGE_NAMES.into_iter().map(|name| (State, name.into())));
+        for (role, entry) in self.exchanges.iter().enumerate() {
+            if let Some((_, body)) = entry {
+                names.push((
+                    if role == 1 { DropIns } else { State },
+                    body.candidate.filename().into(),
+                ));
+            }
+        }
+        if let Some((_, body)) = &self.compensation {
+            names.push((State, body.candidate.filename().into()));
+        }
+        names
+    }
+
+    pub(in crate::integrations::gnome) fn contents(&self) -> (&[u8], &[u8]) {
+        (
+            &self.launcher.original.content,
+            &self.drop_in.original.content,
+        )
+    }
+
+    pub(in crate::integrations::gnome) fn replacement_contents(&self) -> Option<(&[u8], &[u8])> {
+        if self.launcher.replacement.is_none() && self.drop_in.replacement.is_none() {
+            return None;
+        }
+        Some((
+            &self
+                .launcher
+                .replacement
+                .as_ref()
+                .unwrap_or(&self.launcher.original)
+                .content,
+            &self
+                .drop_in
+                .replacement
+                .as_ref()
+                .unwrap_or(&self.drop_in.original)
+                .content,
+        ))
+    }
+
+    pub(in crate::integrations::gnome) fn drop_in_metadata(
+        &self,
+    ) -> io::Result<Option<std::fs::Metadata>> {
+        let file = if self.drop_in.swapped {
+            self.drop_in.replacement.as_ref().ok_or_else(refused)?
+        } else {
+            &self.drop_in.original
+        };
+        file.file.metadata().map(Some)
+    }
+
+    pub(in crate::integrations::gnome) fn recheck(
+        &self,
+        state: &ManagedDirectory,
+        target: &ManagedDirectory,
+    ) -> io::Result<()> {
+        no_competing_intent(state)?;
+        for (place, file) in self.files() {
+            directory(place, state, target).verify(file)?;
+        }
+        for (place, name) in &self.absent {
+            directory(*place, state, target).require_absent(name)?;
+        }
+        no_competing_intent(state)
+    }
+
+    pub(in crate::integrations::gnome::transaction) fn finish(
+        self,
+        state: &ManagedDirectory,
+        target: &ManagedDirectory,
+        lock: &InstallationLock<'_>,
+    ) -> io::Result<()> {
         lock.check()?;
-        if slot.swapped {
-            directory
+        self.recheck(state, target)?;
+        let Self {
+            header,
+            exchanges,
+            compensation,
+            mut launcher,
+            mut drop_in,
+            mut already_canonical,
+            undo_name,
+            mut original_manifest,
+            mut replacement_manifest,
+            mut compensation_manifest,
+            ..
+        } = self;
+        let manifest_exchange = exchanges[2].as_ref().map(|entry| &entry.1);
+        state.sync_directory()?;
+        if compensation.is_some() && !already_canonical {
+            let previous = if original_manifest
+                .as_ref()
+                .is_some_and(|file| file.name.to_bytes() == MANIFEST.as_bytes())
+            {
+                original_manifest.as_mut().ok_or_else(refused)?
+            } else {
+                replacement_manifest.as_mut().ok_or_else(refused)?
+            };
+            lock.check()?;
+            state
                 .exchange(
-                    &mut slot.original,
-                    slot.replacement.as_mut().ok_or_else(refused)?,
+                    previous,
+                    compensation_manifest.as_mut().ok_or_else(refused)?,
                 )?
                 .durability?;
-            slot.swapped = false;
+            // The recorded candidate is now the active canonical manifest; no
+            // unjournaled manifest publication is needed during recovery.
+            compensation_manifest = None;
+            already_canonical = true;
         }
-    }
-    let bytes = canonical(state, target, &launcher.original, &drop_in.original)?;
-    if !already_canonical {
-        if let Some(new) = &mut replacement_manifest {
-            if new.name.to_bytes() == MANIFEST.as_bytes() {
+        for (directory, slot) in [(target, &mut drop_in), (state, &mut launcher)] {
+            lock.check()?;
+            if slot.swapped {
+                directory
+                    .exchange(
+                        &mut slot.original,
+                        slot.replacement.as_mut().ok_or_else(refused)?,
+                    )?
+                    .durability?;
+                slot.swapped = false;
+            }
+        }
+        let bytes = canonical(state, target, &launcher.original, &drop_in.original)?;
+        if !already_canonical {
+            if let Some(new) = &mut replacement_manifest {
+                if new.name.to_bytes() == MANIFEST.as_bytes() {
+                    lock.check()?;
+                    let old = original_manifest.as_mut().ok_or_else(refused)?;
+                    let candidate_name =
+                        manifest_exchange.ok_or_else(refused)?.candidate.filename();
+                    if old.name.to_bytes() == candidate_name.as_bytes() {
+                        state.exchange(old, new)?.durability?;
+                    } else {
+                        state.move_to_unoccupied(new, candidate_name)?.durability?;
+                    }
+                }
+            }
+            if let Some(file) = &mut original_manifest {
                 lock.check()?;
-                let old = original_manifest.as_mut().ok_or_else(refused)?;
-                let candidate_name = manifest_exchange.ok_or_else(refused)?.candidate.filename();
-                if old.name.to_bytes() == candidate_name.as_bytes() {
-                    state.exchange(old, new)?.durability?;
-                } else {
-                    state.move_to_unoccupied(new, candidate_name)?.durability?;
+                if file.name.to_bytes() != undo_name.as_bytes() {
+                    state.move_to_unoccupied(file, &undo_name)?.durability?;
+                }
+            }
+            state.require_absent(MANIFEST)?;
+            match state.publish(MANIFEST, &bytes, false) {
+                Ok(_) => {}
+                Err(
+                    PublishFailure::Published { error, .. } | PublishFailure::Unpublished(error),
+                ) => {
+                    return Err(error);
+                }
+                Err(PublishFailure::Staged {
+                    error,
+                    cleanup_error,
+                    ..
+                }) => {
+                    return Err(io::Error::other(format!(
+                        "{error}; staging cleanup failed: {cleanup_error}"
+                    )));
                 }
             }
         }
-        if let Some(file) = &mut original_manifest {
+        state.sync_directory()?;
+        target.sync_directory()?;
+        let mut copies = Vec::new();
+        if let Some(file) = compensation_manifest {
+            if file.name.to_bytes() == MANIFEST.as_bytes() {
+                return Err(refused());
+            }
+            copies.push((state, file));
+        }
+        if let Some(file) = launcher.replacement {
+            copies.push((state, file));
+        }
+        if let Some(file) = drop_in.replacement {
+            copies.push((target, file));
+        }
+        if let Some(file) = original_manifest {
+            if file.name.to_bytes() == MANIFEST.as_bytes() {
+                return Err(refused());
+            }
+            copies.push((state, file));
+        }
+        if let Some(file) = replacement_manifest {
+            if file.name.to_bytes() == MANIFEST.as_bytes() {
+                return Err(refused());
+            }
+            copies.push((state, file));
+        }
+        for (directory, file) in &copies {
+            directory.verify(file)?;
+        }
+        for (directory, file) in copies {
             lock.check()?;
-            if file.name.to_bytes() != undo_name.as_bytes() {
-                state.move_to_unoccupied(file, &undo_name)?.durability?;
-            }
+            directory.remove(&file)?;
         }
-        state.require_absent(MANIFEST)?;
-        match state.publish(MANIFEST, &bytes, false) {
-            Ok(_) => {}
-            Err(PublishFailure::Published { error, .. } | PublishFailure::Unpublished(error)) => {
-                return Err(error);
-            }
-            Err(PublishFailure::Staged {
-                error,
-                cleanup_error,
-                ..
-            }) => {
-                return Err(io::Error::other(format!(
-                    "{error}; staging cleanup failed: {cleanup_error}"
-                )));
-            }
+        state.sync_directory()?;
+        target.sync_directory()?;
+        if let Some((file, _)) = compensation {
+            lock.check()?;
+            state.remove(&file)?;
         }
-    }
-    state.sync_directory()?;
-    target.sync_directory()?;
-    let mut copies = Vec::new();
-    if let Some(file) = compensation_manifest {
-        if file.name.to_bytes() == MANIFEST.as_bytes() {
-            return Err(refused());
+        for (file, _) in exchanges.into_iter().flatten().rev() {
+            lock.check()?;
+            state.remove(&file)?;
         }
-        copies.push((state, file));
-    }
-    if let Some(file) = launcher.replacement {
-        copies.push((state, file));
-    }
-    if let Some(file) = drop_in.replacement {
-        copies.push((target, file));
-    }
-    if let Some(file) = original_manifest {
-        if file.name.to_bytes() == MANIFEST.as_bytes() {
-            return Err(refused());
-        }
-        copies.push((state, file));
-    }
-    if let Some(file) = replacement_manifest {
-        if file.name.to_bytes() == MANIFEST.as_bytes() {
-            return Err(refused());
-        }
-        copies.push((state, file));
-    }
-    for (directory, file) in &copies {
-        directory.verify(file)?;
-    }
-    for (directory, file) in copies {
         lock.check()?;
-        directory.remove(&file)?;
+        state.remove(&header)
     }
-    state.sync_directory()?;
-    target.sync_directory()?;
-    if let Some((file, _)) = compensation {
-        lock.check()?;
-        state.remove(&file)?;
+}
+
+fn directory<'a>(
+    place: Place,
+    state: &'a ManagedDirectory,
+    target: &'a ManagedDirectory,
+) -> &'a ManagedDirectory {
+    match place {
+        Place::State => state,
+        Place::DropIns => target,
     }
-    for (file, _) in exchanges.into_iter().flatten().rev() {
-        lock.check()?;
-        state.remove(&file)?;
-    }
+}
+
+pub(in crate::integrations::gnome::transaction) fn recover_early(
+    state: &ManagedDirectory,
+    target: &ManagedDirectory,
+    lock: &InstallationLock<'_>,
+) -> io::Result<()> {
     lock.check()?;
-    state.remove(&header)
+    if optional_state(state, PRECOMMIT_PENDING)?.is_none() {
+        state.require_absent(COMPENSATION_PENDING)?;
+        for name in EXCHANGE_NAMES {
+            state.require_absent(name)?;
+        }
+        return state.sync_directory();
+    }
+    UncommittedUpdateSnapshot::open(state, target)?.finish(state, target, lock)
 }
 
 #[cfg(test)]
@@ -442,6 +664,43 @@ mod tests {
     use super::super::super::{ActivationTransaction, PendingUpdate, Phase, Place};
     use crate::integrations::gnome::transaction::{DROP_IN, LAUNCHER, tests::fixture};
     use std::fs;
+
+    #[test]
+    fn uncommitted_snapshot_reads_original_roles_and_fences_a_new_exchange_intent() {
+        use super::*;
+        let (root, state, target, initial) = fixture();
+        let old_launcher = initial.launcher.clone();
+        let mut transaction = ActivationTransaction::begin(&state, &target, initial).unwrap();
+        transaction.apply().unwrap();
+        transaction.stop_after = Some((6, false));
+        assert!(
+            transaction
+                .update(
+                    crate::integrations::gnome::render_activation(
+                        &root.path().join("v2.so"),
+                        &root.path().join("state").join(LAUNCHER)
+                    )
+                    .unwrap()
+                )
+                .is_err()
+        );
+        drop(transaction);
+        let before = fs::read_dir(root.path().join("state")).unwrap().count();
+        let snapshot = UncommittedUpdateSnapshot::open(&state, &target).unwrap();
+        assert_eq!(snapshot.contents().0, old_launcher.as_bytes());
+        snapshot.recheck(&state, &target).unwrap();
+        assert_eq!(
+            fs::read_dir(root.path().join("state")).unwrap().count(),
+            before
+        );
+        fs::write(
+            root.path().join("state").join(EXCHANGE_NAMES[1]),
+            b"unexpected",
+        )
+        .unwrap();
+        assert!(snapshot.recheck(&state, &target).is_err());
+        assert!(root.path().join("state").join(PRECOMMIT_PENDING).is_file());
+    }
 
     #[test]
     fn first_exchange_can_be_restored_from_disk_without_accepting_the_new_version() {

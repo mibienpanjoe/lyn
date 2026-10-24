@@ -260,6 +260,15 @@ mod tests {
                 let result = coordinator::recover_committed_update_private(root).unwrap();
                 assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);
             }
+            "interrupt-update-precommit" => {
+                coordinator::interrupt_uncommitted_update_private(root, &private_native_artifact())
+                    .unwrap();
+                panic!("private uncommitted update checkpoint must exit");
+            }
+            "recover-update-precommit" => {
+                let result = coordinator::recover_uncommitted_update_private(root).unwrap();
+                assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);
+            }
             "remove" => {
                 coordinator::remove_private(root).unwrap();
             }
