@@ -306,6 +306,17 @@ mod tests {
                     service::DefinitionState::NeedsReload
                 );
             }
+            "prepare-live-manager" => {
+                let prepared =
+                    coordinator::prepare_private(root, &private_native_artifact()).unwrap();
+                // A real manager can garbage-collect an inactive unreferenced
+                // unit and load the newly published definition on LoadUnit.
+                // Both outcomes require explicit synchronization/postflight.
+                assert!(matches!(
+                    prepared.definition,
+                    service::DefinitionState::NeedsReload | service::DefinitionState::ManagedLoaded
+                ));
+            }
             "rollback" => {
                 let result = coordinator::rollback_private(root).unwrap();
                 assert_eq!(result.definition, service::DefinitionState::ManagedLoaded);
