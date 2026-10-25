@@ -72,13 +72,15 @@ Default shortcut: `Ctrl+Shift+Space` opens quick capture. The Library window is 
 ### Build release packages
 
 ```bash
-# Linux host → .deb under src-tauri/target/release/bundle/deb/
+# Linux x86_64 → .deb under src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/
 #            → .tar.gz under dist-packages/
 pnpm package:linux
 
 # Windows host → NSIS .exe under src-tauri/target/release/bundle/nsis/
 pnpm package:windows
 ```
+
+Linux packaging embeds the native GNOME module and requires the reference GTK 3.24.33 / VTE 0.68.0 headers and runtime, GCC and pkg-config. `LYN_GNOME_SDK_ROOT` can supply extracted VTE headers as described in [AGENTS.md](AGENTS.md); users of the resulting packages do not need that build SDK. Other native stacks refuse before packaging. The command verifies the embedded module in both packages and checks their binary contents, allowing only Tauri’s Debian format marker; it does not install or activate the integration. The release workflow still needs this native-bundle wiring.
 
 Upload those assets to a GitHub Release, or push a `v*` tag / run the **release** workflow so CI builds Linux + Windows and attaches them automatically.
 

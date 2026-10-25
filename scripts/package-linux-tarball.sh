@@ -7,7 +7,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
 version="$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')"
-binary="src-tauri/target/release/lyn"
+binary="${1:-src-tauri/target/release/lyn}"
 if [[ ! -x "$binary" ]]; then
   echo "missing $binary — run: pnpm tauri build" >&2
   exit 1

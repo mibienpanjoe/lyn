@@ -27,7 +27,7 @@
     "provider:gnome:manager:test": "/usr/bin/python3 integrations/gnome/manager_test.py",
     "provider:gnome:desktop:test": "/usr/bin/python3 integrations/gnome/prototype/test.py --desktop",
     "icons": "tauri icon src-tauri/icons/lyn-icon.svg",
-    "package:linux": "pnpm tauri build --bundles deb && bash scripts/package-linux-tarball.sh",
+    "package:linux": "/usr/bin/python3 scripts/package_linux.py",
     "package:windows": "pnpm tauri build --bundles nsis",
     "tauri": "tauri"
   },
