@@ -24,6 +24,7 @@
     "provider:terminal:build": "cargo build --manifest-path src-tauri/Cargo.toml --bin lyn-context",
     "provider:gnome:test": "/usr/bin/python3 integrations/gnome/prototype/test.py",
     "provider:gnome:activation:test": "/usr/bin/python3 integrations/gnome/activation_test.py",
+    "provider:gnome:package:gui:test": "/usr/bin/python3 integrations/gnome/package_gui_test.py",
     "provider:gnome:package:test": "/usr/bin/python3 integrations/gnome/package_test.py",
     "provider:gnome:manager:test": "/usr/bin/python3 integrations/gnome/manager_test.py",
     "provider:gnome:desktop:test": "/usr/bin/python3 integrations/gnome/prototype/test.py --desktop",

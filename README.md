@@ -93,6 +93,8 @@ pnpm provider:gnome:package:test \
 
 This developer check needs the [GNOME fixture prerequisites](AGENTS.md). It verifies and loads the package-extracted module in private Xvfb/D-Bus, without rebuilding that module or installing either package. It does not launch the packaged GUI.
 
+`pnpm provider:gnome:package:gui:test` accepts the same three artifact arguments and runs the ordinary packaged GUI with no checkout access. It additionally needs Bubblewrap, Openbox, AT-SPI and Tesseract with English data (system-installed or extracted into the local SDK). It masks the real home and isolates files, display, bus and network, then verifies shortcut/manual capture, SQLite and the painted Library through local OCR. Native GNOME compatibility remains a separate check because the user namespace cannot attest unmapped root-owned files.
+
 Upload those assets to a GitHub Release, or push a `v*` tag / run the **release** workflow so CI builds Linux + Windows and attaches them automatically.
 
 Other useful commands (full list in [AGENTS.md](AGENTS.md)):
