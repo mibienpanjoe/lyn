@@ -22,6 +22,29 @@ from resource_test import stop_server
 from rust_probe import RustProbe
 
 
+def report_reference_files():
+    """Read-only host evidence for reference-service refusals in private probes."""
+    paths = (Path('/usr/lib/systemd/user/gnome-terminal-server.service'),
+             Path('/usr/libexec/gnome-terminal-server'),
+             Path('/usr/share/dbus-1/services/org.gnome.Terminal.service'))
+    for path in paths:
+        try:
+            canonical = path.resolve(strict=True)
+            entries = []
+            for item in (canonical, *canonical.parents):
+                metadata = item.stat()
+                entries.append(dict(path=str(item), uid=metadata.st_uid, mode=oct(metadata.st_mode),
+                                    links=metadata.st_nlink, device=metadata.st_dev, inode=metadata.st_ino))
+            print(json.dumps(dict(check='native_service_reference', path=str(path), entries=entries)), flush=True)
+            if path.suffix == '.service':
+                with path.open('rb') as source:
+                    content = source.read(16385)
+                print(json.dumps(dict(check='native_service_reference_text', path=str(path),
+                                      bounded=len(content) <= 16384, text=content[:16384].decode('utf-8', errors='replace'))), flush=True)
+        except OSError as error:
+            print(json.dumps(dict(check='native_service_reference', path=str(path), error=str(error))), flush=True)
+
+
 @contextmanager
 def simulated_manager(root, mode, sdk, environment):
     ready = root / f"manager-{mode}-{uuid.uuid4().hex}.sock"
@@ -98,6 +121,7 @@ def run(module, preserved, executable, sdk, updated_module, packaged_smoke=False
     private_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     assert private_runtime.name == "runtime" and private_runtime.parent.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={private_runtime}/")
+    report_reference_files()
     with tempfile.TemporaryDirectory(prefix="lyn-na-") as directory:
         root = Path(directory)
         project = repositories(root, ("alpha",))[0]

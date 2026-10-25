@@ -542,7 +542,10 @@ fn inspect_connected(
     let first = properties(&connection, &budget, &manager, path.as_str())?;
     let (fragment, definition) = match owned {
         Some(owned) if owned.is_retired() => retired_policy(&first, owned.paths())?,
-        _ => policy_for(&first, owned.map(OwnedActivation::paths))?,
+        _ => policy_for(&first, owned.map(OwnedActivation::paths)).inspect_err(|_| {
+            #[cfg(test)]
+            eprintln!("GNOME service refused definition policy: {first:?}");
+        })?,
     };
     let fragment = match fragment.as_str() {
         "/usr/lib/systemd/user/gnome-terminal-server.service" => {
@@ -553,25 +556,42 @@ fn inspect_connected(
         }
         _ => return Err(ServiceRefusal::Unsupported),
     };
-    let vendor = TrustedFile::open(fragment)?;
+    let vendor = TrustedFile::open(fragment).inspect_err(|_| {
+        #[cfg(test)]
+        eprintln!("GNOME service refused protected vendor file");
+    })?;
     let paths = unit_paths(&connection, &budget, &manager)?;
     if required_target.is_some_and(|target| !target_is_searched(&paths, target)) {
+        #[cfg(test)]
+        eprintln!("GNOME service refused target membership: {paths:?}");
         return Err(ServiceRefusal::Unsupported);
     }
     let vendor_inode = (vendor.metadata.dev(), vendor.metadata.ino());
-    let disk = overrides::inspect_for(&paths, vendor_inode, allowed.as_ref())?;
-    let executable = TrustedFile::open(SERVER)?;
+    let disk =
+        overrides::inspect_for(&paths, vendor_inode, allowed.as_ref()).inspect_err(|_| {
+            #[cfg(test)]
+            eprintln!("GNOME service refused override inventory: {paths:?}");
+        })?;
+    let executable = TrustedFile::open(SERVER).inspect_err(|_| {
+        #[cfg(test)]
+        eprintln!("GNOME service refused protected server file");
+    })?;
     if executable.metadata.mode() & 0o111 == 0 || executable.metadata.mode() & 0o6000 != 0 {
         return Err(ServiceRefusal::Unsupported);
     }
-    let mut activation =
-        TrustedFile::open("/usr/share/dbus-1/services/org.gnome.Terminal.service")?;
+    let mut activation = TrustedFile::open("/usr/share/dbus-1/services/org.gnome.Terminal.service")
+        .inspect_err(|_| {
+            #[cfg(test)]
+            eprintln!("GNOME service refused protected D-Bus activation file");
+        })?;
     let mut text = String::new();
     (&mut activation.file)
         .take(16385)
         .read_to_string(&mut text)
         .map_err(|_| ServiceRefusal::Unsupported)?;
     if text.len() > 16384 || !activation_agrees(&text) {
+        #[cfg(test)]
+        eprintln!("GNOME service refused D-Bus activation definition");
         return Err(ServiceRefusal::Unsupported);
     }
     let second = properties(&connection, &budget, &manager, path.as_str())?;
