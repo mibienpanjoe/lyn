@@ -82,6 +82,17 @@ pnpm package:windows
 
 Linux packaging embeds the native GNOME module and requires the reference GTK 3.24.33 / VTE 0.68.0 headers and runtime, GCC and pkg-config. `LYN_GNOME_SDK_ROOT` can supply extracted VTE headers as described in [AGENTS.md](AGENTS.md); users of the resulting packages do not need that build SDK. Other native stacks refuse before packaging. The command verifies the embedded module in both packages and checks their binary contents, allowing only Tauri’s Debian format marker; it does not install or activate the integration. The release workflow still needs this native-bundle wiring.
 
+For the isolated native resource check after packaging:
+
+```bash
+pnpm provider:gnome:package:test \
+  --receipt dist-packages/lyn-0.6.8-linux-x86_64-native.json \
+  --portable dist-packages/lyn-0.6.8-linux-x86_64.tar.gz \
+  --deb src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/Lyn_0.6.8_amd64.deb
+```
+
+This developer check needs the [GNOME fixture prerequisites](AGENTS.md). It verifies and loads the package-extracted module in private Xvfb/D-Bus, without rebuilding that module or installing either package. It does not launch the packaged GUI.
+
 Upload those assets to a GitHub Release, or push a `v*` tag / run the **release** workflow so CI builds Linux + Windows and attaches them automatically.
 
 Other useful commands (full list in [AGENTS.md](AGENTS.md)):

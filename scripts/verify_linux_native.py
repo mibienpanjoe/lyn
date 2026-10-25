@@ -46,13 +46,20 @@ def debian_binary(binary):
     return binary.replace(unknown, b"__TAURI_BUNDLE_TYPE_VAR_DEB", 1)
 
 
-def verify_archive(archive, name, binary):
+def read_archive_binary(archive, name):
     entries = [entry for entry in archive.getmembers() if PurePosixPath(entry.name) == PurePosixPath(name)]
-    if len(entries) != 1 or not entries[0].isfile() or entries[0].size != len(binary):
-        raise ValueError("Package requires one regular release binary of the expected size")
+    if len(entries) != 1 or not entries[0].isfile() or entries[0].size > MAX_BINARY:
+        raise ValueError("Package requires one bounded regular executable")
     with archive.extractfile(entries[0]) as source:
-        if source.read(MAX_BINARY + 1) != binary:
-            raise ValueError("Packaged binary differs from the verified release binary")
+        binary = source.read(MAX_BINARY + 1)
+    if len(binary) != entries[0].size:
+        raise ValueError("Package executable size mismatch")
+    return binary
+
+
+def verify_archive(archive, name, binary):
+    if read_archive_binary(archive, name) != binary:
+        raise ValueError("Packaged binary differs from the verified release binary")
 
 
 def verify_packages(bundle, release=None):
@@ -75,13 +82,19 @@ def verify_packages(bundle, release=None):
     portable = ROOT / "dist-packages" / f"{name}.tar.gz"
     with tarfile.open(portable, "r:gz") as archive:
         verify_archive(archive, f"{name}/lyn", binary)
-    print(json.dumps({"check": "linux_native_packages", "version": version,
+    report = {"check": "linux_native_packages", "version": version,
                       "binarySha256": hashlib.sha256(binary).hexdigest(),
                       "debianBinarySha256": hashlib.sha256(debian).hexdigest(),
                       "moduleOffset": binary.index(module),
                       "moduleSha256": hashlib.sha256(module).hexdigest(),
                       "moduleLength": len(module), "deb": debs[0].name,
-                      "portable": portable.name}, sort_keys=True))
+                      "portable": portable.name,
+                      "nativeManifest": json.loads(bounded_file(bundle / "manifest.json", 4096))}
+    # Developer evidence only, never consumed as installation authority by Lyn.
+    receipt = ROOT / "dist-packages" / f"{name}-native.json"
+    receipt.write_text(json.dumps(report, sort_keys=True) + "\n")
+    print(json.dumps(report, sort_keys=True))
+    return report
 
 
 if __name__ == "__main__":

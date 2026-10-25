@@ -93,7 +93,7 @@ def check_synchronization(root, executable, sdk, environment, mode, expected, ex
             connection.close_sync(None)
 
 
-def run(module, preserved, executable, sdk, updated_module):
+def run(module, preserved, executable, sdk, updated_module, packaged_smoke=False):
     require_owned_display(sdk)
     private_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     assert private_runtime.name == "runtime" and private_runtime.parent.name.startswith("lyn-gnome-run-")
@@ -103,18 +103,22 @@ def run(module, preserved, executable, sdk, updated_module):
         project = repositories(root, ("alpha",))[0]
         fixture_environment = dict(os.environ, LYN_PRIVATE_NATIVE_ACTIVATION_ROOT=str(root),
                                    LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(module))
-        with simulated_manager(root, "stock", sdk, fixture_environment):
-            subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_activation_fixture_entry",
-                            "--test-threads=1"], env=fixture_environment, check=True, timeout=8)
+        prepare_environment = (dict(fixture_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="prepare-again")
+                               if packaged_smoke else fixture_environment)
+        prepare_entry = ("native_lifecycle_fixture_entry" if packaged_smoke else "native_activation_fixture_entry")
+        with simulated_manager(root, "stock", sdk, prepare_environment):
+            subprocess.run([str(executable), "--exact", f"integrations::gnome::tests::{prepare_entry}",
+                            "--test-threads=1"], env=prepare_environment, check=True, timeout=8)
         import hashlib
         stored_module = root / "state/modules" / hashlib.sha256(module.read_bytes()).hexdigest() / module.name
         assert stored_module.read_bytes() == module.read_bytes()
         assert stored_module.stat().st_mode & 0o7777 == 0o400
-        check_managed_service(root, executable, sdk, fixture_environment)
-        for mode, calls in (("sync-during-validation", 0), ("sync-changed", 0), ("sync-owner", 0), ("sync-lock", 0), ("sync-stuck", 1), ("sync-error", 1), ("sync-hang", 1)):
-            check_synchronization(root, executable, sdk, fixture_environment, mode, "refused", calls)
-        check_synchronization(root, executable, sdk, fixture_environment, "sync-install", "managed", 1)
-        print("PASS: guarded private manager synchronization refuses changed/owner-swapped/stuck/error/silent cases; one Reload and same-client postflight, settled retry skips Reload", flush=True)
+        if not packaged_smoke:
+            check_managed_service(root, executable, sdk, fixture_environment)
+            for mode, calls in (("sync-during-validation", 0), ("sync-changed", 0), ("sync-owner", 0), ("sync-lock", 0), ("sync-stuck", 1), ("sync-error", 1), ("sync-hang", 1)):
+                check_synchronization(root, executable, sdk, fixture_environment, mode, "refused", calls)
+            check_synchronization(root, executable, sdk, fixture_environment, "sync-install", "managed", 1)
+            print("PASS: guarded private manager synchronization refuses changed/owner-swapped/stuck/error/silent cases; one Reload and same-client postflight, settled retry skips Reload", flush=True)
         broker = RustProbe(root, executable, published=True)
         server = None
         pin = None
@@ -207,6 +211,9 @@ def run(module, preserved, executable, sdk, updated_module):
             assert json.loads(payload) == {"childModuleAbsent": True, "existingModulePreserved": True,
                                            "moduleEnvironmentAbsent": True}, payload
             print("PASS: actual GTK new-tab child excludes Lyn and preserves the existing module", flush=True)
+            if packaged_smoke:
+                print("PASS: package-extracted native bytes loaded outside checkout -> exact backend save and GTK child exclusion", flush=True)
+                return
             # The coordinator changes files; it must not restart our server.
             original_launcher = (root / "state/launcher-v1").read_bytes()
             preparation_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(updated_module),
@@ -351,6 +358,8 @@ def run(module, preserved, executable, sdk, updated_module):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) not in (6, 7) or (len(sys.argv) == 7 and sys.argv[6] != "--packaged-smoke"):
+        raise SystemExit("Expected module, preserved module, test executable, SDK, update module and optional --packaged-smoke")
     run(*(Path(value).resolve(strict=True) for value in sys.argv[1:4]),
         Path(sys.argv[4]).resolve(strict=True) if sys.argv[4] != "-" else None,
-        Path(sys.argv[5]).resolve(strict=True))
+        Path(sys.argv[5]).resolve(strict=True), packaged_smoke=len(sys.argv) == 7)
