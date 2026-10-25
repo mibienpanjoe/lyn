@@ -84,6 +84,7 @@ jobs:
           python -m unittest discover -s scripts -p test_linux_native_package.py
           /usr/bin/python3 -m unittest discover -s integrations/gnome -p package_resources_test.py
           /usr/bin/python3 -m unittest discover -s integrations/gnome -p package_gui_artifacts_test.py
+          /usr/bin/python3 -m unittest discover -s integrations/gnome -p package_gui_roundtrip_test.py
           /usr/bin/python3 -m unittest discover -s integrations/gnome/prototype -p packaged_gui_guard_test.py
           /usr/bin/python3 -m unittest discover -s integrations/gnome/prototype -p packaged_gui_pixels_test.py
 

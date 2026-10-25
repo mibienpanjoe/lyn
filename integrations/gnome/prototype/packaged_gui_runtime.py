@@ -16,6 +16,11 @@ from packaged_gui_pixels import read_text, normalize
 from desktop_lifecycle import _pin_owned_app
 
 
+def preserves_previous(rows, contexts, previous_rows, previous_contexts):
+    return (all(rows.get(key) == value for key, value in previous_rows.items())
+            and (not previous_contexts or contexts == previous_contexts))
+
+
 def main():
     control_path = Path(sys.argv[1])
     control = json.loads(control_path.read_text())
@@ -42,6 +47,7 @@ def main():
     Atspi.set_timeout(500, 500)
     assert Gdk.init_check([])[0]
     children = []
+    applications = []
     app = None
     pin = None
 
@@ -142,6 +148,26 @@ def main():
                           'bodyOcr': body_text, 'rectangles': rectangles}), flush=True)
         return image
 
+    database = Path(environment['XDG_DATA_HOME']) / 'com.mibienpanjoe.lyn/lyn.db'
+
+    def snapshot():
+        with sqlite3.connect(f'file:{database}?mode=ro', uri=True) as db:
+            db.row_factory = sqlite3.Row
+            rows = {row['id']: dict(row) for row in db.execute('SELECT * FROM captures ORDER BY id')}
+            contexts = [dict(row) for row in db.execute('SELECT * FROM contexts ORDER BY id')]
+            return rows, contexts
+
+    def stop_app():
+        nonlocal app, pin
+        if app is not None and app.poll() is None and pin is not None:
+            signal.pidfd_send_signal(pin, signal.SIGTERM)
+            try: app.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                signal.pidfd_send_signal(pin, signal.SIGKILL)
+                app.wait(timeout=3)
+        if pin is not None: os.close(pin)
+        app, pin = None, None
+
     try:
         wm = sdk / 'root/usr/bin/openbox' if sdk else Path('/usr/bin/openbox')
         wm_env = dict(environment)
@@ -161,49 +187,76 @@ def main():
         assert observed.startswith(address)
         environment['AT_SPI_BUS_ADDRESS'] = observed
         os.environ['AT_SPI_BUS_ADDRESS'] = observed
-        executable = Path(control['binary'])
-        with (control_path.parent / 'app.log').open('w') as log:
-            app = start([str(executable)], cwd=control_path.parent, stdout=log, stderr=subprocess.STDOUT)
-            pin = _pin_owned_app(app, executable, root / 'runtime', expected_cwd=control_path.parent)
-            wait(lambda: page_heading(nodes(), 'Recent'), 'Packaged Library heading not accessible')
-            windows = command('xdotool', 'search', '--onlyvisible', '--pid', str(app.pid)).split()
-            assert len(windows) == 1
-            library_window = windows[0]
-            command('xdotool', 'windowactivate', '--sync', library_window)
-            assert wait(lambda: button('Settings'), 'Settings action absent').do_action(0)
-            wait(lambda: page_heading(nodes(), 'Settings') and contains(control['version']), 'Real settings/version not rendered')
-            screenshot('settings.png', wait(lambda: painted('Settings'), 'Settings heading did not paint'))
-            # The ordinary production startup has no test-only helper override.
-            for helper in ('lyn-context', 'lyn-browser-host'):
-                path = Path(control['home']) / '.local/share/lyn/bin' / helper
-                assert path.is_symlink() and path.samefile(executable), helper
-            command('xdotool', 'key', '--clearmodifiers', 'ctrl+shift+space')
-            field = wait(lambda: named('Capture text'), 'Global shortcut did not open capture')
-            chooser = button('Choose context')
-            if chooser:
-                assert chooser.do_action(0)
-                entry = wait(lambda: named('New context name'), 'Context creation field absent')
-                assert entry.get_component_iface().grab_focus()
-                command('xdotool', 'type', '--clearmodifiers', '--delay', '0', 'Package GUI context')
-                assert wait(lambda: button('Create context'), 'Create context action absent').do_action(0)
-                field = wait(lambda: named('Capture text'), 'Context creation did not return to capture')
-            assert field.get_component_iface().grab_focus()
-            body = 'Packaged note 7319'
-            command('xdotool', 'type', '--clearmodifiers', '--delay', '0', body)
-            wait(lambda: contains(body), 'Draft text not visible')
-            command('xdotool', 'key', 'Return')
-            database = Path(environment['XDG_DATA_HOME']) / 'com.mibienpanjoe.lyn/lyn.db'
-            def persisted():
-                with sqlite3.connect(f'file:{database}?mode=ro', uri=True) as db:
-                    return db.execute('SELECT text_body FROM captures').fetchall() == [(body,)]
-            wait(persisted, 'Packaged save did not persist exactly one note')
-            wait(lambda: named('Capture text') is None, 'Saved popup did not dismiss')
-            command('xdotool', 'windowactivate', '--sync', library_window)
-            assert wait(lambda: button('Recent'), 'Recent navigation absent').do_action(0)
-            wait(lambda: page_heading(nodes(), 'Recent') and contains(body), 'Saved note not rendered in Library')
-            screenshot('saved-library.png', wait(lambda: painted('Recent', body), 'Library heading/note did not paint'))
-            print(json.dumps({'check': 'packaged_gui', 'version': control['version'],
-                              'exactSave': True, 'libraryAccessible': True, 'helpersInPrivateHome': True}), flush=True)
+        assert len(control['runs']) in (1, 3)
+        bodies = []
+        previous_rows, previous_contexts = {}, []
+        for step, run in enumerate(control['runs']):
+            prefix = f'{step + 1}-' if len(control['runs']) == 3 else ''
+            executable = Path(run['binary'])
+            with (control_path.parent / (prefix + 'app.log')).open('w') as log:
+                app = start([str(executable)], cwd=control_path.parent, stdout=log, stderr=subprocess.STDOUT)
+                applications.append(app)
+                pin = _pin_owned_app(app, executable, root / 'runtime', expected_cwd=control_path.parent)
+                wait(lambda: page_heading(nodes(), 'Recent'), 'Packaged Library heading not accessible')
+                rows, contexts = snapshot()
+                assert rows == previous_rows and contexts == previous_contexts, 'Replacement changed existing data'
+                for retained in bodies:
+                    wait(lambda: painted('Recent', retained), 'Retained note did not paint after replacement')
+                if bodies:
+                    screenshot(prefix + 'retained-library.png')
+                windows = command('xdotool', 'search', '--onlyvisible', '--pid', str(app.pid)).split()
+                assert len(windows) == 1
+                library_window = windows[0]
+                command('xdotool', 'windowactivate', '--sync', library_window)
+                assert wait(lambda: button('Settings'), 'Settings action absent').do_action(0)
+                wait(lambda: page_heading(nodes(), 'Settings') and contains(run['version']), 'Real settings/version not rendered')
+                screenshot(prefix + 'settings.png', wait(lambda: painted('Settings'), 'Settings heading did not paint'))
+                # The ordinary production startup has no test-only helper override.
+                for helper in ('lyn-context', 'lyn-browser-host'):
+                    path = Path(control['home']) / '.local/share/lyn/bin' / helper
+                    assert path.is_symlink() and path.samefile(executable), helper
+                command('xdotool', 'key', '--clearmodifiers', 'ctrl+shift+space')
+                field = wait(lambda: named('Capture text'), 'Global shortcut did not open capture')
+                chooser = button('Choose context')
+                if chooser:
+                    assert chooser.do_action(0)
+                    if bodies:
+                        assert wait(lambda: button('Use context Package GUI context'), 'Saved context missing after replacement').do_action(0)
+                    else:
+                        entry = wait(lambda: named('New context name'), 'Context creation field absent')
+                        assert entry.get_component_iface().grab_focus()
+                        command('xdotool', 'type', '--clearmodifiers', '--delay', '0', 'Package GUI context')
+                        assert wait(lambda: button('Create context'), 'Create context action absent').do_action(0)
+                    field = wait(lambda: named('Capture text'), 'Context creation did not return to capture')
+                assert field.get_component_iface().grab_focus()
+                body = run['body']
+                command('xdotool', 'type', '--clearmodifiers', '--delay', '0', body)
+                wait(lambda: contains(body), 'Draft text not visible')
+                command('xdotool', 'key', 'Return')
+                def persisted():
+                    rows, contexts = snapshot()
+                    valid = (len(rows) == len(bodies) + 1
+                            and {row['text_body'] for row in rows.values()} == set(bodies + [body])
+                            and preserves_previous(rows, contexts, previous_rows, previous_contexts)
+                            and len(contexts) == 1 and contexts[0]['name'] == 'Package GUI context'
+                            and {row['context_id'] for row in rows.values()} == {contexts[0]['id']})
+                    return (rows, contexts) if valid else None
+                accepted = wait(persisted, 'Packaged save did not persist exactly one note')
+                wait(lambda: named('Capture text') is None, 'Saved popup did not dismiss')
+                command('xdotool', 'windowactivate', '--sync', library_window)
+                assert wait(lambda: button('Recent'), 'Recent navigation absent').do_action(0)
+                wait(lambda: page_heading(nodes(), 'Recent') and contains(body), 'Saved note not rendered in Library')
+                bodies.append(body)
+                previous_rows, previous_contexts = accepted
+                for retained in bodies:
+                    wait(lambda: painted('Recent', retained), 'Saved or retained note did not paint')
+                screenshot(prefix + 'saved-library.png', wait(lambda: painted('Recent', body), 'Library heading/note did not paint'))
+                assert snapshot() == accepted, 'Rendering changed accepted capture/context data'
+                print(json.dumps({'check': 'packaged_gui', 'version': run['version'],
+                                  'exactSave': True, 'libraryAccessible': True, 'helpersInPrivateHome': True,
+                                  'captureCount': len(previous_rows), 'preservedPreviousData': step > 0}), flush=True)
+            stop_app()
+            assert snapshot() == (previous_rows, previous_contexts), 'Stopping changed accepted capture/context data'
     except BaseException:
         if app is not None and app.poll() is None:
             try:
@@ -217,15 +270,9 @@ def main():
                 print('GUI diagnostic unavailable: ' + str(diagnostic), flush=True)
         raise
     finally:
-        if app is not None and app.poll() is None and pin is not None:
-            signal.pidfd_send_signal(pin, signal.SIGTERM)
-            try: app.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                signal.pidfd_send_signal(pin, signal.SIGKILL)
-                app.wait(timeout=3)
-        if pin is not None: os.close(pin)
+        stop_app()
         for process in reversed(children):
-            if process is app: continue
+            if process in applications: continue
             if process.poll() is None: process.terminate()
             try: process.wait(timeout=2)
             except subprocess.TimeoutExpired:
