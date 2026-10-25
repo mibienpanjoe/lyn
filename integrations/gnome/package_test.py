@@ -1,24 +1,20 @@
 """Load a verified package's native bytes only inside the private GNOME fixture.
 
 The packaged GUI is not launched. This is resource load/backend-save evidence,
-not installed Tauri IPC, real-manager consumption or package update acceptance.
+not installed Tauri IPC, real-manager consumption or package-manager transactions.
 """
 import argparse
-import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
-import tarfile
 import tempfile
 
 from build import ROOT, module_flags
-from package_resources import recover_bundle
+from package_resources import recover_bundle, read_packages
 
 REPO = ROOT.parents[1]
-sys.path.insert(0, str(REPO / "scripts"))
-from verify_linux_native import bounded_file, read_archive_binary, debian_binary
 
 
 def main():
@@ -26,21 +22,28 @@ def main():
     parser.add_argument("--receipt", required=True, type=Path)
     parser.add_argument("--portable", required=True, type=Path)
     parser.add_argument("--deb", required=True, type=Path)
+    parser.add_argument("--previous-receipt", type=Path)
+    parser.add_argument("--previous-portable", type=Path)
+    parser.add_argument("--previous-deb", type=Path)
     args = parser.parse_args()
-    receipt = json.loads(bounded_file(args.receipt, 16384))
+    previous = [args.previous_receipt, args.previous_portable, args.previous_deb]
+    if any(previous) and not all(previous):
+        parser.error("Supply all three previous-package inputs together")
+    packages = [read_packages(args.receipt, args.portable, args.deb)]
+    if all(previous):
+        packages.insert(0, read_packages(*previous))
+        if packages[0][0]['version'] == packages[1][0]['version']:
+            parser.error("Roundtrip requires distinct application versions")
+        if packages[0][0]['moduleSha256'] == packages[1][0]['moduleSha256']:
+            parser.error("Native roundtrip requires distinct native payloads")
     with tempfile.TemporaryDirectory(prefix="lyn-package-runtime-") as directory:
         output = Path(directory)
-        with tarfile.open(args.portable, "r:gz") as archive:
-            raw = read_archive_binary(archive, f"lyn-{receipt['version']}-linux-x86_64/lyn")
-        portable_module = recover_bundle(raw, receipt, "binarySha256", output / "portable")
-        data = subprocess.check_output(["dpkg-deb", "--fsys-tarfile", str(args.deb)], timeout=10)
-        with tarfile.open(fileobj=io.BytesIO(data)) as archive:
-            packaged = read_archive_binary(archive, "usr/bin/lyn")
-        if packaged != debian_binary(raw):
-            raise ValueError("Debian executable differs beyond the known Tauri marker")
-        debian_module = recover_bundle(packaged, receipt, "debianBinarySha256", output / "debian")
-        if portable_module != debian_module:
-            raise ValueError("Packages contain different native resources")
+        modules = []
+        for index, (receipt, binaries) in enumerate(packages):
+            recovered = output / f"package-{index}"
+            recover_bundle(binaries['debian'], receipt, 'debianBinarySha256', recovered)
+            modules.append(recovered / 'liblyn-gnome-native.so')
+        module, updated_module = modules[0], modules[-1]
         # No build.py native module build: only the package-extracted producer.
         sdk_value = os.environ.get("LYN_GNOME_SDK_ROOT")
         sdk = Path(sdk_value).resolve(strict=True) if sdk_value else None
@@ -57,11 +60,16 @@ def main():
                   and item["target"]["name"] == "lyn_lib" and item["profile"]["test"] and item.get("executable")]
         if len(probes) != 1:
             raise ValueError("Expected the current Cargo library test executable")
-        module = output / "debian/liblyn-gnome-native.so"
         subprocess.run([sys.executable, str(ROOT / "prototype/isolated_run.py"), str(sdk) if sdk else "-",
                         str(ROOT / "prototype/native_activation_test.py"), str(module), str(preserved),
-                        probes[0], str(sdk) if sdk else "-", str(module), "--packaged-smoke"],
+                        probes[0], str(sdk) if sdk else "-", str(updated_module),
+                        "--packaged-roundtrip" if len(packages) == 2 else "--packaged-smoke"],
                        cwd=output, check=True)
+        if len(packages) == 2:
+            print(json.dumps(dict(check="packaged_native_roundtrip", previousVersion=packages[0][0]['version'],
+                                  currentVersion=packages[1][0]['version'],
+                                  previousModuleSha256=packages[0][0]['moduleSha256'],
+                                  currentModuleSha256=packages[1][0]['moduleSha256'])), flush=True)
         print("PASS: matching Debian/portable embedded resources, no native-module rebuild or package install", flush=True)
 
 

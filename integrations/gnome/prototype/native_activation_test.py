@@ -116,20 +116,21 @@ def check_synchronization(root, executable, sdk, environment, mode, expected, ex
             connection.close_sync(None)
 
 
-def run(module, preserved, executable, sdk, updated_module, packaged_smoke=False):
+def run(module, preserved, executable, sdk, updated_module, packaged_smoke=False, packaged_roundtrip=False):
     require_owned_display(sdk)
     private_runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     assert private_runtime.name == "runtime" and private_runtime.parent.name.startswith("lyn-gnome-run-")
     assert os.environ["DBUS_SESSION_BUS_ADDRESS"].startswith(f"unix:path={private_runtime}/")
     report_reference_files()
+    focused = packaged_smoke or packaged_roundtrip
     with tempfile.TemporaryDirectory(prefix="lyn-na-") as directory:
         root = Path(directory)
         project = repositories(root, ("alpha",))[0]
         fixture_environment = dict(os.environ, LYN_PRIVATE_NATIVE_ACTIVATION_ROOT=str(root),
                                    LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(module))
         prepare_environment = (dict(fixture_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="prepare-again")
-                               if packaged_smoke else fixture_environment)
-        prepare_entry = ("native_lifecycle_fixture_entry" if packaged_smoke else "native_activation_fixture_entry")
+                               if focused else fixture_environment)
+        prepare_entry = ("native_lifecycle_fixture_entry" if focused else "native_activation_fixture_entry")
         with simulated_manager(root, "stock", sdk, prepare_environment):
             subprocess.run([str(executable), "--exact", f"integrations::gnome::tests::{prepare_entry}",
                             "--test-threads=1"], env=prepare_environment, check=True, timeout=8)
@@ -137,7 +138,7 @@ def run(module, preserved, executable, sdk, updated_module, packaged_smoke=False
         stored_module = root / "state/modules" / hashlib.sha256(module.read_bytes()).hexdigest() / module.name
         assert stored_module.read_bytes() == module.read_bytes()
         assert stored_module.stat().st_mode & 0o7777 == 0o400
-        if not packaged_smoke:
+        if not focused:
             check_managed_service(root, executable, sdk, fixture_environment)
             for mode, calls in (("sync-during-validation", 0), ("sync-changed", 0), ("sync-owner", 0), ("sync-lock", 0), ("sync-stuck", 1), ("sync-error", 1), ("sync-hang", 1)):
                 check_synchronization(root, executable, sdk, fixture_environment, mode, "refused", calls)
@@ -239,37 +240,42 @@ def run(module, preserved, executable, sdk, updated_module, packaged_smoke=False
                 print("PASS: package-extracted native bytes loaded outside checkout -> exact backend save and GTK child exclusion", flush=True)
                 return
             # The coordinator changes files; it must not restart our server.
-            original_launcher = (root / "state/launcher-v1").read_bytes()
-            preparation_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(updated_module),
-                                           LYN_PRIVATE_NATIVE_FILE_ACTION="interrupt-update-precommit")
-            with simulated_manager(root, "loaded", sdk, preparation_environment):
-                interrupted = subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
-                                "--test-threads=1"], env=preparation_environment, timeout=8)
-                assert interrupted.returncode == 77, "Expected actual precommit process interruption"
-                assert (root / "state/update-precommit-pending-v1.json").is_file()
-                restored_environment = dict(preparation_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="recover-update-precommit",
-                                            LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(root / "absent-bundle.so"))
-                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
-                                "--test-threads=1"], env=restored_environment, check=True, timeout=8)
-            assert (root / "state/launcher-v1").read_bytes() == original_launcher
-            assert not (root / "state/update-precommit-pending-v1.json").exists()
-            alive = select.poll()
-            alive.register(pin, select.POLLIN)
-            assert not alive.poll(0) and server.poll() is None
-            print("PASS: uncommitted writer exit recovered in a fresh Rust process to the original factory; existing private server unchanged", flush=True)
+            if not packaged_roundtrip:
+                original_launcher = (root / "state/launcher-v1").read_bytes()
+                preparation_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(updated_module),
+                                               LYN_PRIVATE_NATIVE_FILE_ACTION="interrupt-update-precommit")
+                with simulated_manager(root, "loaded", sdk, preparation_environment):
+                    interrupted = subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                    "--test-threads=1"], env=preparation_environment, timeout=8)
+                    assert interrupted.returncode == 77, "Expected actual precommit process interruption"
+                    assert (root / "state/update-precommit-pending-v1.json").is_file()
+                    restored_environment = dict(preparation_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="recover-update-precommit",
+                                                LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(root / "absent-bundle.so"))
+                    subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                    "--test-threads=1"], env=restored_environment, check=True, timeout=8)
+                assert (root / "state/launcher-v1").read_bytes() == original_launcher
+                assert not (root / "state/update-precommit-pending-v1.json").exists()
+                alive = select.poll()
+                alive.register(pin, select.POLLIN)
+                assert not alive.poll(0) and server.poll() is None
+                print("PASS: uncommitted writer exit recovered in a fresh Rust process to the original factory; existing private server unchanged", flush=True)
             action_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(updated_module),
-                                      LYN_PRIVATE_NATIVE_FILE_ACTION="interrupt-update-commit")
+                                      LYN_PRIVATE_NATIVE_FILE_ACTION="update" if packaged_roundtrip else "interrupt-update-commit")
             with simulated_manager(root, "loaded", sdk, action_environment):
-                interrupted = subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
-                                "--test-threads=1"], env=action_environment, timeout=8)
-                assert interrupted.returncode == 77, "Expected actual committed-update process interruption"
-                assert (root / "state/update-cleanup-pending-v1.json").is_file()
-                recovered_environment = dict(action_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="recover-update-commit",
-                                             LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(root / "absent-bundle.so"))
-                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
-                                "--test-threads=1"], env=recovered_environment, check=True, timeout=8)
-                assert not (root / "state/update-cleanup-pending-v1.json").exists()
-                print("PASS: committed update process exit recovered in a fresh Rust process without an input bundle", flush=True)
+                if packaged_roundtrip:
+                    subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                    "--test-threads=1"], env=action_environment, check=True, timeout=8)
+                else:
+                    interrupted = subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                    "--test-threads=1"], env=action_environment, timeout=8)
+                    assert interrupted.returncode == 77, "Expected actual committed-update process interruption"
+                    assert (root / "state/update-cleanup-pending-v1.json").is_file()
+                    recovered_environment = dict(action_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="recover-update-commit",
+                                                 LYN_PRIVATE_NATIVE_ACTIVATION_MODULE=str(root / "absent-bundle.so"))
+                    subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                    "--test-threads=1"], env=recovered_environment, check=True, timeout=8)
+                    assert not (root / "state/update-cleanup-pending-v1.json").exists()
+                    print("PASS: committed update process exit recovered in a fresh Rust process without an input bundle", flush=True)
             import hashlib
             updated_stored = root / "state/modules" / hashlib.sha256(updated_module.read_bytes()).hexdigest() / module.name
             assert updated_stored != stored_module and updated_stored.read_bytes() == updated_module.read_bytes()
@@ -307,55 +313,58 @@ def run(module, preserved, executable, sdk, updated_module, packaged_smoke=False
                               "branchMatches": True, "duplicateRefused": True, "captureCount": 1,
                               "leaseReleased": True}, result
             print("PASS: persisted-history rollback needs no artifact input, preserves the live server and loads/restores exact capture on owned relaunch", flush=True)
-            action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "interrupt-remove"
-            with simulated_manager(root, "loaded", sdk, action_environment):
-                interrupted = subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
-                                              "--test-threads=1"], env=action_environment, timeout=8)
-                assert interrupted.returncode == 77, interrupted.returncode
-                assert (root / "state/uninstall-pending-v1.json").is_file()
+            if not packaged_roundtrip:
+                action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "interrupt-remove"
+                with simulated_manager(root, "loaded", sdk, action_environment):
+                    interrupted = subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                                  "--test-threads=1"], env=action_environment, timeout=8)
+                    assert interrupted.returncode == 77, interrupted.returncode
+                    assert (root / "state/uninstall-pending-v1.json").is_file()
+                    assert not (root / "units/gnome-terminal-server.service.d/90-lyn-native.conf").exists()
+                    assert (root / "state/launcher-v1").is_file()
+                    action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "recover-remove"
+                    subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                    "--test-threads=1"], env=action_environment, check=True, timeout=8)
+                    action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "inspect-retired"
+                    subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                    "--test-threads=1"], env=action_environment, check=True, timeout=8)
+                assert not (root / "state/launcher-v1").exists()
+                assert not (root / "state/installation-v1.json").exists()
                 assert not (root / "units/gnome-terminal-server.service.d/90-lyn-native.conf").exists()
-                assert (root / "state/launcher-v1").is_file()
-                action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "recover-remove"
-                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
-                                "--test-threads=1"], env=action_environment, check=True, timeout=8)
-                action_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "inspect-retired"
-                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
-                                "--test-threads=1"], env=action_environment, check=True, timeout=8)
-            assert not (root / "state/launcher-v1").exists()
-            assert not (root / "state/installation-v1.json").exists()
-            assert not (root / "units/gnome-terminal-server.service.d/90-lyn-native.conf").exists()
-            assert stored_module.read_bytes() == module.read_bytes() and updated_stored.read_bytes() == updated_module.read_bytes()
-            poller = select.poll()
-            poller.register(pin, select.POLLIN)
-            assert not poller.poll(0) and server.poll() is None
-            assert (root / "state/uninstall-retired-v1.json").is_file()
-            check_synchronization(root, executable, sdk, action_environment, "sync-remove", "stock", 1)
-            assert (root / "state/uninstall-retired-v1.json").is_file()
-            assert not poller.poll(0) and server.poll() is None
-            print("PASS: actual removal-process exit recovered by a fresh Rust process; both modules and exact cached-manager authority retained; live private server unchanged", flush=True)
-            for mode, calls in (("ack-owner", 0), ("ack-stuck", 1)):
-                check_synchronization(root, executable, sdk, action_environment, mode, "refused", calls)
+                assert stored_module.read_bytes() == module.read_bytes() and updated_stored.read_bytes() == updated_module.read_bytes()
+                poller = select.poll()
+                poller.register(pin, select.POLLIN)
+                assert not poller.poll(0) and server.poll() is None
                 assert (root / "state/uninstall-retired-v1.json").is_file()
-            check_synchronization(root, executable, sdk, action_environment, "ack-remove", "stock", 1)
-            assert not (root / "state/uninstall-retired-v1.json").exists()
-            for mode, expected, calls in (("ack-stock", "stock", 0), ("ack-after-unlink", "refused", 1)):
+                check_synchronization(root, executable, sdk, action_environment, "sync-remove", "stock", 1)
+                assert (root / "state/uninstall-retired-v1.json").is_file()
+                assert not poller.poll(0) and server.poll() is None
+                print("PASS: actual removal-process exit recovered by a fresh Rust process; both modules and exact cached-manager authority retained; live private server unchanged", flush=True)
+                for mode, calls in (("ack-owner", 0), ("ack-stuck", 1)):
+                    check_synchronization(root, executable, sdk, action_environment, mode, "refused", calls)
+                    assert (root / "state/uninstall-retired-v1.json").is_file()
+                check_synchronization(root, executable, sdk, action_environment, "ack-remove", "stock", 1)
+                assert not (root / "state/uninstall-retired-v1.json").exists()
+                for mode, expected, calls in (("ack-stock", "stock", 0), ("ack-after-unlink", "refused", 1)):
+                    reset_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="prepare-again")
+                    with simulated_manager(root, "stock", sdk, reset_environment):
+                        subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                        "--test-threads=1"], env=reset_environment, check=True, timeout=8)
+                    reset_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "remove"
+                    with simulated_manager(root, "loaded", sdk, reset_environment):
+                        subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
+                                        "--test-threads=1"], env=reset_environment, check=True, timeout=8)
+                    check_synchronization(root, executable, sdk, action_environment, mode, expected, calls)
+                    assert not (root / "state/uninstall-retired-v1.json").exists()
+                assert stored_module.read_bytes() == module.read_bytes() and updated_stored.read_bytes() == updated_module.read_bytes()
+                assert not poller.poll(0) and server.poll() is None
+                print("PASS: stock-verified retirement acknowledgement, same-client post-unlink check, no-RPC fresh retry and private reinstall preserve modules/live server", flush=True)
                 reset_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="prepare-again")
                 with simulated_manager(root, "stock", sdk, reset_environment):
                     subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
                                     "--test-threads=1"], env=reset_environment, check=True, timeout=8)
-                reset_environment["LYN_PRIVATE_NATIVE_FILE_ACTION"] = "remove"
-                with simulated_manager(root, "loaded", sdk, reset_environment):
-                    subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
-                                    "--test-threads=1"], env=reset_environment, check=True, timeout=8)
-                check_synchronization(root, executable, sdk, action_environment, mode, expected, calls)
-                assert not (root / "state/uninstall-retired-v1.json").exists()
-            assert stored_module.read_bytes() == module.read_bytes() and updated_stored.read_bytes() == updated_module.read_bytes()
-            assert not poller.poll(0) and server.poll() is None
-            print("PASS: stock-verified retirement acknowledgement, same-client post-unlink check, no-RPC fresh retry and private reinstall preserve modules/live server", flush=True)
-            reset_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="prepare-again")
-            with simulated_manager(root, "stock", sdk, reset_environment):
-                subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
-                                "--test-threads=1"], env=reset_environment, check=True, timeout=8)
+            poller = select.poll()
+            poller.register(pin, select.POLLIN)
             uninstall_environment = dict(fixture_environment, LYN_PRIVATE_NATIVE_FILE_ACTION="uninstall")
             with simulated_manager(root, "sync-remove", sdk, uninstall_environment):
                 subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry",
@@ -374,6 +383,9 @@ def run(module, preserved, executable, sdk, updated_module, packaged_smoke=False
             assert stored_module.read_bytes() == module.read_bytes() and updated_stored.read_bytes() == updated_module.read_bytes()
             assert not poller.poll(0) and server.poll() is None
             print("PASS: one revisioned uninstall completes retirement, one manager Reload and acknowledgement; both modules and original private server preserved", flush=True)
+            if packaged_roundtrip:
+                assert str(stored_module) in Path(f"/proc/{server.pid}/maps").read_text()
+                print("PASS: package-derived native update/rollback/uninstall preserves owned live servers and retained modules", flush=True)
         finally:
             child.close()
             if server is not None:
@@ -382,8 +394,11 @@ def run(module, preserved, executable, sdk, updated_module, packaged_smoke=False
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (6, 7) or (len(sys.argv) == 7 and sys.argv[6] != "--packaged-smoke"):
-        raise SystemExit("Expected module, preserved module, test executable, SDK, update module and optional --packaged-smoke")
+    modes = ("--packaged-smoke", "--packaged-roundtrip")
+    if len(sys.argv) not in (6, 7) or (len(sys.argv) == 7 and sys.argv[6] not in modes):
+        raise SystemExit("Expected module, preserved module, test executable, SDK, update module and optional packaged mode")
+    mode = sys.argv[6] if len(sys.argv) == 7 else None
     run(*(Path(value).resolve(strict=True) for value in sys.argv[1:4]),
         Path(sys.argv[4]).resolve(strict=True) if sys.argv[4] != "-" else None,
-        Path(sys.argv[5]).resolve(strict=True), packaged_smoke=len(sys.argv) == 7)
+        Path(sys.argv[5]).resolve(strict=True), packaged_smoke=mode == "--packaged-smoke",
+        packaged_roundtrip=mode == "--packaged-roundtrip")

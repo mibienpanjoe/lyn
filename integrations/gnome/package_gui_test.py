@@ -4,22 +4,18 @@ The user namespace deliberately preserves production refusal of unmapped root
 identities. This is GUI/manual-save evidence, not native compatibility proof.
 """
 import argparse
-import io
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 
 from build import ROOT
-from package_resources import recover_bundle
+from package_resources import read_packages
 
 REPO = ROOT.parents[1]
-sys.path.insert(0, str(REPO / 'scripts'))
-from verify_linux_native import bounded_file, read_archive_binary, debian_binary
 sys.path.insert(0, str(ROOT / 'prototype'))
 from isolated_run import run_fixture
 
@@ -41,22 +37,6 @@ def preserve_diagnostics(output, kind, destination=REPO / 'tasks'):
         retained.append(Path(name))
         print(json.dumps({'artifact': name, 'package': kind}), flush=True)
     return retained
-
-
-def read_packages(receipt_path, portable_path, deb_path):
-    receipt = json.loads(bounded_file(receipt_path, 16384))
-    with tarfile.open(portable_path, 'r:gz') as archive:
-        portable = read_archive_binary(archive, f"lyn-{receipt['version']}-linux-x86_64/lyn")
-    data = subprocess.check_output(['dpkg-deb', '--fsys-tarfile', str(deb_path)], timeout=10)
-    with tarfile.open(fileobj=io.BytesIO(data)) as archive:
-        deb = read_archive_binary(archive, 'usr/bin/lyn')
-    if deb != debian_binary(portable):
-        raise ValueError('Package binaries differ beyond the expected Tauri marker')
-    with tempfile.TemporaryDirectory(prefix='lyn-package-check-') as directory:
-        root = Path(directory)
-        recover_bundle(portable, receipt, 'binarySha256', root / 'portable')
-        recover_bundle(deb, receipt, 'debianBinarySha256', root / 'debian')
-    return receipt, {'portable': portable, 'debian': deb}
 
 
 def main():
