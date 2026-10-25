@@ -80,7 +80,7 @@ pnpm package:linux
 pnpm package:windows
 ```
 
-Linux packaging embeds the native GNOME module and requires the reference GTK 3.24.33 / VTE 0.68.0 headers and runtime, GCC and pkg-config. `LYN_GNOME_SDK_ROOT` can supply extracted VTE headers as described in [AGENTS.md](AGENTS.md); users of the resulting packages do not need that build SDK. Other native stacks refuse before packaging. The command verifies the embedded module in both packages and checks their binary contents, allowing only Tauri’s Debian format marker; it does not install or activate the integration. The release workflow still needs this native-bundle wiring.
+Linux packaging embeds the native GNOME module and requires the reference GTK 3.24.33 / VTE 0.68.0 headers and runtime, GCC and pkg-config. `LYN_GNOME_SDK_ROOT` can supply extracted VTE headers as described in [AGENTS.md](AGENTS.md); users of the resulting packages do not need that build SDK. Other native stacks refuse before packaging. The command verifies the embedded module in both packages and checks their binary contents, allowing only Tauri’s Debian format marker; it does not install or activate the integration. The release workflow uses the same native build and package checks.
 
 For the isolated native resource check after packaging:
 
@@ -95,7 +95,7 @@ This developer check needs the [GNOME fixture prerequisites](AGENTS.md). It veri
 
 `pnpm provider:gnome:package:gui:test` accepts the same three artifact arguments and runs the ordinary packaged GUI with no checkout access. It additionally needs Bubblewrap, Openbox, AT-SPI and Tesseract with English data (system-installed or extracted into the local SDK). It masks the real home and isolates files, display, bus and network, then verifies shortcut/manual capture, SQLite and the painted Library through local OCR. Native GNOME compatibility remains a separate check because the user namespace cannot attest unmapped root-owned files.
 
-Upload those assets to a GitHub Release, or push a `v*` tag / run the **release** workflow so CI builds Linux + Windows and attaches them automatically.
+The **release** workflow builds Linux and Windows separately, then verifies both artifact sets before publication. A manual run on a branch only verifies and retains workflow artifacts. A matching `v<version>` tag uploads a draft and publishes the prerelease after both builds succeed; the version must agree in `package.json`, `Cargo.toml` and `tauri.conf.json`. Existing releases are never overwritten by this workflow.
 
 Other useful commands (full list in [AGENTS.md](AGENTS.md)):
 

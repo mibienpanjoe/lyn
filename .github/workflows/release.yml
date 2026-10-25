@@ -1,7 +1,4 @@
-# Build unsigned .deb (Linux), NSIS .exe (Windows), and Linux tarball; upload to GitHub Releases.
-# Trigger: version tag (v*) or manual "Run workflow".
-# Official pattern: https://v2.tauri.app/distribute/pipelines/github/
-
+# Branch dispatch verifies only. Version tags publish after BOTH builds pass.
 name: release
 
 on:
@@ -11,78 +8,132 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  publish:
+  build:
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: ubuntu-22.04
-            args: '--bundles deb'
+            id: linux
           - platform: windows-latest
-            args: '--bundles nsis'
-
+            id: windows
     runs-on: ${{ matrix.platform }}
-
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_BUILD_JOBS: '2'
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+      - name: Install Linux build and private fixture dependencies
+        if: matrix.id == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libvte-2.91-dev gnome-terminal xvfb xauth xdotool x11-utils python3-gi gir1.2-gtk-3.0 gir1.2-atspi-2.0 openbox bubblewrap tesseract-ocr tesseract-ocr-eng
 
       - uses: pnpm/action-setup@v4
         with:
           version: 10.28.0
-
       - uses: actions/setup-node@v4
         with:
           node-version: 24.12.0
           cache: pnpm
-
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
       - uses: dtolnay/rust-toolchain@stable
-
+        with:
+          toolchain: 1.96.1
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
 
+      - name: Validate source version and tag
+        run: python scripts/release_artifacts.py version --ref "$GITHUB_REF"
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build and upload Tauri bundles
-        uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: v__VERSION__
-          releaseName: 'Lyn v__VERSION__'
-          releaseBody: |
-            Unsigned v1 artifacts (GitHub Releases only — no in-app updater).
-
-            - **Linux:** `.deb` (preferred on Pop!_OS/Ubuntu) and `.tar.gz` portable binary
-            - **Windows:** NSIS `.exe` (experimental; SmartScreen may warn)
-
-            Optional local speech (whisper.cpp / Whisper base) remains MIT-licensed upstream and is installed from Settings, not bundled here.
-          releaseDraft: false
-          prerelease: true
-          args: ${{ matrix.args }}
-
-      - name: Package Linux tarball
-        if: matrix.platform == 'ubuntu-22.04'
-        run: bash scripts/package-linux-tarball.sh
-
-      - name: Upload Linux tarball to release
-        if: matrix.platform == 'ubuntu-22.04'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check shared frontend
+        if: matrix.id == 'linux'
         run: |
-          VERSION="$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')"
-          gh release upload "v${VERSION}" dist-packages/*.tar.gz --clobber
+          pnpm format:check
+          pnpm check
+          pnpm test
+      - name: Test release and native package guards
+        if: matrix.id == 'linux'
+        run: |
+          python -m unittest discover -s scripts -p test_release_artifacts.py
+          python -m unittest discover -s scripts -p test_linux_native_package.py
+          /usr/bin/python3 -m unittest discover -s integrations/gnome -p package_resources_test.py
+          /usr/bin/python3 -m unittest discover -s integrations/gnome -p package_gui_artifacts_test.py
+          /usr/bin/python3 -m unittest discover -s integrations/gnome/prototype -p packaged_gui_guard_test.py
+          /usr/bin/python3 -m unittest discover -s integrations/gnome/prototype -p packaged_gui_pixels_test.py
+
+      - name: Build native Linux packages and verify their contents
+        if: matrix.id == 'linux'
+        run: pnpm package:linux
+      - name: Verify packaged native producer and real packaged GUI
+        if: matrix.id == 'linux'
+        run: |
+          RELEASE_VERSION="$(python scripts/release_artifacts.py version --ref "$GITHUB_REF")"
+          pnpm provider:gnome:package:test \
+            --receipt "dist-packages/lyn-${RELEASE_VERSION}-linux-x86_64-native.json" \
+            --portable "dist-packages/lyn-${RELEASE_VERSION}-linux-x86_64.tar.gz" \
+            --deb "src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/Lyn_${RELEASE_VERSION}_amd64.deb"
+          pnpm provider:gnome:package:gui:test \
+            --receipt "dist-packages/lyn-${RELEASE_VERSION}-linux-x86_64-native.json" \
+            --portable "dist-packages/lyn-${RELEASE_VERSION}-linux-x86_64.tar.gz" \
+            --deb "src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/Lyn_${RELEASE_VERSION}_amd64.deb"
+      - name: Build Windows installer
+        if: matrix.id == 'windows'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm package:windows
+
+      - name: Stage exact current-version artifacts with commit and hashes
+        env:
+          RELEASE_PLATFORM: ${{ matrix.id }}
+        run: python scripts/release_artifacts.py stage --platform "$RELEASE_PLATFORM" --sha "$GITHUB_SHA" --destination "release-stage/$RELEASE_PLATFORM"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.id }}
+          path: release-stage/${{ matrix.id }}/
+          if-no-files-found: error
+      - name: Retain private GUI diagnostics
+        if: always() && matrix.id == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-evidence-linux
+          path: tasks/packaged-gui-*
+          if-no-files-found: ignore
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-artifacts
+      - name: Verify both artifact sets, upload draft, then publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/release_artifacts.py publish --directory release-artifacts --sha "$GITHUB_SHA" --tag "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"

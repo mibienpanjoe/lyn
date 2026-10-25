@@ -13,7 +13,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import uuid
 
 from build import ROOT
 from package_resources import recover_bundle
@@ -28,6 +27,20 @@ from isolated_run import run_fixture
 def identity(path):
     metadata = path.stat()
     return [metadata.st_dev, metadata.st_ino]
+
+
+def preserve_diagnostics(output, kind, destination=REPO / 'tasks'):
+    if destination.is_symlink(): raise ValueError('Diagnostic directory must not be a symlink')
+    destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+    retained = []
+    for path in [*output.glob('*.png'), *output.glob('*.log')]:
+        if path.is_symlink() or not path.is_file(): raise ValueError('Expected regular fixture diagnostics')
+        descriptor, name = tempfile.mkstemp(prefix=f'packaged-gui-{kind}-', suffix='-' + path.name, dir=destination)
+        with os.fdopen(descriptor, 'wb') as target, path.open('rb') as source:
+            shutil.copyfileobj(source, target)
+        retained.append(Path(name))
+        print(json.dumps({'artifact': name, 'package': kind}), flush=True)
+    return retained
 
 
 def main():
@@ -87,10 +100,7 @@ def main():
                 result = run_fixture(command, environment)
             finally:
                 # Preserve fixture diagnostics only, even when the child refuses.
-                for path in [*output.glob('*.png'), *output.glob('*.log')]:
-                    destination = REPO / 'tasks' / f'packaged-gui-{kind}-{uuid.uuid4().hex}-{path.name}'
-                    shutil.copyfile(path, destination)
-                    print(json.dumps({'artifact': str(destination), 'package': kind}), flush=True)
+                preserve_diagnostics(output, kind)
             if result:
                 raise SystemExit(result)
             print(f'PASS: {kind} packaged GUI filesystem guard' + ('' if args.guard_only else ' and real bundled UI/save'), flush=True)
