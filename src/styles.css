@@ -1379,6 +1379,11 @@ kbd {
   grid-template-columns: 38px minmax(0, 1fr);
 }
 
+.native-integration > .integration-action {
+  grid-column: 2;
+  justify-self: start;
+}
+
 .native-integration-actions {
   display: flex;
   flex-wrap: wrap;

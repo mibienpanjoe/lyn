@@ -273,21 +273,7 @@
       if (!disposed) {
         // A result or error can follow effects. Retire the old offer before
         // refreshing; never reuse it if that read fails and never replay.
-        integrations = integrations.map((row) =>
-          row.id === 'gnome' && row.native?.activation
-            ? {
-                ...row,
-                native: {
-                  ...row.native,
-                  activation: {
-                    ...row.native.activation,
-                    revision: null,
-                    actions: [],
-                  },
-                },
-              }
-            : row,
-        );
+        retireGnomeOffers();
         const refreshed = await loadIntegrations();
         if (refreshed && receipt && !disposed) {
           const current = integrations.find((row) => row.id === 'gnome')?.native
@@ -316,7 +302,79 @@
     }
   }
 
+  function retireGnomeOffers() {
+    integrations = integrations.map((row) =>
+      row.id === 'gnome' && row.native?.activation
+        ? {
+            ...row,
+            native: {
+              ...row.native,
+              activation: {
+                ...row.native.activation,
+                revision: null,
+                actions: [],
+              },
+            },
+          }
+        : row,
+    );
+    integrations = integrations.map((row) =>
+      row.id === 'gnome' && row.native
+        ? { ...row, native: { ...row.native, canInstall: false } }
+        : row,
+    );
+  }
+
+  async function installGnome() {
+    if (!isLinux || installingIntegrationId) return;
+    installingIntegrationId = 'gnome';
+    nativeManagementReadPending = true;
+    integrationRequestSeq += 1;
+    loadingIntegrations = false;
+    let preparedRevision: string | null = null;
+    try {
+      const result = await intClient.install({ id: 'gnome' });
+      if (
+        result.id === 'gnome' &&
+        result.success &&
+        !result.installed &&
+        /^[0-9a-f]{64}$/.test(result.configurationRevision ?? '')
+      ) {
+        preparedRevision = result.configurationRevision!;
+      }
+    } catch {
+      // Even a refusal may follow effects. Always refresh, never retry.
+    } finally {
+      if (!disposed) {
+        retireGnomeOffers();
+        const refreshed = await loadIntegrations();
+        if (!disposed) {
+          const current = integrations.find((row) => row.id === 'gnome')?.native
+            ?.activation;
+          const success =
+            preparedRevision !== null &&
+            refreshed &&
+            current?.phase === 'configured' &&
+            current.revision === preparedRevision;
+          integrationFeedback = {
+            ...integrationFeedback,
+            gnome: {
+              success,
+              message: !refreshed
+                ? t.gnomeManagementRefreshFailed
+                : success
+                  ? t.gnomeManagementReceipts.recover_install
+                  : t.gnomeManagementFailed,
+            },
+          };
+          installingIntegrationId = null;
+        }
+      }
+    }
+  }
+
   async function installIntegration(id: IntegrationId) {
+    if (id === 'gnome') return installGnome();
     if (!isLinux || installingIntegrationId) return;
     installingIntegrationId = id;
     try {
@@ -855,7 +913,8 @@
                         type="button"
                         class="secondary-action"
                         class:installed-btn={item.installed}
-                        disabled={installingIntegrationId !== null}
+                        disabled={installingIntegrationId !== null ||
+                          loadingIntegrations}
                         onclick={() => installIntegration(item.id)}
                       >
                         {#if installingIntegrationId === item.id}

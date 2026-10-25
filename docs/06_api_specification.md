@@ -1,6 +1,6 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.18, 2026-10-24
+Version: v1.19, 2026-10-25
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
@@ -673,7 +673,7 @@ interface IntegrationStatus {
 }
 ```
 
-The GNOME row keeps file ownership and admitted transport observations separate. `owned` covers the three activation files only; `connected` covers an observed authenticated transport, not the focused source or a verified capture. Missing evidence must display unavailable, never Installed/Ready or an installation action. No private path, PID or source identifier is returned in native evidence. The initial GNOME distribution is not yet available: `installed` and `canInstall` are false even if activation files are owned or a manually activated native producer is connected. The [native protocol contract](gnome_native_protocol.md) owns the precise observation/refusal boundaries.
+The GNOME row keeps file ownership and admitted transport observations separate. `owned` covers the three activation files only; `connected` covers an observed authenticated transport, not the focused source or a verified capture. Missing evidence must display unavailable, never Installed/Ready or an installation action. No private path, PID or source identifier is returned in native evidence. GNOME `installed` remains false: preparation/connection alone does not establish packaged installation acceptance. `canInstall` is an advisory preparation offer only when a validated build-time bundle exists, a server is detected and both file and activation observations are absent. It is not a compatibility verdict. Default builds without a bundle keep it false; pending, changed, retired and unavailable authority never offer first installation. The [native protocol contract](gnome_native_protocol.md) owns the precise observation/refusal boundaries.
 
 The additive activation observation distinguishes recognized complete configuration, interrupted first installation, committed update cleanup, uncommitted restoration, removal and retained removal authority. Each recognized owned phase carries an opaque64-hex revision derived from its pinned authority file's identity/change time/content with a phase-specific domain; complete configuration preserves the existing rollback revision. It is a freshness marker for the same recorded configuration/intent, not a credential, a module version, an action permission or an atomic global snapshot. The same intent can retain its revision as recorded cleanup progresses. Absent/changed/unavailable observations have `revision:null`. An identical-byte replacement of the authority changes its fresh revision and invalidates a retained reader. Status creates no locks/directories, performs no manager/provider RPC or transaction recovery and never acknowledges removal. The UI uses localized phase text with legacy file-status fallback and does not display the revision. The separate `manage_gnome_activation` command below consumes an expected revision with authoritative checks; this metadata itself performs no mutation.
 
@@ -697,7 +697,11 @@ Settings sends one explicit action with the displayed revision, disables competi
 
 ### `install_integration`
 
-**Input:** `{ id: IntegrationId }`, rejecting all additional fields. **Success:** `{ id, success, message, installed }` inside the standard result envelope. Existing integration installations retain their behavior. GNOME currently returns `success: false`, `installed: false` and a safe build-unavailable message without creating files, probing/reloading a manager or restarting a terminal. The UI hides that unavailable action; packaging and safe installer wiring remain separate implementation requirements.
+**Input:** `{ id: IntegrationId }`, rejecting all additional fields. **Success:** `{ id, success, message, installed, configurationRevision? }` inside the standard result envelope. Existing integration result payloads omit the optional revision and retain their behavior. The command runs filesystem/service work on a blocking worker.
+
+GNOME prepares only a first installation from the validated embedded bundle at internally resolved destinations. Missing bundle refuses before filesystem or bus work. Existing, pending or retired authority refuses rather than selecting recovery/update implicitly. The coordinator checks the strict stock service and exact destination membership before creation and before publication, retains its original flock and module/directory evidence through final validation, then captures `configurationRevision` and rechecks the original lock before returning. Success means configuration prepared: `success:true`, `installed:false` and the canonical revision of those complete activation files. No manager Reload or terminal action occurs; applying the configuration is a separate explicit revisioned action. Failure returns a fixed safe message, no revision and both booleans false; files or recovery authority may remain after errors.
+
+The UI sends one preparation request, retires its cached offers and refreshes after either result or error. It shows localized preparation success only when refreshed configured authority has the exact returned revision, never claiming a running module. A failed refresh keeps old installation/management offers disabled until an accepted read. No automatic retry or apply action follows. Default builds still have no install offer; packaging, genuine Tauri IPC and installed acceptance remain separate verification boundaries.
 
 `get_settings`, `update_settings`, and `get_app_version` are implemented. Speech-model commands and model-progress events in this section remain proposed behind G2 and are not registered by the current build.
 

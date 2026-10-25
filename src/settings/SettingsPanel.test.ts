@@ -468,6 +468,75 @@ describe('Settings', () => {
     expect((await axe.run(container)).violations).toEqual([]);
   });
 
+  it('refreshes after a failed native first installation and retires its old offer', async () => {
+    const offered = nativeStatus('absent', null, []);
+    offered.native!.canInstall = true;
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([offered])
+      .mockRejectedValueOnce(new Error('read failed'));
+    const install = vi
+      .fn()
+      .mockRejectedValue(new Error('raw private installation path'));
+    render(SettingsPanel, {
+      client: client(),
+      modelClient,
+      intClient: { list, install },
+    });
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Install' }),
+    );
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    expect(install).toHaveBeenCalledExactlyOnceWith({ id: 'gnome' });
+    expect(screen.queryByText(/raw private/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Install' })).toBeNull();
+  });
+
+  it.each(['a', 'b'])(
+    'accepts first preparation only when its locked receipt matches refresh (%s)',
+    async (revision) => {
+      const offered = nativeStatus('absent', null, []);
+      offered.native!.canInstall = true;
+      const install = vi.fn().mockResolvedValue({
+        id: 'gnome',
+        success: true,
+        installed: false,
+        message: 'raw backend message',
+        configurationRevision: 'a'.repeat(64),
+      });
+      const list = vi
+        .fn()
+        .mockResolvedValueOnce([offered])
+        .mockResolvedValueOnce([
+          nativeStatus('configured', revision.repeat(64), [
+            'synchronize',
+            'uninstall',
+          ]),
+        ]);
+      render(SettingsPanel, {
+        client: client(),
+        modelClient,
+        intClient: { list, install, manage: vi.fn() },
+      });
+      await fireEvent.click(
+        await screen.findByRole('button', { name: 'Install' }),
+      );
+      await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+      const receipt =
+        'Installation prepared. Apply the configuration before the next GNOME Terminal start.';
+      if (revision === 'a')
+        expect(await screen.findByText(receipt)).toBeVisible();
+      else await waitFor(() => expect(screen.queryByText(receipt)).toBeNull());
+      expect(screen.queryByText('raw backend message')).toBeNull();
+      expect(install).toHaveBeenCalledExactlyOnceWith({ id: 'gnome' });
+      expect(
+        await screen.findByRole('button', {
+          name: 'Apply configuration',
+        }),
+      ).toBeVisible();
+    },
+  );
+
   it('uses one captured revision, blocks duplicate actions and refreshes after completion', async () => {
     let finish!: (result: ManageGnomeActivationResult) => void;
     const manage = vi.fn(

@@ -828,6 +828,9 @@ pub struct InstallIntegrationInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallIntegrationResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub configuration_revision: Option<String>,
     pub id: IntegrationId,
     pub success: bool,
     pub message: String,

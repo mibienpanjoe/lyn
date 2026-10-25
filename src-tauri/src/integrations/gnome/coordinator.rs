@@ -61,6 +61,12 @@ pub(super) struct Prepared {
     pub(super) definition: DefinitionState,
 }
 
+#[derive(Debug)]
+pub(super) struct PreparedFirst {
+    pub(super) definition: DefinitionState,
+    pub(super) revision: String,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Removed {
     revision: Option<String>,
@@ -694,12 +700,12 @@ impl Paths {
 
 /// No runtime artifact, destination or service implementation is supplied by IPC.
 /// Failure can have filesystem effects; the authoritative state must be inspected.
-pub(super) fn prepare_first(home: &Path) -> Result<Prepared, Failure> {
+pub(super) fn prepare_first(home: &Path) -> Result<PreparedFirst, Failure> {
     let artifact = artifact::embedded()
         .map_err(|_| failure(Stage::Preflight, Cause::NoArtifact))?
         .ok_or_else(|| failure(Stage::Preflight, Cause::NoArtifact))?;
     let paths = Paths::from_home(home)?;
-    prepare_at(
+    prepare_first_at(
         &paths,
         &artifact,
         &mut RealService {
@@ -797,11 +803,22 @@ pub(super) fn remove(home: &Path) -> Result<Removed, Failure> {
     )
 }
 
+#[cfg(test)]
 fn prepare_at(
     paths: &Paths,
     artifact: &Artifact,
     service: &mut impl ServiceChecks,
 ) -> Result<Prepared, Failure> {
+    prepare_first_at(paths, artifact, service).map(|first| Prepared {
+        definition: first.definition,
+    })
+}
+
+fn prepare_first_at(
+    paths: &Paths,
+    artifact: &Artifact,
+    service: &mut impl ServiceChecks,
+) -> Result<PreparedFirst, Failure> {
     paths
         .require_no_retirement()
         .map_err(|error| failure(Stage::Preflight, Cause::Io(error)))?;
@@ -865,17 +882,22 @@ fn prepare_at(
         .map_err(verifying)?;
     store.verify(&stored, artifact).map_err(verifying)?;
     owned.recheck().map_err(verifying)?;
-    Ok(Prepared { definition })
+    let revision = owned.management_revision().map_err(verifying)?;
+    transaction.check_lock().map_err(verifying)?;
+    Ok(PreparedFirst {
+        definition,
+        revision,
+    })
 }
 
 #[cfg(test)]
-pub(super) fn prepare_private(root: &Path, artifact: &Artifact) -> Result<Prepared, Failure> {
+pub(super) fn prepare_private(root: &Path, artifact: &Artifact) -> Result<PreparedFirst, Failure> {
     // The caller is the cfg(test) entry after its private-root validation.
     let paths = Paths {
         state: root.join("state"),
         target: root.join("units/gnome-terminal-server.service.d"),
     };
-    prepare_at(
+    prepare_first_at(
         &paths,
         artifact,
         &mut RealService {
@@ -1209,6 +1231,31 @@ mod tests {
         let mut transaction = ActivationTransaction::begin(&state, &target, rendered).unwrap();
         transaction.interrupt_install_after(checkpoint);
         assert!(transaction.apply().is_err());
+    }
+
+    #[test]
+    fn first_preparation_refuses_a_lock_replaced_during_service_postflight() {
+        struct Replacing<'a>(&'a Paths);
+        impl ServiceChecks for Replacing<'_> {
+            fn stock(&mut self) -> Result<(), ServiceRefusal> {
+                Ok(())
+            }
+            fn owned(
+                &mut self,
+                owned: &OwnedActivation,
+            ) -> Result<DefinitionState, ServiceRefusal> {
+                owned.recheck().unwrap();
+                let lock = self.0.state.join(".installation.lock");
+                fs::rename(&lock, self.0.state.join("preserved-original-lock")).unwrap();
+                fs::write(&lock, b"").unwrap();
+                fs::set_permissions(&lock, fs::Permissions::from_mode(0o600)).unwrap();
+                Ok(DefinitionState::NeedsReload)
+            }
+        }
+        let (_root, paths) = fixture();
+        assert!(prepare_first_at(&paths, &artifact(), &mut Replacing(&paths)).is_err());
+        // Refusal is not rollback: prepared files may remain and require refresh.
+        assert_eq!(paths.inspect().unwrap(), ActivationFilesState::Owned);
     }
 
     #[test]

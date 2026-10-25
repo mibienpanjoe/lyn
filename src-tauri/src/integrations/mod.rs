@@ -456,6 +456,7 @@ pub(crate) fn install_integration_by_id(
     {
         let _ = home;
         InstallIntegrationResult {
+            configuration_revision: None,
             id: input.id,
             success: false,
             message: "Context integrations are only supported on Linux in this release.".to_owned(),
@@ -469,12 +470,7 @@ pub(crate) fn install_integration_by_id(
         IntegrationId::Browser => install_browser(home),
         IntegrationId::Kitty => install_kitty(home),
         IntegrationId::Shell => install_shell(home),
-        IntegrationId::Gnome => InstallIntegrationResult {
-            id: IntegrationId::Gnome,
-            success: false,
-            installed: false,
-            message: "GNOME installation is not available in this build.".to_owned(),
-        },
+        IntegrationId::Gnome => gnome::installation::prepare(home),
     }
 }
 
@@ -482,6 +478,7 @@ fn install_cursor(home: &Path) -> InstallIntegrationResult {
     let cursor_ext_dir = home.join(".cursor/extensions");
     match install_vscode_style_extension(&cursor_ext_dir) {
         Ok(path) => InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Cursor,
             success: true,
             message: format!(
@@ -491,6 +488,7 @@ fn install_cursor(home: &Path) -> InstallIntegrationResult {
             installed: true,
         },
         Err(err) => InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Cursor,
             success: false,
             message: err,
@@ -503,6 +501,7 @@ fn install_vscode(home: &Path) -> InstallIntegrationResult {
     let vscode_ext_dir = home.join(".vscode/extensions");
     match install_vscode_style_extension(&vscode_ext_dir) {
         Ok(path) => InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Vscode,
             success: true,
             message: format!(
@@ -512,6 +511,7 @@ fn install_vscode(home: &Path) -> InstallIntegrationResult {
             installed: true,
         },
         Err(err) => InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Vscode,
             success: false,
             message: err,
@@ -527,6 +527,7 @@ fn install_browser(home: &Path) -> InstallIntegrationResult {
         .filter(|path| is_executable_file(path));
     let Some(host_bin) = refreshed.or_else(|| locate_browser_host_binary(home)) else {
         return InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Browser,
             success: false,
             message: "Lyn browser host binary ('lyn-browser-host') not found or is not executable."
@@ -600,6 +601,7 @@ fn install_browser(home: &Path) -> InstallIntegrationResult {
         if registered_count == 0 {
             let detail = fallback_error.map(|e| format!(": {e}")).unwrap_or_default();
             return InstallIntegrationResult {
+                configuration_revision: None,
                 id: IntegrationId::Browser,
                 success: false,
                 message: format!(
@@ -614,6 +616,7 @@ fn install_browser(home: &Path) -> InstallIntegrationResult {
     let unpacked_dir = home.join(".local/share/lyn/integrations/browser");
     if let Err(e) = fs::create_dir_all(&unpacked_dir) {
         return InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Browser,
             success: false,
             message: format!("Failed to create browser companion directory: {e}"),
@@ -622,6 +625,7 @@ fn install_browser(home: &Path) -> InstallIntegrationResult {
     }
     if let Err(e) = fs::write(unpacked_dir.join("manifest.json"), BROWSER_MANIFEST_JSON) {
         return InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Browser,
             success: false,
             message: format!("Failed to write extension manifest: {e}"),
@@ -630,6 +634,7 @@ fn install_browser(home: &Path) -> InstallIntegrationResult {
     }
     if let Err(e) = fs::write(unpacked_dir.join("background.js"), BROWSER_BACKGROUND_JS) {
         return InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Browser,
             success: false,
             message: format!("Failed to write extension background script: {e}"),
@@ -638,6 +643,7 @@ fn install_browser(home: &Path) -> InstallIntegrationResult {
     }
     if let Err(e) = fs::write(unpacked_dir.join("sanitize.js"), BROWSER_SANITIZE) {
         return InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Browser,
             success: false,
             message: format!("Failed to write extension sanitize script: {e}"),
@@ -649,6 +655,7 @@ fn install_browser(home: &Path) -> InstallIntegrationResult {
         BROWSER_FIREFOX_MANIFEST_JSON,
     ) {
         return InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Browser,
             success: false,
             message: format!("Failed to write Firefox extension manifest: {e}"),
@@ -657,6 +664,7 @@ fn install_browser(home: &Path) -> InstallIntegrationResult {
     }
 
     InstallIntegrationResult {
+        configuration_revision: None,
         id: IntegrationId::Browser,
         success: true,
         message: format!(
@@ -672,6 +680,7 @@ fn install_kitty(home: &Path) -> InstallIntegrationResult {
     let kitty_dir = home.join(".config/kitty");
     if let Err(e) = fs::create_dir_all(&kitty_dir) {
         return InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Kitty,
             success: false,
             message: format!("Failed to create kitty config directory: {e}"),
@@ -682,6 +691,7 @@ fn install_kitty(home: &Path) -> InstallIntegrationResult {
     let watcher_file = kitty_dir.join("lyn_context_watcher.py");
     if let Err(e) = fs::write(&watcher_file, KITTY_WATCHER_PY) {
         return InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Kitty,
             success: false,
             message: format!("Failed to write watcher script: {e}"),
@@ -691,6 +701,7 @@ fn install_kitty(home: &Path) -> InstallIntegrationResult {
     let capture_file = kitty_dir.join("lyn_capture.py");
     if let Err(e) = fs::write(&capture_file, KITTY_CAPTURE_PY) {
         return InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Kitty,
             success: false,
             message: format!("Failed to write capture kitten: {e}"),
@@ -718,6 +729,7 @@ fn install_kitty(home: &Path) -> InstallIntegrationResult {
     }
     if changed && let Err(e) = fs::write(&conf_file, new_content) {
         return InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Kitty,
             success: false,
             message: format!("Failed to update kitty.conf: {e}"),
@@ -726,6 +738,7 @@ fn install_kitty(home: &Path) -> InstallIntegrationResult {
     }
 
     InstallIntegrationResult {
+        configuration_revision: None,
         id: IntegrationId::Kitty,
         success: true,
         message:
@@ -738,6 +751,7 @@ fn install_kitty(home: &Path) -> InstallIntegrationResult {
 fn install_shell(home: &Path) -> InstallIntegrationResult {
     if let Err(e) = write_shell_bootstrap(home) {
         return InstallIntegrationResult {
+            configuration_revision: None,
             id: IntegrationId::Shell,
             success: false,
             message: format!("Failed to write shell bootstrap script: {e}"),
@@ -769,6 +783,7 @@ fn install_shell(home: &Path) -> InstallIntegrationResult {
                 Ok(c) => c,
                 Err(e) => {
                     return InstallIntegrationResult {
+                        configuration_revision: None,
                         id: IntegrationId::Shell,
                         success: false,
                         message: format!("Failed to read ~/.bashrc: {e}"),
@@ -781,6 +796,7 @@ fn install_shell(home: &Path) -> InstallIntegrationResult {
                 updated.push_str(&snippet);
                 if let Err(e) = fs::write(&bashrc, updated) {
                     return InstallIntegrationResult {
+                        configuration_revision: None,
                         id: IntegrationId::Shell,
                         success: false,
                         message: format!("Failed to write ~/.bashrc: {e}"),
@@ -795,6 +811,7 @@ fn install_shell(home: &Path) -> InstallIntegrationResult {
                 Ok(c) => c,
                 Err(e) => {
                     return InstallIntegrationResult {
+                        configuration_revision: None,
                         id: IntegrationId::Shell,
                         success: false,
                         message: format!("Failed to read ~/.zshrc: {e}"),
@@ -807,6 +824,7 @@ fn install_shell(home: &Path) -> InstallIntegrationResult {
                 updated.push_str(&snippet);
                 if let Err(e) = fs::write(&zshrc, updated) {
                     return InstallIntegrationResult {
+                        configuration_revision: None,
                         id: IntegrationId::Shell,
                         success: false,
                         message: format!("Failed to write ~/.zshrc: {e}"),
@@ -820,6 +838,7 @@ fn install_shell(home: &Path) -> InstallIntegrationResult {
         // Neither exists: create intended startup file (~/.bashrc)
         if let Err(e) = fs::write(&bashrc, &snippet) {
             return InstallIntegrationResult {
+                configuration_revision: None,
                 id: IntegrationId::Shell,
                 success: false,
                 message: format!("Failed to create ~/.bashrc: {e}"),
@@ -830,6 +849,7 @@ fn install_shell(home: &Path) -> InstallIntegrationResult {
     }
 
     InstallIntegrationResult {
+        configuration_revision: None,
         id: IntegrationId::Shell,
         success: true,
         message: format!(
@@ -843,6 +863,7 @@ fn install_shell(home: &Path) -> InstallIntegrationResult {
 #[cfg(test)]
 mod tests {
     #[test]
+    #[cfg(not(lyn_gnome_native_embedded))]
     fn unavailable_gnome_installation_refuses_without_creating_files() {
         let root = tempfile::tempdir().unwrap();
         let result = super::install_integration_by_id(

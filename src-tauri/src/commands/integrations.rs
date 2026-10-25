@@ -105,7 +105,7 @@ pub(crate) async fn manage_gnome_activation(
 }
 
 #[tauri::command]
-pub(crate) fn install_integration(
+pub(crate) async fn install_integration(
     input: serde_json::Value,
 ) -> CommandResult<InstallIntegrationResult> {
     #[cfg(not(target_os = "linux"))]
@@ -124,8 +124,19 @@ pub(crate) fn install_integration(
             return CommandResult::failure(validation_error("input"));
         };
         let home = user_home_dir();
-        let result = install_integration_by_id(&home, input);
-        CommandResult::success(result)
+        match tauri::async_runtime::spawn_blocking(move || install_integration_by_id(&home, input))
+            .await
+        {
+            Ok(result) => CommandResult::success(result),
+            Err(_) => CommandResult::failure(AppError {
+                code: ErrorCode::InternalError,
+                message:
+                    "Installation could not be completed. Refresh its status before acting again."
+                        .into(),
+                retryable: false,
+                details: ErrorDetails::default(),
+            }),
+        }
     }
 }
 
@@ -171,7 +182,8 @@ mod tests {
 
     #[test]
     fn install_integration_rejects_malformed_input() {
-        let result = install_integration(json!({ "id": "unknown_tool" }));
+        let result =
+            tauri::async_runtime::block_on(install_integration(json!({ "id": "unknown_tool" })));
         assert!(matches!(result, CommandResult::Failure { .. }));
     }
 }

@@ -6,6 +6,7 @@ pub(crate) mod artifact;
 mod availability;
 mod coordinator;
 mod directories;
+pub(crate) mod installation;
 mod lock;
 mod managed;
 pub(crate) mod management;
@@ -231,6 +232,23 @@ mod tests {
         let artifact = private_native_artifact();
         let result = coordinator::prepare_private(root, &artifact).unwrap();
         assert_eq!(result.definition, service::DefinitionState::NeedsReload);
+        let expected = result.revision.clone();
+        let receipt = installation::result(Ok(result));
+        assert!(receipt.success && !receipt.installed);
+        assert_eq!(
+            receipt.configuration_revision.as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(
+            expected,
+            service::OwnedActivation::open(
+                &root.join("state"),
+                &root.join("units/gnome-terminal-server.service.d")
+            )
+            .unwrap()
+            .management_revision()
+            .unwrap()
+        );
         for checkpoint in 1..=4 {
             let result = coordinator::recover_interrupted_private(root, checkpoint).unwrap();
             assert_eq!(result.definition, service::DefinitionState::NeedsReload);

@@ -191,6 +191,20 @@ fn compose(
     }
 }
 
+// Advisory preparation offer only. The explicit installer verifies the stock
+// manager and ownership again before writing; no compatibility RPC here.
+fn can_prepare(
+    bundle: bool,
+    detected: bool,
+    files: ActivationFilesState,
+    phase: GnomeActivationPhase,
+) -> bool {
+    bundle
+        && detected
+        && files == ActivationFilesState::Absent
+        && phase == GnomeActivationPhase::Absent
+}
+
 pub(crate) fn observe(home: &Path, connection: NativeConnectionStatus) -> IntegrationStatus {
     let data = std::env::var_os("XDG_DATA_HOME");
     let config = std::env::var_os("XDG_CONFIG_HOME");
@@ -214,18 +228,71 @@ pub(crate) fn observe(home: &Path, connection: NativeConnectionStatus) -> Integr
             std::fs::metadata(path)
                 .is_ok_and(|file| file.is_file() && file.uid() == 0 && file.mode() & 0o022 == 0)
         });
+    let offered = can_prepare(
+        super::artifact::embedded().ok().flatten().is_some(),
+        detected,
+        files,
+        activation.phase,
+    );
     let mut status = compose(files, connection, detected);
-    status
+    let evidence = status
         .native
         .as_mut()
-        .expect("GNOME evidence is always present")
-        .activation = Some(activation);
+        .expect("GNOME evidence is always present");
+    evidence.can_install = offered;
+    evidence.activation = Some(activation);
     status
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_install_offer_requires_a_bundle_detected_server_and_absent_authority() {
+        use GnomeActivationPhase as Phase;
+        assert!(can_prepare(
+            true,
+            true,
+            ActivationFilesState::Absent,
+            Phase::Absent
+        ));
+        assert!(!can_prepare(
+            false,
+            true,
+            ActivationFilesState::Absent,
+            Phase::Absent
+        ));
+        assert!(!can_prepare(
+            true,
+            false,
+            ActivationFilesState::Absent,
+            Phase::Absent
+        ));
+        for phase in [
+            Phase::Configured,
+            Phase::Installing,
+            Phase::Removing,
+            Phase::AwaitingRemovalConfirmation,
+            Phase::Changed,
+            Phase::Unavailable,
+        ] {
+            assert!(!can_prepare(
+                true,
+                true,
+                ActivationFilesState::Absent,
+                phase
+            ));
+        }
+        for files in [
+            ActivationFilesState::Owned,
+            ActivationFilesState::Pending,
+            ActivationFilesState::Changed,
+            ActivationFilesState::Unavailable,
+        ] {
+            assert!(!can_prepare(true, true, files, Phase::Absent));
+        }
+    }
 
     #[test]
     fn lifecycle_inspection_distinguishes_owned_intents_without_advancing_them() {

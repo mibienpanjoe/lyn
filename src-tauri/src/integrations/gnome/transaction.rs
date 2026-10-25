@@ -288,6 +288,10 @@ impl<'a> ActivationTransaction<'a> {
         })
     }
 
+    pub(super) fn check_lock(&self) -> io::Result<()> {
+        self.lock.check()
+    }
+
     fn directory(&self, place: Place) -> &ManagedDirectory {
         match place {
             Place::State => self.state,

@@ -188,4 +188,4 @@ export type IntegrationStatus = { id: IntegrationId, name: string, description: 
 
 export type InstallIntegrationInput = { id: IntegrationId, };
 
-export type InstallIntegrationResult = { id: IntegrationId, success: boolean, message: string, installed: boolean, };
+export type InstallIntegrationResult = { configurationRevision?: string, id: IntegrationId, success: boolean, message: string, installed: boolean, };
