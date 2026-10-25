@@ -40,6 +40,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libvte-2.91-dev gnome-terminal xvfb xauth xdotool x11-utils python3-gi gir1.2-gtk-3.0 gir1.2-atspi-2.0 openbox bubblewrap tesseract-ocr tesseract-ocr-eng
 
+      - name: Protect the reference D-Bus activation directories
+        if: matrix.id == 'linux'
+        # runner-images/configure-system.sh makes /usr/share world-writable.
+        # Restore only this fixed ancestor chain on the disposable CI host;
+        # production admission must keep refusing writable system parents.
+        run: sudo chmod go-w /usr/share /usr/share/dbus-1 /usr/share/dbus-1/services
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10.28.0
