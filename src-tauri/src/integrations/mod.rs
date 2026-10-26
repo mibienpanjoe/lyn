@@ -335,9 +335,23 @@ fn browser_host_path(home: &Path) -> PathBuf {
     home.join(".local/share/lyn/bin/lyn-browser-host")
 }
 
+fn create_helper_directory(path: &Path) -> std::io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    // A permissive desktop umask must not create a group-writable ancestor
+    // that the native activation boundary correctly refuses. Existing
+    // directories retain their permissions; refresh never repairs ownership.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path)
+}
+
 fn replace_helper_symlink(dest: &Path, current_exe: &Path) -> std::io::Result<PathBuf> {
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
+        create_helper_directory(parent)?;
     }
     if dest.symlink_metadata().is_ok() {
         fs::remove_file(dest)?;
@@ -354,7 +368,7 @@ fn replace_helper_symlink(dest: &Path, current_exe: &Path) -> std::io::Result<Pa
 fn write_shell_bootstrap(home: &Path) -> std::io::Result<PathBuf> {
     let script_file = shell_bootstrap_path(home);
     if let Some(parent) = script_file.parent() {
-        fs::create_dir_all(parent)?;
+        create_helper_directory(parent)?;
     }
     fs::write(&script_file, SHELL_BOOTSTRAP_SH)?;
     Ok(script_file)
@@ -862,6 +876,46 @@ fn install_shell(home: &Path) -> InstallIntegrationResult {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[cfg(unix)]
+    fn fresh_helper_directories_are_protected_for_native_activation() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        refresh_shell_helper(home.path(), Path::new("/usr/bin/lyn")).unwrap();
+        refresh_browser_host(home.path(), Path::new("/usr/bin/lyn")).unwrap();
+        for relative in [
+            ".local/share/lyn",
+            ".local/share/lyn/bin",
+            ".local/share/lyn/shell",
+        ] {
+            assert_eq!(
+                fs::metadata(home.path().join(relative))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o022,
+                0,
+                "helper directory must not prevent native activation: {relative}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn helper_refresh_preserves_existing_directory_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let directory = home.path().join(".local/share/lyn");
+        fs::create_dir_all(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o775)).unwrap();
+        refresh_shell_helper(home.path(), Path::new("/usr/bin/lyn")).unwrap();
+        refresh_browser_host(home.path(), Path::new("/usr/bin/lyn")).unwrap();
+        assert_eq!(
+            fs::metadata(directory).unwrap().permissions().mode() & 0o777,
+            0o775
+        );
+    }
+
     #[test]
     #[cfg(not(lyn_gnome_native_embedded))]
     fn unavailable_gnome_installation_refuses_without_creating_files() {
