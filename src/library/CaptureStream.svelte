@@ -17,7 +17,6 @@
     query?: string;
     language?: LanguageSetting;
     copyFeedback?: { id: string; state: 'copied' | 'failed' } | null;
-    oldestFirst?: boolean;
     pendingDeleteId?: string | null;
     deleteBusy?: boolean;
     onselect: (capture: CaptureSummary) => void;
@@ -34,7 +33,6 @@
     query = '',
     language = 'english',
     copyFeedback = null,
-    oldestFirst = false,
     pendingDeleteId = null,
     deleteBusy = false,
     onselect,
@@ -43,9 +41,8 @@
     oncanceldelete,
     onconfirmdelete,
   }: Props = $props();
-  // Captures arrive newest first; the conversation view reads oldest to newest.
-  const ordered = $derived(oldestFirst ? [...captures].reverse() : captures);
-  const groups = $derived(groupByLocalDay(ordered));
+  // Preserve backend chronology for browsing and backend ranking for search.
+  const groups = $derived(groupByLocalDay(captures));
   const t = $derived(getTranslations(language));
 
   // Row excerpts are truncated, so the owning page resolves the exact body.

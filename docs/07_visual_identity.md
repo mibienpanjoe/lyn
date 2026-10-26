@@ -563,6 +563,11 @@ No save-success screen is shown. Durable success returns the user to the previou
 
 ### Library — Recent and All captures
 
+Browsing streams display the newest captures at the top, from newest to oldest.
+Open or refreshed streams start at the top; loading earlier captures appends them
+below the existing rows without moving the reader’s scroll position. Search
+preserves the backend result ranking.
+
 ```text
 ┌───────────────┬──────────────────────────┬─────────────────────┐
 │ Navigation    │ Chronological stream     │ Detail (wide only)  │

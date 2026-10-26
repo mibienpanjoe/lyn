@@ -319,14 +319,31 @@ describe('responsive Library', () => {
     vi.unstubAllGlobals();
   });
 
-  it('orders browsing oldest first and search newest first', async () => {
-    const older = { ...textCapture, id: 'capture-older' };
-    const newer = { ...imageCapture, id: 'capture-newer' };
+  it('keeps recent captures at the top and appends older pages below', async () => {
+    const older = {
+      ...textCapture,
+      id: 'capture-older',
+      capturedAt: '2026-08-30T10:00:00Z',
+    };
+    const newer = {
+      ...imageCapture,
+      id: 'capture-newer',
+      capturedAt: '2026-09-01T12:00:00Z',
+    };
+    const middle = {
+      ...textCapture,
+      id: 'capture-middle',
+      capturedAt: '2026-09-01T11:00:00Z',
+    };
     const client = createClient({
       // The backend always pages newest first.
       listCaptures: vi
         .fn()
-        .mockResolvedValue({ items: [newer, older], nextCursor: null }),
+        .mockResolvedValueOnce({
+          items: [newer, middle],
+          nextCursor: 'older-page',
+        })
+        .mockResolvedValue({ items: [older], nextCursor: null }),
       searchCaptures: vi.fn().mockResolvedValue({
         items: [
           { capture: newer, snippet: 'newer hit' },
@@ -342,7 +359,39 @@ describe('responsive Library', () => {
         Array.from(container.querySelectorAll('.capture-row')).map(
           (row) => row.id,
         ),
-      ).toEqual(['capture-row-capture-older', 'capture-row-capture-newer']),
+      ).toEqual(['capture-row-capture-newer', 'capture-row-capture-middle']),
+    );
+
+    const region = container.querySelector(
+      '.stream-scroll-region',
+    ) as HTMLElement;
+    expect(region.scrollTop).toBe(0);
+    const loadMore = screen.getByRole('button', {
+      name: 'Load earlier captures',
+    });
+    const newestRow = container.querySelector('.capture-row')!;
+    expect(
+      newestRow.compareDocumentPosition(loadMore) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    region.scrollTop = 75;
+    await fireEvent.click(loadMore);
+    await waitFor(() =>
+      expect(
+        Array.from(container.querySelectorAll('.capture-row')).map(
+          (row) => row.id,
+        ),
+      ).toEqual([
+        'capture-row-capture-newer',
+        'capture-row-capture-middle',
+        'capture-row-capture-older',
+      ]),
+    );
+    expect(region.scrollTop).toBe(75);
+    expect(client.listCaptures).toHaveBeenLastCalledWith(
+      { kind: 'recent' },
+      { branchName: null },
+      'older-page',
     );
 
     await fireEvent.click(screen.getByRole('button', { name: 'Search' }));

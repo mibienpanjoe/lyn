@@ -99,8 +99,6 @@
   let streamScroll = $state<HTMLDivElement>();
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let copyFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
-  // Search returns a ranked answer list, so only browsing reads as a timeline.
-  const conversationOrder = $derived(!searchMode);
   let playbackTimer: ReturnType<typeof setTimeout> | undefined;
   let unlistenEnrichment: UnlistenFn | null = null;
 
@@ -214,9 +212,6 @@
     if (append) loadingMore = true;
     else loading = true;
     error = null;
-    // Older pages prepend above the viewport in the conversation order, so the
-    // pre-load height anchors the rows the reader is already looking at.
-    const heightBeforeAppend = streamScroll?.scrollHeight ?? 0;
     try {
       const cursor = append ? nextCursor : null;
       const searchQuery = query.trim();
@@ -271,17 +266,8 @@
         loading = false;
         loadingMore = false;
         await tick();
-        restoreStreamScroll(append, heightBeforeAppend);
+        if (!append && streamScroll) streamScroll.scrollTop = 0;
       }
-    }
-  }
-
-  function restoreStreamScroll(append: boolean, heightBeforeAppend: number) {
-    if (!streamScroll || !conversationOrder) return;
-    if (append) {
-      streamScroll.scrollTop += streamScroll.scrollHeight - heightBeforeAppend;
-    } else {
-      streamScroll.scrollTop = streamScroll.scrollHeight;
     }
   }
 
@@ -647,15 +633,6 @@
             {/if}
           </div>
         {:else}
-          {#if nextCursor && conversationOrder}
-            <button
-              class="load-more-button load-older-button"
-              type="button"
-              disabled={loadingMore}
-              onclick={() => loadCaptures(true)}
-              >{loadingMore ? 'Loading…' : t.loadEarlier}</button
-            >
-          {/if}
           <CaptureStream
             {captures}
             selectedId={selectedSummaryId}
@@ -663,7 +640,6 @@
             query={searchMode ? query.trim() : ''}
             language={currentLanguage}
             {copyFeedback}
-            oldestFirst={conversationOrder}
             {pendingDeleteId}
             {deleteBusy}
             onselect={inspectCapture}
@@ -672,13 +648,17 @@
             oncanceldelete={() => (pendingDeleteId = null)}
             onconfirmdelete={(capture) => void removeCapture(capture.id)}
           />
-          {#if nextCursor && !conversationOrder}
+          {#if nextCursor}
             <button
               class="load-more-button"
               type="button"
               disabled={loadingMore}
               onclick={() => loadCaptures(true)}
-              >{loadingMore ? 'Loading…' : 'Load more'}</button
+              >{loadingMore
+                ? 'Loading…'
+                : searchMode
+                  ? 'Load more'
+                  : t.loadEarlier}</button
             >
           {/if}
         {/if}
