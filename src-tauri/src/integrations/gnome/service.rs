@@ -1,6 +1,7 @@
 //! Read-only compatibility and explicit guarded definition synchronization.
 //! Never starts, stops or restarts a service.
 
+mod generated;
 mod overrides;
 mod owned;
 pub(super) use owned::OwnedActivation;
@@ -677,6 +678,7 @@ fn synchronize_verified(
     )?;
     ordinary_manager_uid(&reply, unsafe { libc::geteuid() })?;
     let target = std::path::Path::new(owned.paths().1).parent();
+    let generated = generated::GeneratedRoots::existing();
     let before = inspect_connected(&connection, &budget, &manager, Some(owned), target)?;
     let expected = if owned.is_retired() {
         DefinitionState::Stock
@@ -698,6 +700,9 @@ fn synchronize_verified(
     }
     // Recheck caller-owned lock/module evidence after the final D-Bus fence too.
     before_reload()?;
+    if let Some(generated) = &generated {
+        generated.recheck()?;
+    }
     let reply = call_capped(
         &connection,
         &budget,
@@ -715,7 +720,17 @@ fn synchronize_verified(
     if after.definition != expected {
         return Err(ServiceRefusal::Changed);
     }
-    before.recheck_files(&after.paths, owned)?;
+    before.vendor.recheck()?;
+    before.executable.recheck()?;
+    before.activation.recheck()?;
+    if before.paths != after.paths {
+        return Err(ServiceRefusal::Changed);
+    }
+    before
+        .disk
+        .recheck_after_reload(&after.disk, generated.as_ref())?;
+    owned.recheck().map_err(|_| ServiceRefusal::Changed)?;
+    after.recheck(&connection, &budget, &manager, owned)?;
     on_verified(&connection, &budget, &manager, &after)?;
     budget.remaining()?;
     Ok(Synchronized {

@@ -107,8 +107,8 @@ def enter(root, leaf_fd):
     environment = {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "XDG_RUNTIME_DIR": control["runtime"],
                    "XDG_CONFIG_HOME": str(root / "config"), "XDG_DATA_HOME": str(root / "data"),
                    "XDG_CACHE_HOME": str(root / "cache"), "DBUS_SESSION_BUS_ADDRESS": control["address"],
-                   "SYSTEMD_UNIT_PATH": str(root / "units") + ":/usr/lib/systemd/user",
-                   "SYSTEMD_GENERATOR_PATH": str(root / "empty"), "SYSTEMD_ENVIRONMENT_GENERATOR_PATH": str(root / "empty")}
+                   "SYSTEMD_UNIT_PATH": str(root / "units") + ":" + str(Path(control["runtime"]) / "systemd/generator.late") + ":/usr/lib/systemd/user",
+                   "SYSTEMD_GENERATOR_PATH": str(root / "generators"), "SYSTEMD_ENVIRONMENT_GENERATOR_PATH": str(root / "empty")}
     for key, value in environment.items():
         args += ["--setenv", key, value]
     args += ["--chdir", str(root / "home"), "/usr/bin/python3", str(root / "probe.py"), "--inner", str(root)]
@@ -198,6 +198,10 @@ def main(executable, module):
             runtime.mkdir(mode=0o700)
             for name_dir in ("home", "config", "data", "cache", "units", "empty"):
                 (root / name_dir).mkdir(mode=0o700)
+            (root / "generators").mkdir(mode=0o700)
+            generator = root / "generators/lyn-witness"
+            generator.write_text("#!/bin/sh\nprintf '[Unit]\\nDescription=Lyn generated witness\\n[Service]\\nExecStart=/usr/bin/true\\n' > \"$3/lyn-unrelated.service\"\n")
+            generator.chmod(0o700)
             (root / "units/lyn-private.target").write_text("[Unit]\nDescription=Lyn private manager fixture\nDefaultDependencies=no\nRequires=dbus.socket dbus.service\nAfter=dbus.socket dbus.service\n")
             (root / "units/dbus.socket").write_text(f"[Unit]\nDefaultDependencies=no\n[Socket]\nListenStream={runtime}/session-bus\nSocketMode=0600\n")
             (root / "units/dbus.service").write_text(f"[Unit]\nDefaultDependencies=no\nRequires=dbus.socket\nAfter=dbus.socket\n[Service]\nSlice=-.slice\nExecStart=/usr/bin/dbus-daemon --config-file={runtime_root}/session.conf --address=systemd: --nofork --nopidfile\n")
@@ -281,13 +285,24 @@ def main(executable, module):
                                    "LYN_PRIVATE_NATIVE_ACTIVATION_MODULE": str(module)}
                     digest = hashlib.sha256(module.read_bytes()).hexdigest()
                     stored = root / "state/modules" / digest / module.name
+                    generated_rotations = 0
                     for action, expected in (("prepare-live-manager", "managed"), ("synchronize", "managed"),
                                              ("synchronize", "managed"), ("remove", "stock"),
                                              ("synchronize", "stock"), ("synchronize", "stock"),
                                              ("acknowledge-remove", "stock"), ("acknowledge-remove", "stock")):
                         test_environment = dict(environment, LYN_PRIVATE_NATIVE_FILE_ACTION=action, LYN_PRIVATE_SYNC_EXPECTED=expected)
-                        subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry", "--test-threads=1", "--nocapture"],
-                                       env=test_environment, check=True, timeout=8)
+                        generated = runtime / "systemd/generator.late"
+                        previous_identity = (generated.stat().st_dev, generated.stat().st_ino)
+                        previous_content = (generated / "lyn-unrelated.service").read_bytes()
+                        print("generator_before", action, generated.stat().st_ino, generated.stat().st_mtime_ns, flush=True)
+                        result = subprocess.run([str(executable), "--exact", "integrations::gnome::tests::native_lifecycle_fixture_entry", "--test-threads=1", "--nocapture"],
+                                       env=test_environment, check=False, timeout=8)
+                        print("generator_after", action, generated.stat().st_ino, generated.stat().st_mtime_ns, "returncode", result.returncode, flush=True)
+                        require(result.returncode == 0, "generator-aware lifecycle refused")
+                        require((generated / "lyn-unrelated.service").read_bytes() == previous_content, "generated witness content changed")
+                        if (generated.stat().st_dev, generated.stat().st_ino) != previous_identity:
+                            require(action == "synchronize", "unexpected generator rotation outside Reload")
+                            generated_rotations += 1
                         require(property_value(manager + ".Unit", "ActiveState") == "(<'inactive'>,)", "GNOME service unexpectedly activated")
                         definition = property_value(manager + ".Service", "ExecStart")
                         managed = str(root / "state") in definition
@@ -299,6 +314,7 @@ def main(executable, module):
                         if action == "acknowledge-remove":
                             require(not (root / "state/uninstall-retired-v1.json").exists(), "retirement authority still present")
                         print("real_manager_lifecycle", action, flush=True)
+                    require(generated_rotations == 2, "expected generator rotation for exactly two coordinator reloads")
                     reference.close_sync(None)
                     (root / "stop").touch(exist_ok=False)
                     child.wait(timeout=5)

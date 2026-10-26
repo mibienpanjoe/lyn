@@ -18,6 +18,7 @@ const MAX_PATHS: usize = 64;
 const MAX_ENTRIES: usize = 4096;
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Clone))]
 struct Stamp {
     device: u64,
     inode: u64,
@@ -46,6 +47,7 @@ impl From<&fs::Metadata> for Stamp {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Clone))]
 pub(super) struct Snapshot(Vec<(PathBuf, Option<Stamp>, Vec<OsString>)>);
 
 pub(super) struct OwnedDropIn {
@@ -69,6 +71,41 @@ impl OwnedDropIn {
 }
 
 impl Snapshot {
+    pub(super) fn recheck_after_reload(
+        &self,
+        current: &Self,
+        generated: Option<&super::generated::GeneratedRoots>,
+    ) -> Result<()> {
+        if let Some(generated) = generated {
+            generated.recheck()?;
+        }
+        if self.0.len() != current.0.len() {
+            return Err(ServiceRefusal::Changed);
+        }
+        for (before, after) in self.0.iter().zip(&current.0) {
+            if before == after {
+                continue;
+            }
+            if before.0 != after.0
+                || before.2 != after.2
+                || !generated.is_some_and(|roots| roots.contains(&before.0))
+            {
+                return Err(ServiceRefusal::Changed);
+            }
+            match (&before.1, &after.1) {
+                (Some(a), Some(b))
+                    if a.mode & libc::S_IFMT == libc::S_IFDIR
+                        && a.uid == unsafe { libc::geteuid() }
+                        && a.mode & 0o7022 == 0
+                        && (a.device, a.mode, a.uid, a.links, &a.resolved)
+                            == (b.device, b.mode, b.uid, b.links, &b.resolved)
+                        && a.resolved.is_none() => {}
+                _ => return Err(ServiceRefusal::Changed),
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn recheck(&self, paths: &[String], vendor: (u64, u64)) -> Result<()> {
         if self != &inspect(paths, vendor)? {
             return Err(ServiceRefusal::Changed);
@@ -258,6 +295,100 @@ pub(super) fn inspect_for(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn acknowledged_reload_accepts_only_generated_root_rotation() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let root = tempfile::tempdir().unwrap();
+        let manager = root.path().join("systemd");
+        let generated = manager.join("generator.late");
+        fs::create_dir_all(&generated).unwrap();
+        for p in [root.path(), manager.as_path(), generated.as_path()] {
+            fs::set_permissions(p, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::write(generated.join("unrelated.service"), b"unrelated").unwrap();
+        let pins = super::super::generated::GeneratedRoots::open(root.path().to_owned()).unwrap();
+        let paths = vec![generated.to_str().unwrap().to_owned()];
+        let before = inspect(&paths, (0, 0)).unwrap();
+        fs::rename(&generated, manager.join("old")).unwrap();
+        fs::create_dir(&generated).unwrap();
+        fs::set_permissions(&generated, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(generated.join("unrelated.service"), b"unrelated").unwrap();
+        let after = inspect(&paths, (0, 0)).unwrap();
+        assert_eq!(before.recheck(&paths, (0, 0)), Err(ServiceRefusal::Changed));
+        assert_eq!(
+            before.recheck_after_reload(&after, None),
+            Err(ServiceRefusal::Changed)
+        );
+        assert_eq!(before.recheck_after_reload(&after, Some(&pins)), Ok(()));
+        for mutate in [
+            (|s: &mut Stamp| s.device ^= 1) as fn(&mut Stamp),
+            |s| s.uid ^= 1,
+            |s| s.mode ^= 0o020,
+            |s| s.links += 1,
+            |s| s.mode = libc::S_IFLNK | 0o700,
+        ] {
+            let mut changed = after.clone();
+            mutate(changed.0[0].1.as_mut().unwrap());
+            assert_eq!(
+                before.recheck_after_reload(&changed, Some(&pins)),
+                Err(ServiceRefusal::Changed)
+            );
+        }
+        let mut absent = after.clone();
+        absent.0[0].1 = None;
+        assert_eq!(
+            before.recheck_after_reload(&absent, Some(&pins)),
+            Err(ServiceRefusal::Changed)
+        );
+        assert_eq!(
+            absent.recheck_after_reload(&after, Some(&pins)),
+            Err(ServiceRefusal::Changed)
+        );
+        fs::write(generated.join("new.service"), b"new").unwrap();
+        assert_eq!(
+            before.recheck_after_reload(&inspect(&paths, (0, 0)).unwrap(), Some(&pins)),
+            Err(ServiceRefusal::Changed)
+        );
+        fs::remove_file(generated.join("new.service")).unwrap();
+        fs::set_permissions(&generated, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            before.recheck_after_reload(&inspect(&paths, (0, 0)).unwrap(), Some(&pins)),
+            Err(ServiceRefusal::Changed)
+        );
+        fs::set_permissions(&generated, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::create_dir(generated.join(DROP_INS[0])).unwrap();
+        fs::write(
+            generated.join(DROP_INS[0]).join("foreign.conf"),
+            b"override",
+        )
+        .unwrap();
+        assert_eq!(inspect(&paths, (0, 0)), Err(ServiceRefusal::Unsupported));
+        fs::remove_file(generated.join(DROP_INS[0]).join("foreign.conf")).unwrap();
+        fs::remove_dir(generated.join(DROP_INS[0])).unwrap();
+        fs::write(generated.join(super::super::UNIT), b"override").unwrap();
+        assert_eq!(inspect(&paths, (0, 0)), Err(ServiceRefusal::Unsupported));
+        fs::remove_file(generated.join(super::super::UNIT)).unwrap();
+        fs::rename(&generated, manager.join("replacement")).unwrap();
+        symlink(manager.join("replacement"), &generated).unwrap();
+        assert_eq!(inspect(&paths, (0, 0)), Err(ServiceRefusal::Unsupported));
+    }
+
+    #[test]
+    fn ordinary_unit_root_rotation_remains_refused_after_reload() {
+        let root = tempfile::tempdir().unwrap();
+        let units = root.path().join("units");
+        fs::create_dir(&units).unwrap();
+        let paths = vec![units.to_str().unwrap().to_owned()];
+        let before = inspect(&paths, (0, 0)).unwrap();
+        fs::rename(&units, root.path().join("old")).unwrap();
+        fs::create_dir(&units).unwrap();
+        let after = inspect(&paths, (0, 0)).unwrap();
+        assert_eq!(
+            before.recheck_after_reload(&after, None),
+            Err(ServiceRefusal::Changed)
+        );
+    }
 
     #[test]
     fn only_the_pinned_owned_drop_in_is_allowed_and_fenced() {
