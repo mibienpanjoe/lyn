@@ -94,4 +94,21 @@ mod tests {
         symlink(root.path().join("old"), root.path().join("systemd")).unwrap();
         assert_eq!(pin.recheck(), Err(ServiceRefusal::Changed));
     }
+
+    #[test]
+    fn replacement_runtime_does_not_inherit_the_reload_exception() {
+        let parent = tempfile::tempdir().unwrap();
+        fs::set_permissions(parent.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let runtime = parent.path().join("runtime");
+        fs::create_dir_all(runtime.join("systemd")).unwrap();
+        for path in [&runtime, &runtime.join("systemd")] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let pin = GeneratedRoots::open(runtime.clone()).unwrap();
+        fs::rename(&runtime, parent.path().join("old")).unwrap();
+        fs::create_dir_all(runtime.join("systemd")).unwrap();
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(runtime.join("systemd"), fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(pin.recheck(), Err(ServiceRefusal::Changed));
+    }
 }
