@@ -49,8 +49,11 @@ def main():
     parser.add_argument('--previous-deb', type=Path)
     parser.add_argument('--guard-only', action='store_true')
     parser.add_argument('--check-reopen', action='store_true')
+    parser.add_argument('--check-project-delete', action='store_true')
     args = parser.parse_args()
     previous = [args.previous_receipt, args.previous_portable, args.previous_deb]
+    if args.check_project_delete and any(previous):
+        parser.error('Project deletion reception requires one current package, without previous-package inputs')
     if any(previous) and not all(previous):
         parser.error('Supply all three previous-package inputs together')
     packages = [read_packages(args.receipt, args.portable, args.deb)]
@@ -81,7 +84,7 @@ def main():
                          'desktop_lifecycle.py', 'packaged_gui_pixels.py', 'packaged_gui_guard.py', 'packaged_gui_runtime.py',
                          'desktop-a11y.conf', 'desktop-openbox.xml'):
                 shutil.copyfile(ROOT / 'prototype' / name, output / name)
-            control = dict(runs=runs, uid=os.getuid(), gid=os.getgid(),
+            control = dict(runs=runs, checkProjectDelete=args.check_project_delete, uid=os.getuid(), gid=os.getgid(),
                            home=str(user_home), homeIdentity=identity(user_home), checkout=str(REPO),
                            tmpIdentity=identity(Path('/tmp')), runIdentity=identity(Path('/run')),
                            varlibIdentity=identity(Path('/var/lib')),

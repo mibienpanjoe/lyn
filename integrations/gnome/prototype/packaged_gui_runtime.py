@@ -299,6 +299,40 @@ def main():
                                   'captureCount': len(previous_rows), 'preservedPreviousData': step > 0}), flush=True)
             stop_app()
             assert snapshot() == (previous_rows, previous_contexts), 'Stopping changed accepted capture/context data'
+        if control.get('checkProjectDelete'):
+            # Seed one empty project only in this already-admitted private DB,
+            # with the app stopped. The deletion itself must use release IPC/UI.
+            project_id = 'b2fd16fa-9650-4a20-92d9-9200949a1952'
+            folder = root / 'empty-project'
+            folder.mkdir(mode=0o700)
+            marker = folder / 'keep.txt'
+            marker.write_text('keep project folder')
+            with sqlite3.connect(database) as db:
+                db.execute("INSERT INTO contexts (id,kind,name,project_path,created_at,updated_at) VALUES (?,'project','Package empty project',?,'2026-10-26T00:00:00Z','2026-10-26T00:00:00Z')", (project_id,str(folder)))
+            before_delete = snapshot()
+            assert before_delete[0] == previous_rows
+            with (control_path.parent / 'project-delete-app.log').open('w') as log:
+                app = start([str(executable)], cwd=control_path.parent, stdout=log, stderr=subprocess.STDOUT)
+                applications.append(app)
+                pin = _pin_owned_app(app, executable, root / 'runtime', expected_cwd=control_path.parent)
+                assert wait(lambda: button('Package empty project'), 'Empty project absent').do_action(0)
+                wait(lambda: page_heading(nodes(), 'Package empty project'), 'Project did not open')
+                assert wait(lambda: button('Delete project'), 'Project deletion action absent').do_action(0)
+                wait(lambda: contains('Remove “Package empty project”'), 'Named confirmation absent')
+                assert snapshot() == before_delete, 'Opening confirmation mutated data'
+                assert button('Cancel').do_action(0)
+                wait(lambda: button('Delete project'), 'Cancel did not restore action')
+                assert snapshot() == before_delete, 'Cancel mutated data'
+                assert button('Delete project').do_action(0)
+                assert wait(lambda: button('Delete'), 'Delete confirmation absent').do_action(0)
+                wait(lambda: snapshot() == (previous_rows, previous_contexts), 'Project deletion changed wrong data')
+                wait(lambda: button('Package empty project') is None and page_heading(nodes(), 'Recent'), 'Deleted project remained in navigation')
+                assert marker.read_text() == 'keep project folder'
+                screenshot('project-deleted.png', wait(lambda: painted('Recent', bodies[-1]), 'Library did not paint after project deletion'))
+                print(json.dumps({'check':'packaged_project_delete', 'cancelUnchanged':True, 'releaseIpc':True,
+                                  'projectRemoved':True, 'previousDataUnchanged':True, 'folderPreserved':True}), flush=True)
+            stop_app()
+            assert snapshot() == (previous_rows, previous_contexts)
     except BaseException:
         if app is not None and app.poll() is None:
             try:
