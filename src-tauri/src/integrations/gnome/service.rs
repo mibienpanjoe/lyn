@@ -1063,4 +1063,23 @@ mod tests {
         }
         assert_eq!(inspect_unmodified_service(), Ok(()));
     }
+
+    #[test]
+    fn reference_owned_service_read_only_opt_in() {
+        if std::env::var_os("LYN_GNOME_OWNED_SERVICE_READ_ONLY_TEST").is_none() {
+            return;
+        }
+        let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+        let (state, target) = super::super::status::locations(
+            &home,
+            std::env::var_os("XDG_DATA_HOME").as_deref(),
+            std::env::var_os("XDG_CONFIG_HOME").as_deref(),
+        )
+        .unwrap();
+        let owned = OwnedActivation::open(&state, &target).unwrap();
+        assert_eq!(
+            inspect_owned_service(&owned),
+            Ok(DefinitionState::ManagedLoaded)
+        );
+    }
 }
