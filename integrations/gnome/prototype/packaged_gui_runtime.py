@@ -252,6 +252,48 @@ def main():
                     wait(lambda: painted('Recent', retained), 'Saved or retained note did not paint')
                 screenshot(prefix + 'saved-library.png', wait(lambda: painted('Recent', body), 'Library heading/note did not paint'))
                 assert snapshot() == accepted, 'Rendering changed accepted capture/context data'
+                if run.get('checkReopen'):
+                    publication = Path(environment['XDG_RUNTIME_DIR']) / 'lyn-gnome-v1.current'
+                    publication_before = (publication.stat().st_ino, publication.read_bytes())
+                    def relaunch():
+                        duplicate = start([str(executable), '--reopen-probe', '/untrusted/path'],
+                                          cwd=control_path.parent, stdout=log, stderr=subprocess.STDOUT)
+                        applications.append(duplicate)
+                        duplicate_pin = os.pidfd_open(duplicate.pid)
+                        try:
+                            assert duplicate.wait(timeout=3) == 0, 'Second launch did not exit successfully'
+                            wait(lambda: page_heading(nodes(), 'Recent'), 'Second launch did not reopen the original Library')
+                            assert app.poll() is None and snapshot() == accepted
+                            assert library_window in command('xdotool', 'search', '--onlyvisible', '--pid', str(app.pid)).split()
+                            assert (publication.stat().st_ino, publication.read_bytes()) == publication_before, 'Second launch changed native publication'
+                        finally:
+                            if duplicate.poll() is None:
+                                signal.pidfd_send_signal(duplicate_pin, signal.SIGKILL)
+                                duplicate.wait(timeout=2)
+                            os.close(duplicate_pin)
+                    command('xdotool', 'windowactivate', '--sync', library_window)
+                    command('xdotool', 'key', '--clearmodifiers', 'alt+F4')
+                    wait(lambda: not page_heading(nodes(), 'Recent'), 'Library did not close')
+                    assert app.poll() is None, 'Closing Library stopped background capture'
+                    command('xdotool', 'key', '--clearmodifiers', 'ctrl+shift+space')
+                    field = wait(lambda: named('Capture text'), 'Capture unavailable after closing Library')
+                    assert field.get_component_iface().grab_focus()
+                    draft = 'Reopen draft 7421'
+                    command('xdotool', 'type', '--clearmodifiers', '--delay', '0', draft)
+                    wait(lambda: field.get_text_iface().get_text(0, -1) == draft, 'Reopen draft not entered')
+                    relaunch()
+                    assert named('Capture text').get_text_iface().get_text(0, -1) == draft, 'Reopen replaced the active draft'
+                    assert wait(lambda: button('Cancel'), 'Draft cancellation absent').do_action(0)
+                    wait(lambda: named('Capture text') is None, 'Draft cancellation did not settle')
+                    command('xdotool', 'windowactivate', '--sync', library_window)
+                    command('xdotool', 'windowminimize', library_window)
+                    wait(lambda: '_NET_WM_STATE_HIDDEN' in command('xprop', '-id', library_window, '_NET_WM_STATE'), 'Library did not minimize')
+                    relaunch()
+                    wait(lambda: painted('Recent', body), 'Reopened Library did not paint')
+                    screenshot(prefix + 'reopened-library.png')
+                    print(json.dumps({'check': 'packaged_gui_reopen', 'sameProcess': True,
+                                      'sameWindow': True, 'dataUnchanged': True, 'publicationUnchanged': True,
+                                      'backgroundCapture': True, 'draftPreserved': True, 'minimizedReopen': True}), flush=True)
                 print(json.dumps({'check': 'packaged_gui', 'version': run['version'],
                                   'exactSave': True, 'libraryAccessible': True, 'helpersInPrivateHome': True,
                                   'captureCount': len(previous_rows), 'preservedPreviousData': step > 0}), flush=True)

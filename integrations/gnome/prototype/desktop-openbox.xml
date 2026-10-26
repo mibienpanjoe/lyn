@@ -2,6 +2,6 @@
 <openbox_config xmlns="http://openbox.org/3.4/rc">
   <focus><focusNew>yes</focusNew><followMouse>no</followMouse></focus>
   <desktops><number>1</number></desktops>
-  <keyboard/>
+  <keyboard><keybind key="A-F4"><action name="Close"/></keybind></keyboard>
   <mouse/>
 </openbox_config>

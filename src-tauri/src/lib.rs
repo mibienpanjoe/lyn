@@ -45,7 +45,18 @@ fn desktop_runtime_event(_app: &tauri::AppHandle, event: tauri::RunEvent) {
 // The private override is used only by the cfg(test) desktop fixture. The
 // production entry point always refreshes the user's normal helper location.
 fn desktop_builder(helper_root: Option<std::path::PathBuf>) -> tauri::Builder<tauri::Wry> {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        // A launch reopens the existing Library, never a second broker/session.
+        // Invocation arguments and caller paths are not context observations.
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+    let builder = builder
         .register_uri_scheme_protocol("lyn-media", |context, request| {
             let not_found = || {
                 tauri::http::Response::builder()
@@ -111,6 +122,9 @@ fn desktop_builder(helper_root: Option<std::path::PathBuf>) -> tauri::Builder<ta
             if window.label() == "capture" {
                 api.prevent_close();
                 dismiss_and_cancel_capture(window.app_handle());
+            } else if window.label() == "main" {
+                api.prevent_close();
+                let _ = window.hide();
             }
         }
     });

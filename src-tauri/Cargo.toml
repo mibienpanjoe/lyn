@@ -1,6 +1,6 @@
 [package]
 name = "lyn"
-version = "0.7.1"
+version = "0.7.2"
 description = "A local-first desktop working-memory companion"
 authors = ["Lyn contributors"]
 license = "MIT"
@@ -42,6 +42,7 @@ rusqlite = { version = "0.40", default-features = false, features = ["bundled", 
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", windows))'.dependencies]
 tauri-plugin-global-shortcut = "2.3"
+tauri-plugin-single-instance = "=2.4.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gio = "0.18"

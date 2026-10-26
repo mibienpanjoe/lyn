@@ -48,6 +48,7 @@ def main():
     parser.add_argument('--previous-portable', type=Path)
     parser.add_argument('--previous-deb', type=Path)
     parser.add_argument('--guard-only', action='store_true')
+    parser.add_argument('--check-reopen', action='store_true')
     args = parser.parse_args()
     previous = [args.previous_receipt, args.previous_portable, args.previous_deb]
     if any(previous) and not all(previous):
@@ -73,7 +74,8 @@ def main():
                 executable.write_bytes(binaries[kind])
                 executable.chmod(0o700)
                 installed.append(dict(binary=str(executable), version=receipt['version']))
-            runs = [dict(installed[index], body=f'Packaged note {7319 + step}')
+            runs = [dict(installed[index], body=f'Packaged note {7319 + step}',
+                         checkReopen=args.check_reopen and index == len(packages) - 1)
                     for step, index in enumerate(order)]
             for name in ('isolated_run.py', 'desktop_isolation.py', 'desktop_accessibility.py',
                          'desktop_lifecycle.py', 'packaged_gui_pixels.py', 'packaged_gui_guard.py', 'packaged_gui_runtime.py',

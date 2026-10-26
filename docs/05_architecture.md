@@ -1,6 +1,6 @@
 # Lyn — System Architecture
 
-Version: v1.4, 2026-09-18
+Version: v1.5, 2026-10-26
 
 Derived from: [`04_transition_req_arch.md`](04_transition_req_arch.md)
 
@@ -396,6 +396,7 @@ Success is returned only after step 6.
 
 ```text
 Tauri startup
+  → coordinate the desktop GUI instance before application setup
   → Storage Service opens application data
   → apply transactional migrations
   → Media Service performs scoped orphan reconciliation
@@ -405,6 +406,8 @@ Tauri startup
 ```
 
 If storage initialization fails, Lyn may show diagnostics and settings but MUST NOT accept captures deceptively.
+
+Closing Library hides its existing window while background capture remains available. A subsequent ordinary launch brings that same window forward without starting another capture service or provider broker, or modifying an active draft. The desktop single-instance plugin is registered first; its callback ignores launch arguments and working-directory values. Linux coordination is scoped to the session bus and does not replace the native broker’s exclusive publication/admission boundary. Shell/Native Messaging helper entry modes still dispatch before GUI startup. See ADR-012.
 
 ### Quick invocation and context preparation
 
@@ -711,3 +714,12 @@ Lyn installs a CPU-only whisper.cpp v1.9.2 engine and multilingual Whisper `base
 Concurrent GNOME Terminal startup can bind different shell helpers to the same foreground window. Neither a delay, global recency nor a terminal-server PID proves an active tab. The native GTK3/VTE adapter must instead relate widgets to native windows and PTYs without reading terminal content, while Rust attests OS identities and derives cwd/Git. Its separate fixed-width metadata protocol avoids adding a C JSON parser or accepting paths/variable payloads. Connection generations and pre-invocation topology timing reject replay, newly registered sources and A→B→A races; unresolved evidence remains manual. Existing editor/browser rejection of native IDs and Capture Service authority remain unchanged.
 
 The owning [native protocol contract](gnome_native_protocol.md) defines framing, lifecycle, timing and shell/TUI policy, and distinguishes backend proof from desktop fixture coverage. Production-policy attestation and native source/capture/Library backend integration are exercised in isolated real GNOME. The reinforced desktop popup/save/Library/focus flow has passed with its screenshot inspected. Reversible module installation, lifecycle/reconnect reliability and packaged acceptance remain required. This ADR does not claim installed GNOME automatic context is repaired or broaden Windows/macOS/Wayland support.
+
+
+### ADR-012 — One desktop GUI owner and a retained Library window
+
+**Status:** Accepted, 2026-10-26; implementation reception in progress.
+
+The existing PRD requires capture to remain available without a visible Library. Destroying its window while retaining the hidden popup leaves a process that cannot reopen Library; a second launch may then compete for shortcuts and the native broker. Closing Library therefore hides it, while the official [Tauri single-instance plugin](https://docs.rs/tauri-plugin-single-instance/2.4.0/tauri_plugin_single_instance/) routes later ordinary launches to unminimize/show/focus that same window before another instance reaches application setup. It receives no capture authority: arguments and cwd are ignored, no payload reaches the frontend, and no session is created or cancelled. Helper modes remain outside this GUI coordination.
+
+Version2.4.0 is pinned to preserve the existing Tauri2.11 dependency set. Linux coordination depends on its session bus; it is not a machine-global or cross-user lock, nor does it adopt older already-running versions without the plugin. The native broker retains its independent strict publication lease. The packaged Linux fixture checks hidden/minimized reopen, one retained PID/window/publication, background shortcut, draft preservation, exact data and helper targets. These checks do not establish Windows/macOS runtime acceptance.
