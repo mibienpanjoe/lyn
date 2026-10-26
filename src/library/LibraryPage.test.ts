@@ -113,6 +113,7 @@ function createClient(overrides: Partial<LibraryClient> = {}): LibraryClient {
       .mockResolvedValue({ playing: false, durationMs: null }),
     openMedia: vi.fn().mockResolvedValue({ opened: true }),
     deleteCapture: vi.fn().mockResolvedValue({ deleted: true }),
+    deleteProject: vi.fn().mockResolvedValue({ deleted: true }),
     ...overrides,
   };
 }
@@ -408,6 +409,211 @@ describe('responsive Library', () => {
         'capture-row-capture-older',
       ]);
     });
+  });
+
+  it('removes the selected project only after confirmation and successful persistence', async () => {
+    let finish!: (value: { deleted: boolean }) => void;
+    const deleteProject = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { container } = render(LibraryPage, {
+      client: createClient({ deleteProject }),
+    });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Lyn' }));
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete project' }),
+    );
+    expect(deleteProject).not.toHaveBeenCalled();
+    const confirm = screen.getByRole('button', { name: 'Delete' });
+    await fireEvent.click(confirm);
+    expect(deleteProject).toHaveBeenCalledExactlyOnceWith(project.id);
+    expect(confirm).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Lyn' })).toBeInTheDocument();
+    finish({ deleted: true });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Lyn' })).toBeNull(),
+    );
+    expect(screen.getByRole('heading', { name: 'Recent' })).toBeInTheDocument();
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  it('does not reset another view when a pending project deletion completes', async () => {
+    let finish!: (value: { deleted: boolean }) => void;
+    const deleteProject = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(LibraryPage, { client: createClient({ deleteProject }) });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Lyn' }));
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete project' }),
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Inbox' }));
+    finish({ deleted: true });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Lyn' })).toBeNull(),
+    );
+    expect(screen.getByRole('heading', { name: 'Inbox' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete project' })).toBeNull();
+  });
+
+  it('keeps a pending project deletion disabled after navigating away and back', async () => {
+    let finish!: (value: { deleted: boolean }) => void;
+    const deleteProject = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(LibraryPage, { client: createClient({ deleteProject }) });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Lyn' }));
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete project' }),
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Inbox' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Lyn' }));
+    expect(
+      screen.getByRole('button', { name: 'Delete project' }),
+    ).toBeDisabled();
+    expect(deleteProject).toHaveBeenCalledTimes(1);
+    finish({ deleted: true });
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Lyn' })).toBeNull(),
+    );
+  });
+
+  it('shows a pending deletion refusal after navigating away and back', async () => {
+    let refuse!: (error: unknown) => void;
+    const deleteProject = vi.fn().mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          refuse = reject;
+        }),
+    );
+    render(LibraryPage, { client: createClient({ deleteProject }) });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Lyn' }));
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete project' }),
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Inbox' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Lyn' }));
+    refuse(
+      new LibraryCommandError({
+        code: 'CONTEXT_NOT_EMPTY',
+        message: 'Still has captures',
+        retryable: false,
+        details: {},
+      }),
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This project still has captures',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Delete project' }),
+    ).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Lyn' })).toBeInTheDocument();
+    expect(deleteProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads search after removing its project filter and ignores a late filtered response', async () => {
+    let finish!: (value: { deleted: boolean }) => void;
+    let finishFiltered!: (value: {
+      items: SearchResultItem[];
+      nextCursor: null;
+    }) => void;
+    const deleteProject = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const searchCaptures = vi.fn().mockImplementation((_query, filters) =>
+      filters.contextId
+        ? new Promise((resolve) => {
+            finishFiltered = resolve;
+          })
+        : Promise.resolve({
+            items: [
+              {
+                capture: { ...textCapture, context: inbox },
+                snippet: 'alpha global result',
+              },
+            ],
+            nextCursor: null,
+          }),
+    );
+    render(LibraryPage, {
+      client: createClient({ deleteProject, searchCaptures }),
+    });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Lyn' }));
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete project' }),
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await fireEvent.input(screen.getByRole('searchbox'), {
+      target: { value: 'alpha' },
+    });
+    await waitFor(() => expect(searchCaptures).toHaveBeenCalledOnce());
+    await fireEvent.click(screen.getByText('Filters'));
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Context' }), {
+      target: { value: project.id },
+    });
+    await waitFor(() =>
+      expect(searchCaptures.mock.calls.at(-1)?.[1].contextId).toBe(project.id),
+    );
+    finish({ deleted: true });
+    await waitFor(() => expect(searchCaptures).toHaveBeenCalledTimes(3));
+    expect(searchCaptures.mock.calls.at(-1)?.[1].contextId).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Context' })).toHaveValue('');
+    finishFiltered({
+      items: [
+        {
+          capture: textCapture,
+          matchedField: 'text_body',
+          snippet: 'STALE FILTER',
+        },
+      ],
+      nextCursor: null,
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/global result/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('STALE FILTER')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Search' })).toBeInTheDocument();
+  });
+
+  it('keeps the project when deletion is refused and lets confirmation be cancelled', async () => {
+    const deleteProject = vi.fn().mockRejectedValue(
+      new LibraryCommandError({
+        code: 'CONTEXT_NOT_EMPTY',
+        message: 'Delete its captures first',
+        retryable: false,
+        details: {},
+      }),
+    );
+    render(LibraryPage, { client: createClient({ deleteProject }) });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Lyn' }));
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Delete project' }),
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await screen.findByRole('alert');
+    expect(screen.getByRole('button', { name: 'Lyn' })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(deleteProject).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole('button', { name: 'Delete project' }),
+    ).toHaveFocus();
   });
 
   it('deletes from the stream only after an inline confirmation', async () => {

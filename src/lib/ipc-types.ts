@@ -16,7 +16,7 @@ export type StagedMediaId = string;
 
 export type Timestamp = string;
 
-export type ErrorCode = "VALIDATION_ERROR" | "STALE_SESSION" | "CONTEXT_REQUIRED" | "CONTEXT_AMBIGUOUS" | "CONTEXT_SOURCE_NOT_FOUND" | "CONTEXT_SOURCE_STALE" | "EMPTY_CAPTURE" | "CAPTURE_NOT_FOUND" | "CONTEXT_NOT_FOUND" | "STORAGE_UNAVAILABLE" | "STORAGE_WRITE_FAILED" | "MEDIA_STAGE_FAILED" | "MEDIA_FINALIZE_FAILED" | "MEDIA_NOT_FOUND" | "UNSUPPORTED_CLIPBOARD_CONTENT" | "PERMISSION_DENIED" | "AUDIO_DEVICE_UNAVAILABLE" | "AUDIO_RECORDING_FAILED" | "AUDIO_PLAYBACK_FAILED" | "SEARCH_FAILED" | "SHORTCUT_CONFLICT" | "MODEL_NOT_AVAILABLE" | "MODEL_DOWNLOAD_FAILED" | "ENRICHMENT_FAILED" | "INTERNAL_ERROR";
+export type ErrorCode = "VALIDATION_ERROR" | "STALE_SESSION" | "CONTEXT_REQUIRED" | "CONTEXT_AMBIGUOUS" | "CONTEXT_SOURCE_NOT_FOUND" | "CONTEXT_SOURCE_STALE" | "EMPTY_CAPTURE" | "CAPTURE_NOT_FOUND" | "CONTEXT_NOT_FOUND" | "CONTEXT_NOT_EMPTY" | "STORAGE_UNAVAILABLE" | "STORAGE_WRITE_FAILED" | "MEDIA_STAGE_FAILED" | "MEDIA_FINALIZE_FAILED" | "MEDIA_NOT_FOUND" | "UNSUPPORTED_CLIPBOARD_CONTENT" | "PERMISSION_DENIED" | "AUDIO_DEVICE_UNAVAILABLE" | "AUDIO_RECORDING_FAILED" | "AUDIO_PLAYBACK_FAILED" | "SEARCH_FAILED" | "SHORTCUT_CONFLICT" | "MODEL_NOT_AVAILABLE" | "MODEL_DOWNLOAD_FAILED" | "ENRICHMENT_FAILED" | "INTERNAL_ERROR";
 
 export type ErrorDetailKey = "field" | "limit" | "operation" | "permission" | "resourceKind" | "retryAfterMs" | "state";
 
@@ -81,6 +81,10 @@ export type PickProjectDirectoryResult = { selection: SelectedProjectDirectory |
 export type ListContextsInput = { kind: ContextKind | null, query: string | null, limit: number, };
 
 export type ListContextsResult = { contexts: Array<ContextRef>, };
+
+export type DeleteProjectInput = { contextId: ContextId, };
+
+export type DeleteProjectResult = { deleted: boolean, };
 
 export type CreateContextInput = { "kind": "standalone", name: string, } | { "kind": "project", name: string, selectedDirectoryToken: DirectorySelectionToken, };
 

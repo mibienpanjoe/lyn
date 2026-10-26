@@ -80,6 +80,7 @@ fn main() {
         "pick_project_directory",
         "create_context",
         "list_contexts",
+        "delete_project",
         "list_captures",
         "get_capture",
         "delete_capture",

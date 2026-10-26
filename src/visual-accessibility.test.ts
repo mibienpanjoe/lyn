@@ -106,6 +106,7 @@ describe('visual accessibility verification', () => {
       listCaptures: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
       getCapture: vi.fn(),
       deleteCapture: vi.fn(),
+      deleteProject: vi.fn(),
       searchCaptures: vi.fn(),
       playMedia: vi.fn(),
       openMedia: vi.fn(),

@@ -6,6 +6,7 @@ playback/open, settings, native GNOME activation management, and optional speech
 """
 permissions = [
   "allow-list-contexts",
+  "allow-delete-project",
   "allow-list-captures",
   "allow-get-capture",
   "allow-delete-capture",

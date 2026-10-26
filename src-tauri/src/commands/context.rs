@@ -7,11 +7,14 @@ use crate::{
     commands::is_empty_input,
     context::{DirectorySelectionRegistry, inspect_project_directory},
     contract::{
-        CreateContextInput, CreateContextResult, ListContextsInput, ListContextsResult,
-        PickProjectDirectoryResult,
+        CreateContextInput, CreateContextResult, DeleteProjectInput, DeleteProjectResult,
+        ListContextsInput, ListContextsResult, PickProjectDirectoryResult,
     },
     error::{AppError, CommandResult, ErrorCode, ErrorDetailKey, ErrorDetailValue, ErrorDetails},
-    storage::{Database, contexts::ContextRepository},
+    storage::{
+        Database,
+        contexts::{ContextRepository, DeleteProjectOutcome},
+    },
 };
 
 const MAX_CONTEXT_NAME_CHARS: usize = 100;
@@ -175,6 +178,49 @@ fn list_contexts_impl(
     }
 }
 
+#[tauri::command]
+pub(crate) fn delete_project(
+    input: serde_json::Value,
+    database: State<'_, Mutex<Database>>,
+) -> CommandResult<DeleteProjectResult> {
+    delete_project_value(input, database.inner())
+}
+
+fn delete_project_value(
+    input: serde_json::Value,
+    database: &Mutex<Database>,
+) -> CommandResult<DeleteProjectResult> {
+    let Ok(input) = serde_json::from_value::<DeleteProjectInput>(input) else {
+        return CommandResult::failure(validation_error("input"));
+    };
+    let Ok(database) = database.lock() else {
+        return CommandResult::failure(internal_error());
+    };
+    match ContextRepository::new(database.connection()).delete_empty_project(input.context_id) {
+        Ok(DeleteProjectOutcome::Deleted) => {
+            CommandResult::success(DeleteProjectResult { deleted: true })
+        }
+        Ok(DeleteProjectOutcome::NotFound) => {
+            CommandResult::success(DeleteProjectResult { deleted: false })
+        }
+        Ok(DeleteProjectOutcome::NotProject) => {
+            CommandResult::failure(validation_error("contextId"))
+        }
+        Ok(DeleteProjectOutcome::NotEmpty) => CommandResult::failure(AppError {
+            code: ErrorCode::ContextNotEmpty,
+            message: "This project still has captures. Delete them first.".to_owned(),
+            retryable: false,
+            details: ErrorDetails::default(),
+        }),
+        Err(_) => CommandResult::failure(AppError {
+            code: ErrorCode::StorageWriteFailed,
+            message: "The project could not be deleted".to_owned(),
+            retryable: true,
+            details: ErrorDetails::default(),
+        }),
+    }
+}
+
 fn validate_context_name(name: &str) -> Result<&str, AppError> {
     if name.is_empty()
         || name.trim() != name
@@ -258,6 +304,116 @@ mod tests {
     use super::{
         create_context_at, create_context_value_at, list_contexts_impl, list_contexts_value,
     };
+
+    #[test]
+    fn delete_project_checks_kind_captures_and_retry_without_touching_files() {
+        use crate::{
+            contract::{CaptureSessionId, ContextId},
+            storage::{captures::CaptureRepository, contexts::ContextRepository},
+        };
+        let database = Mutex::new(Database::open_in_memory().unwrap());
+        let folder = tempdir().unwrap();
+        std::fs::write(folder.path().join("keep.txt"), "keep").unwrap();
+        let (empty, populated, standalone, capture_id) = {
+            let mut db = database.lock().unwrap();
+            let repository = ContextRepository::new(db.connection());
+            let empty = repository
+                .create_project("Empty", None, folder.path().to_str().unwrap())
+                .unwrap();
+            let populated = repository
+                .create_project("Populated", None, "/test/populated")
+                .unwrap();
+            let standalone = repository.create_standalone("Notes").unwrap();
+            let capture = CaptureRepository::new(db.connection_mut())
+                .save_text(CaptureSessionId::new(), populated.id, "keep note", None)
+                .unwrap();
+            (empty, populated, standalone, capture.capture_id)
+        };
+        let call = |id: ContextId| super::delete_project_value(json!({"contextId":id}), &database);
+        let removed = call(empty.id);
+        assert!(matches!(
+            removed,
+            CommandResult::Success {
+                data: crate::contract::DeleteProjectResult { deleted: true },
+                ..
+            }
+        ));
+        assert!(matches!(
+            call(empty.id),
+            CommandResult::Success {
+                data: crate::contract::DeleteProjectResult { deleted: false },
+                ..
+            }
+        ));
+        assert!(matches!(
+            call(standalone.id),
+            CommandResult::Failure {
+                error: crate::error::AppError {
+                    code: ErrorCode::ValidationError,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            call(populated.id),
+            CommandResult::Failure {
+                error: crate::error::AppError {
+                    code: ErrorCode::ContextNotEmpty,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert_eq!(
+            std::fs::read_to_string(folder.path().join("keep.txt")).unwrap(),
+            "keep"
+        );
+        let db = database.lock().unwrap();
+        assert!(
+            ContextRepository::new(db.connection())
+                .get(standalone.id)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            ContextRepository::new(db.connection())
+                .get(populated.id)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            db.connection()
+                .query_row(
+                    "SELECT text_body FROM captures WHERE id=?1",
+                    [capture_id.to_string()],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+            "keep note"
+        );
+    }
+
+    #[test]
+    fn delete_project_rejects_malformed_ids_and_unknown_fields() {
+        let database = Mutex::new(Database::open_in_memory().unwrap());
+        for input in [
+            json!({}),
+            json!({"contextId":"not-an-id"}),
+            json!({"contextId":crate::contract::ContextId::new(),"path":"/tmp/forged"}),
+        ] {
+            assert!(matches!(
+                super::delete_project_value(input, &database),
+                CommandResult::Failure {
+                    error: crate::error::AppError {
+                        code: ErrorCode::ValidationError,
+                        ..
+                    },
+                    ..
+                }
+            ));
+        }
+    }
 
     #[test]
     fn standalone_context_can_be_created_and_listed() {

@@ -328,6 +328,18 @@ pub struct ListContextsResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeleteProjectInput {
+    pub context_id: ContextId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteProjectResult {
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CreateContextInput {
     Standalone {
@@ -881,6 +893,8 @@ pub fn typescript_bindings() -> String {
         PickProjectDirectoryResult::decl(&config),
         ListContextsInput::decl(&config),
         ListContextsResult::decl(&config),
+        DeleteProjectInput::decl(&config),
+        DeleteProjectResult::decl(&config),
         CreateContextInput::decl(&config),
         CreateContextResult::decl(&config),
         ContextCandidate::decl(&config),

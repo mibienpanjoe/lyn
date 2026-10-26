@@ -568,6 +568,11 @@ Open or refreshed streams start at the top; loading earlier captures appends the
 below the existing rows without moving the reader’s scroll position. Search
 preserves the backend result ranking.
 
+The selected project toolbar offers Delete project with an inline confirmation
+that names the project. Deletion removes only an empty Library project entry;
+the directory remains on disk. Projects with captures remain protected by Rust,
+including when filters hide their captures.
+
 ```text
 ┌───────────────┬──────────────────────────┬─────────────────────┐
 │ Navigation    │ Chronological stream     │ Detail (wide only)  │

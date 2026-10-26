@@ -91,6 +91,8 @@ This specification defines the intended MVP. Performance figures marked **provis
 - **FR-066**: A user MUST be able to inspect an individual capture and its stored metadata.
 - **FR-067**: Organization controls MUST remain in the Library and MUST NOT be added to the default quick-capture path.
 
+- **FR-068**: The Library MUST allow confirmed removal of an empty project entry. Rust MUST refuse removal if any capture still references it, independent of filters or pagination; standalone contexts and filesystem folders MUST remain untouched. Future automatic capture MAY discover that project again.
+
 ### FR-070 — Search
 
 - **FR-071**: Lyn MUST provide local full-text search backed by SQLite FTS5.

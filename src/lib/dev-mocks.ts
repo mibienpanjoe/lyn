@@ -1,3 +1,4 @@
+import { LibraryCommandError } from '../library/library-client';
 import type {
   AppSettings,
   AudioPlaybackResult,
@@ -200,6 +201,22 @@ export const devLibraryClient: LibraryClient = {
     const item =
       sampleCaptures.find((c) => c.id === captureId) ?? sampleCaptures[0];
     return item;
+  },
+  async deleteProject(contextId: string) {
+    if (sampleCaptures.some((capture) => capture.context.id === contextId)) {
+      throw new LibraryCommandError({
+        code: 'CONTEXT_NOT_EMPTY',
+        message: 'This project still has captures',
+        retryable: false,
+        details: {},
+      });
+    }
+    const index = sampleContexts.findIndex(
+      (context) => context.id === contextId && context.kind === 'project',
+    );
+    if (index < 0) return { deleted: false };
+    sampleContexts.splice(index, 1);
+    return { deleted: true };
   },
   async deleteCapture(captureId: string): Promise<DeleteCaptureResult> {
     const index = sampleCaptures.findIndex((c) => c.id === captureId);

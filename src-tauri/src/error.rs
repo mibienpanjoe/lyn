@@ -17,6 +17,7 @@ pub enum ErrorCode {
     EmptyCapture,
     CaptureNotFound,
     ContextNotFound,
+    ContextNotEmpty,
     StorageUnavailable,
     StorageWriteFailed,
     MediaStageFailed,

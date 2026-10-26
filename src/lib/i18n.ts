@@ -108,6 +108,10 @@ export interface Translations {
   copyTextCopied: string;
   copyTextFailed: string;
   deleteCapture: string;
+  deleteProject: string;
+  confirmProjectDelete: (name: string) => string;
+  projectNotEmpty: string;
+  projectDeleteFailed: string;
   confirmDelete: string;
   cancelDelete: string;
   deleting: string;
@@ -290,6 +294,11 @@ const en: Translations = {
   copyTextCopied: 'Copied',
   copyTextFailed: 'Copy failed',
   deleteCapture: 'Delete capture',
+  deleteProject: 'Delete project',
+  confirmProjectDelete: (name) =>
+    `Remove “${name}” from the Library? Its folder stays on disk.`,
+  projectNotEmpty: 'This project still has captures. Delete them first.',
+  projectDeleteFailed: 'The project could not be deleted. Try again.',
   confirmDelete: 'Delete',
   cancelDelete: 'Cancel',
   deleting: 'Deleting…',
@@ -481,6 +490,12 @@ const fr: Translations = {
   copyTextCopied: 'Copié',
   copyTextFailed: 'Échec de la copie',
   deleteCapture: 'Supprimer la capture',
+  deleteProject: 'Supprimer le projet',
+  confirmProjectDelete: (name) =>
+    `Retirer « ${name} » de la Library ? Son dossier restera sur le disque.`,
+  projectNotEmpty:
+    'Ce projet contient encore des captures. Supprimez-les d’abord.',
+  projectDeleteFailed: 'Le projet n’a pas pu être supprimé. Réessayez.',
   confirmDelete: 'Supprimer',
   cancelDelete: 'Annuler',
   deleting: 'Suppression…',

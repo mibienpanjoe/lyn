@@ -69,6 +69,7 @@ type ErrorCode =
   | "EMPTY_CAPTURE"
   | "CAPTURE_NOT_FOUND"
   | "CONTEXT_NOT_FOUND"
+  | "CONTEXT_NOT_EMPTY"
   | "STORAGE_UNAVAILABLE"
   | "STORAGE_WRITE_FAILED"
   | "MEDIA_STAGE_FAILED"
@@ -538,7 +539,31 @@ type CreateContextInput =
 
 **Errors:** `VALIDATION_ERROR`, `PERMISSION_DENIED`, `STORAGE_WRITE_FAILED`.
 
-Context rename and deletion are not in the MVP contract.
+Context rename and standalone-context deletion are not in the MVP contract.
+
+### `delete_project`
+
+Remove an empty project context from the Library. Available only to the `main`
+Library window, never the capture popup.
+
+**Input:** `{ contextId: ContextId }`, rejecting unknown fields and paths.
+
+**Success:** `CommandResult<{ deleted: boolean }>`; `deleted: false` means the ID
+was already absent, making retries safe. Standalone IDs return `VALIDATION_ERROR`.
+The authoritative parameterized DELETE checks project kind and absence of **all**
+captures in the same statement, independently of UI filters or pagination.
+If a capture was added before confirmation, return `CONTEXT_NOT_EMPTY` and retain
+both project and captures. No media or filesystem folder is deleted. A future
+automatic capture can discover the project again; removal does not blacklist
+a source or cancel capture sessions. Selecting an absent saved context returns
+the existing `CONTEXT_NOT_FOUND` error. Capture saves retain their foreign-key
+constraint and preserve the draft on persistence failure.
+
+**Errors:** `VALIDATION_ERROR`, `CONTEXT_NOT_EMPTY`, `STORAGE_WRITE_FAILED`.
+
+The Library offers Delete project in the selected project's toolbar, confirms
+its name, and changes navigation only after a successful command. A failed
+request keeps the project available and reports the reason.
 
 ## Library and Search Commands
 
@@ -914,6 +939,7 @@ No concrete model distributor is selected in the source overview. A release MUST
 | Voice | `save_audio_capture` | Capture Service | Yes |
 | Context | `list_contexts` | Context Resolver | No |
 | Context | `create_context` | Context Resolver | Yes |
+| Context | `delete_project` | Context Repository (Library only) | Yes, empty project entry only |
 | Library | `list_captures` | Library Service | No |
 | Library | `get_capture` | Library Service | No |
 | Search | `search_captures` | Library Service | No |

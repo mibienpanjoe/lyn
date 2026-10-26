@@ -35,6 +35,29 @@ describe('Library IPC client', () => {
     });
   });
 
+  it('deletes only an opaque project ID and preserves authoritative refusal', async () => {
+    const call = vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: { deleted: true } });
+    const client = createLibraryClient(call);
+    expect(await client.deleteProject('project-1')).toEqual({ deleted: true });
+    expect(call).toHaveBeenCalledWith('delete_project', {
+      input: { contextId: 'project-1' },
+    });
+    call.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'CONTEXT_NOT_EMPTY',
+        message: 'Delete its captures first',
+        retryable: false,
+        details: {},
+      },
+    });
+    await expect(client.deleteProject('project-1')).rejects.toMatchObject({
+      appError: { code: 'CONTEXT_NOT_EMPTY' },
+    });
+  });
+
   it('never passes raw FTS options through the search boundary', async () => {
     const call = vi.fn().mockResolvedValue({
       ok: true,

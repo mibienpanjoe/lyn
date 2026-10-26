@@ -10,6 +10,7 @@ import type {
   ContextId,
   ContextRef,
   DeleteCaptureResult,
+  DeleteProjectResult,
   LibraryScope,
   ListContextsResult,
   OpenMediaResult,
@@ -36,6 +37,7 @@ export interface SearchFilters extends CaptureFilters {
 
 export interface LibraryClient {
   listContexts(): Promise<ContextRef[]>;
+  deleteProject(contextId: string): Promise<DeleteProjectResult>;
   listCaptures(
     scope: LibraryScope,
     filters?: Partial<CaptureFilters>,
@@ -86,6 +88,8 @@ export function createLibraryClient(call: Invoke = invoke): LibraryClient {
         cursor,
         limit: 50,
       }),
+    deleteProject: (contextId) =>
+      command<DeleteProjectResult>(call, 'delete_project', { contextId }),
     getCapture: (captureId) =>
       command<CaptureDetail>(call, 'get_capture', { captureId }),
     deleteCapture: (captureId) =>

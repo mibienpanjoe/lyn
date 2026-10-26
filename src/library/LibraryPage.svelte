@@ -24,6 +24,7 @@
   import { getTranslations } from '../lib/i18n';
   import CaptureDetailPanel from './CaptureDetailPanel.svelte';
   import CaptureStream from './CaptureStream.svelte';
+  import ProjectActions from './ProjectActions.svelte';
   import SearchFilters from './SearchFilters.svelte';
   import SettingsPanel from '../settings/SettingsPanel.svelte';
   import type { SettingsClient } from '../settings/settings-client';
@@ -95,6 +96,10 @@
     state: 'copied' | 'failed';
   } | null>(null);
   let pendingDeleteId = $state<string | null>(null);
+  let deletingProjectIds = $state<string[]>([]);
+  let projectDeleteErrors = $state<
+    Record<string, 'not_empty' | 'failed' | undefined>
+  >({});
   let searchInput = $state<HTMLInputElement>();
   let streamScroll = $state<HTMLDivElement>();
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -433,6 +438,37 @@
     await removeCapture(selected.id);
   }
 
+  async function removeProject(contextId: string) {
+    if (deletingProjectIds.includes(contextId)) return;
+    deletingProjectIds.push(contextId);
+    delete projectDeleteErrors[contextId];
+    try {
+      await client.deleteProject(contextId);
+      contexts = contexts.filter((context) => context.id !== contextId);
+      const removedSearchFilter = searchContextId === contextId;
+      if (removedSearchFilter) searchContextId = null;
+      if (
+        scope.kind === 'context' &&
+        scope.contextId === contextId &&
+        !searchMode &&
+        !settingsMode
+      ) {
+        await chooseScope({ kind: 'recent' });
+      } else if (removedSearchFilter && searchMode) {
+        await loadCaptures(false);
+      }
+    } catch (caught) {
+      projectDeleteErrors[contextId] =
+        caught instanceof LibraryCommandError &&
+        caught.appError.code === 'CONTEXT_NOT_EMPTY'
+          ? 'not_empty'
+          : 'failed';
+      throw caught;
+    } finally {
+      deletingProjectIds = deletingProjectIds.filter((id) => id !== contextId);
+    }
+  }
+
   async function removeCapture(captureId: string) {
     if (deleteBusy) return;
     deleteBusy = true;
@@ -562,6 +598,20 @@
               {/each}
             </select>
           </label>
+        {/if}
+        {#if !searchMode && activeContext?.kind === 'project'}
+          {#key activeContext.id}
+            <ProjectActions
+              project={activeContext}
+              busy={deletingProjectIds.includes(activeContext.id)}
+              failure={projectDeleteErrors[activeContext.id]}
+              onclear={(id) => {
+                delete projectDeleteErrors[id];
+              }}
+              language={currentLanguage}
+              ondelete={removeProject}
+            />
+          {/key}
         {/if}
       </header>
 

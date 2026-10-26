@@ -7,6 +7,14 @@ use crate::{
     storage::StorageError,
 };
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DeleteProjectOutcome {
+    Deleted,
+    NotFound,
+    NotProject,
+    NotEmpty,
+}
+
 pub(crate) struct ContextRepository<'connection> {
     connection: &'connection Connection,
 }
@@ -83,6 +91,27 @@ impl<'connection> ContextRepository<'connection> {
                     decode_context,
                 )
                 .optional()?
+        })
+    }
+
+    pub(crate) fn delete_empty_project(
+        &self,
+        id: ContextId,
+    ) -> Result<DeleteProjectOutcome, StorageError> {
+        // One statement fences captures added since the UI opened confirmation.
+        let deleted = self.connection.execute(
+            "DELETE FROM contexts WHERE id = ?1 AND kind = 'project' AND NOT EXISTS (SELECT 1 FROM captures WHERE context_id = contexts.id)",
+            [id.to_string()],
+        )?;
+        if deleted == 1 {
+            return Ok(DeleteProjectOutcome::Deleted);
+        }
+        Ok(match self.get(id)? {
+            None => DeleteProjectOutcome::NotFound,
+            Some(context) if context.kind != ContextKind::Project => {
+                DeleteProjectOutcome::NotProject
+            }
+            Some(_) => DeleteProjectOutcome::NotEmpty,
         })
     }
 

@@ -111,6 +111,7 @@ mod tests {
             "allow-play-media",
             "allow-update-settings",
             "allow-manage-gnome-activation",
+            "allow-delete-project",
         ] {
             assert!(
                 !capture.contains(forbidden),
@@ -118,6 +119,7 @@ mod tests {
             );
         }
         assert!(library.contains("allow-manage-gnome-activation"));
+        assert!(library.contains("allow-delete-project"));
         for forbidden in [
             "allow-save-text-capture",
             "allow-start-audio-recording",

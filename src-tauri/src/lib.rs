@@ -233,6 +233,7 @@ fn desktop_builder(helper_root: Option<std::path::PathBuf>) -> tauri::Builder<ta
             commands::context::pick_project_directory,
             commands::context::create_context,
             commands::context::list_contexts,
+            commands::context::delete_project,
             commands::library::list_captures,
             commands::library::get_capture,
             commands::library::delete_capture,
