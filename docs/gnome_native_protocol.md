@@ -75,6 +75,17 @@ refresh paths and deletion with prior data/folders unchanged. Screenshots were
 inspected. These are private presentation proofs; installed 0.7.7 A→B→A painted
 continuity and the remaining reception still require their own check.
 
+Installed 0.7.7 then passed both post-resolution A→B and A→B→A cases on the
+reference desktop at 125% text scaling. Each stale save was explicitly refused
+with unchanged capture rows. The exact draft and Save control were recognized
+inside the translated native window; both screenshots were inspected and show
+the complete action row. Each fresh B invocation saved exactly one note in the
+expected project/branch and restored focus. Both notes and both empty projects
+were removed through Library without restarting Lyn, preserving all original
+capture/context/media/job/settings rows. This closes these two continuity and
+presentation cases, not initial-query races, source-closure/TUI/media fault
+reception, installed update/removal/rollback, or the final gate.
+
 ## Boundary and lifecycle
 
 Ordinary desktop launches coordinate a single GUI instance before storage, shortcuts and provider setup; closing Library hides its retained window. Later launches only show/focus that window and ignore launch arguments/cwd, without altering a capture draft. This does not replace the native publication lock or authenticate a provider. The packaged GUI runner’s explicit `--check-reopen` checks this on the current package (including the current leg of an optional roundtrip): same process/window/publication, background capture, preserved draft/data and minimized reopen. CI enables that check. Older packages may still run concurrently until explicitly exited; no process is adopted or killed by the plugin.
