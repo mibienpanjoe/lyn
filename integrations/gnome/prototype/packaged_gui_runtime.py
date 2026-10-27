@@ -312,21 +312,32 @@ def main():
                 applications.append(app)
                 pin = _pin_owned_app(app, executable, root / 'runtime', expected_cwd=control_path.parent)
                 wait(lambda: button('Package GUI context'), 'Initial contexts did not load')
-                assert button('Package empty project') is None
+                assert button('Refresh probe') is None
                 library_windows = command('xdotool', 'search', '--onlyvisible', '--pid', str(app.pid)).split()
                 assert len(library_windows) == 1
                 library_window = library_windows[0]
                 command('xdotool', 'windowminimize', library_window)
                 wait(lambda: '_NET_WM_STATE_HIDDEN' in command('xprop', '-id', library_window, '_NET_WM_STATE'), 'Library did not minimize before external change')
                 with sqlite3.connect(database) as db:
-                    db.execute("INSERT INTO contexts (id,kind,name,project_path,created_at,updated_at) VALUES (?,'project','Package empty project',?,'2026-10-26T00:00:00Z','2026-10-26T00:00:00Z')", (project_id,str(folder)))
+                    db.execute("INSERT INTO contexts (id,kind,name,project_path,created_at,updated_at) VALUES (?,'project','Refresh probe',?,'2026-10-26T00:00:00Z','2026-10-26T00:00:00Z')", (project_id,str(folder)))
                 before_delete = snapshot()
                 assert before_delete[0] == previous_rows
                 command('xdotool', 'windowactivate', '--sync', library_window)
-                assert wait(lambda: button('Package empty project'), 'Empty project absent').do_action(0)
-                wait(lambda: page_heading(nodes(), 'Package empty project'), 'Project did not open')
+                project_button = wait(lambda: button('Refresh probe'), 'Empty project absent')
+                def project_navigation_painted():
+                    image = pixels()
+                    rectangle = region(project_button, image)
+                    # Omit the 16px folder icon and its left padding; this short
+                    # fixture name fits the existing navigation text area.
+                    text_rectangle = (rectangle[0] + 32, rectangle[1], rectangle[2] - 40, rectangle[3]) if rectangle and rectangle[2] > 40 else None
+                    if text_rectangle and read_text(image, text_rectangle, sdk) == normalize('Refresh probe'):
+                        return image
+                    return None
+                screenshot('project-refreshed.png', wait(project_navigation_painted, 'Refreshed project navigation did not paint'))
+                assert project_button.do_action(0)
+                wait(lambda: page_heading(nodes(), 'Refresh probe'), 'Project did not open')
                 assert wait(lambda: button('Delete project'), 'Project deletion action absent').do_action(0)
-                wait(lambda: contains('Remove “Package empty project”'), 'Named confirmation absent')
+                wait(lambda: contains('Remove “Refresh probe”'), 'Named confirmation absent')
                 assert snapshot() == before_delete, 'Opening confirmation mutated data'
                 assert button('Cancel').do_action(0)
                 wait(lambda: button('Delete project'), 'Cancel did not restore action')
@@ -334,7 +345,7 @@ def main():
                 assert button('Delete project').do_action(0)
                 assert wait(lambda: button('Delete'), 'Delete confirmation absent').do_action(0)
                 wait(lambda: snapshot() == (previous_rows, previous_contexts), 'Project deletion changed wrong data')
-                wait(lambda: button('Package empty project') is None and page_heading(nodes(), 'Recent'), 'Deleted project remained in navigation')
+                wait(lambda: button('Refresh probe') is None and page_heading(nodes(), 'Recent'), 'Deleted project remained in navigation')
                 assert marker.read_text() == 'keep project folder'
                 screenshot('project-deleted.png', wait(lambda: painted('Recent', bodies[-1]), 'Library did not paint after project deletion'))
                 print(json.dumps({'check':'packaged_project_delete', 'cancelUnchanged':True, 'releaseIpc':True,
