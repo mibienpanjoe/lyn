@@ -46,6 +46,16 @@ projects for confirmed deletion, preserving other rows and the GNOME server.
 The focus-refresh fix therefore remains incomplete for this installed sequence;
 the complete controller and painted A→B→A acceptance did not pass.
 
+The next local build (0.7.6) replaces the Library's DOM focus listener with
+Tauri's native `tauri://focus` notification scoped to the main window and
+refreshes navigation when a browsing scope is selected. The previous 0.7.5
+package reproduces missing navigation on Recent selection. Both corrected local
+package formats pass same-process Recent and minimize/reactivate refresh,
+painted project-label recognition, confirmed deletion and prior-data/folder
+preservation on private desktops. Component regressions also cover late refresh
+after deletion and late listener cleanup after unmount. Installed reception of
+this change remains pending; these private results do not replace that check.
+
 ## Boundary and lifecycle
 
 Ordinary desktop launches coordinate a single GUI instance before storage, shortcuts and provider setup; closing Library hides its retained window. Later launches only show/focus that window and ignore launch arguments/cwd, without altering a capture draft. This does not replace the native publication lock or authenticate a provider. The packaged GUI runner’s explicit `--check-reopen` checks this on the current package (including the current leg of an optional roundtrip): same process/window/publication, background capture, preserved draft/data and minimized reopen. CI enables that check. Older packages may still run concurrently until explicitly exited; no process is adopted or killed by the plugin.

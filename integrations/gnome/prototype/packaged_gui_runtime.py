@@ -316,41 +316,46 @@ def main():
                 library_windows = command('xdotool', 'search', '--onlyvisible', '--pid', str(app.pid)).split()
                 assert len(library_windows) == 1
                 library_window = library_windows[0]
-                command('xdotool', 'windowminimize', library_window)
-                wait(lambda: '_NET_WM_STATE_HIDDEN' in command('xprop', '-id', library_window, '_NET_WM_STATE'), 'Library did not minimize before external change')
-                with sqlite3.connect(database) as db:
-                    db.execute("INSERT INTO contexts (id,kind,name,project_path,created_at,updated_at) VALUES (?,'project','Refresh probe',?,'2026-10-26T00:00:00Z','2026-10-26T00:00:00Z')", (project_id,str(folder)))
-                before_delete = snapshot()
-                assert before_delete[0] == previous_rows
-                command('xdotool', 'windowactivate', '--sync', library_window)
-                project_button = wait(lambda: button('Refresh probe'), 'Empty project absent')
-                def project_navigation_painted():
-                    image = pixels()
-                    rectangle = region(project_button, image)
-                    # Omit the 16px folder icon and its left padding; this short
-                    # fixture name fits the existing navigation text area.
-                    text_rectangle = (rectangle[0] + 32, rectangle[1], rectangle[2] - 40, rectangle[3]) if rectangle and rectangle[2] > 40 else None
-                    if text_rectangle and read_text(image, text_rectangle, sdk) == normalize('Refresh probe'):
-                        return image
-                    return None
-                screenshot('project-refreshed.png', wait(project_navigation_painted, 'Refreshed project navigation did not paint'))
-                assert project_button.do_action(0)
-                wait(lambda: page_heading(nodes(), 'Refresh probe'), 'Project did not open')
-                assert wait(lambda: button('Delete project'), 'Project deletion action absent').do_action(0)
-                wait(lambda: contains('Remove “Refresh probe”'), 'Named confirmation absent')
-                assert snapshot() == before_delete, 'Opening confirmation mutated data'
-                assert button('Cancel').do_action(0)
-                wait(lambda: button('Delete project'), 'Cancel did not restore action')
-                assert snapshot() == before_delete, 'Cancel mutated data'
-                assert button('Delete project').do_action(0)
-                assert wait(lambda: button('Delete'), 'Delete confirmation absent').do_action(0)
-                wait(lambda: snapshot() == (previous_rows, previous_contexts), 'Project deletion changed wrong data')
-                wait(lambda: button('Refresh probe') is None and page_heading(nodes(), 'Recent'), 'Deleted project remained in navigation')
-                assert marker.read_text() == 'keep project folder'
-                screenshot('project-deleted.png', wait(lambda: painted('Recent', bodies[-1]), 'Library did not paint after project deletion'))
-                print(json.dumps({'check':'packaged_project_delete', 'cancelUnchanged':True, 'releaseIpc':True,
-                                  'projectRemoved':True, 'previousDataUnchanged':True, 'folderPreserved':True,
-                                  'focusRefreshWithoutRelaunch':True}), flush=True)
+                for refresh_mode in ('recent', 'native-focus'):
+                    if refresh_mode == 'native-focus':
+                        command('xdotool', 'windowminimize', library_window)
+                        wait(lambda: '_NET_WM_STATE_HIDDEN' in command('xprop', '-id', library_window, '_NET_WM_STATE'), 'Library did not minimize before external change')
+                    with sqlite3.connect(database) as db:
+                        db.execute("INSERT INTO contexts (id,kind,name,project_path,created_at,updated_at) VALUES (?,'project','Refresh probe',?,'2026-10-26T00:00:00Z','2026-10-26T00:00:00Z')", (project_id,str(folder)))
+                    before_delete = snapshot()
+                    assert before_delete[0] == previous_rows
+                    if refresh_mode == 'native-focus':
+                        command('xdotool', 'windowactivate', '--sync', library_window)
+                    else:
+                        assert button('Recent').do_action(0)
+                    project_button = wait(lambda: button('Refresh probe'), 'Empty project absent')
+                    def project_navigation_painted():
+                        image = pixels()
+                        rectangle = region(project_button, image)
+                        # Omit the 16px folder icon and its left padding; this short
+                        # fixture name fits the existing navigation text area.
+                        text_rectangle = (rectangle[0] + 32, rectangle[1], rectangle[2] - 40, rectangle[3]) if rectangle and rectangle[2] > 40 else None
+                        if text_rectangle and read_text(image, text_rectangle, sdk) == normalize('Refresh probe'):
+                            return image
+                        return None
+                    screenshot(refresh_mode + '-project-refreshed.png', wait(project_navigation_painted, 'Refreshed project navigation did not paint'))
+                    assert project_button.do_action(0)
+                    wait(lambda: page_heading(nodes(), 'Refresh probe'), 'Project did not open')
+                    assert wait(lambda: button('Delete project'), 'Project deletion action absent').do_action(0)
+                    wait(lambda: contains('Remove “Refresh probe”'), 'Named confirmation absent')
+                    assert snapshot() == before_delete, 'Opening confirmation mutated data'
+                    assert button('Cancel').do_action(0)
+                    wait(lambda: button('Delete project'), 'Cancel did not restore action')
+                    assert snapshot() == before_delete, 'Cancel mutated data'
+                    assert button('Delete project').do_action(0)
+                    assert wait(lambda: button('Delete'), 'Delete confirmation absent').do_action(0)
+                    wait(lambda: snapshot() == (previous_rows, previous_contexts), 'Project deletion changed wrong data')
+                    wait(lambda: button('Refresh probe') is None and page_heading(nodes(), 'Recent'), 'Deleted project remained in navigation')
+                    assert marker.read_text() == 'keep project folder'
+                    screenshot(refresh_mode + '-project-deleted.png', wait(lambda: painted('Recent', bodies[-1]), 'Library did not paint after project deletion'))
+                    print(json.dumps({'check':'packaged_project_delete', 'cancelUnchanged':True, 'releaseIpc':True,
+                                      'projectRemoved':True, 'previousDataUnchanged':True, 'folderPreserved':True,
+                                      'refreshWithoutRelaunch':True, 'refreshMode':refresh_mode}), flush=True)
             stop_app()
             assert snapshot() == (previous_rows, previous_contexts)
     except BaseException:

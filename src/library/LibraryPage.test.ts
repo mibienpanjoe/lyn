@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import axe from 'axe-core';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { listen } from '@tauri-apps/api/event';
 
 import type {
   CaptureDetail,
@@ -12,6 +13,22 @@ import type {
 import LibraryPage from './LibraryPage.svelte';
 import { LibraryCommandError, type LibraryClient } from './library-client';
 import type { SettingsClient } from '../settings/settings-client';
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn().mockImplementation(async () => vi.fn()),
+}));
+
+beforeEach(() => vi.mocked(listen).mockClear());
+
+async function focusLibraryWindow() {
+  const registration = vi
+    .mocked(listen)
+    .mock.calls.find(([name]) => name === 'tauri://focus');
+  expect(registration?.[2]).toEqual({
+    target: { kind: 'Window', label: 'main' },
+  });
+  registration![1]({ event: 'tauri://focus', id: 1, payload: null });
+}
 
 const project: ContextRef = { id: 'project-1', kind: 'project', name: 'Lyn' };
 const inbox: ContextRef = {
@@ -334,10 +351,42 @@ describe('responsive Library', () => {
     });
     await screen.findByText('Nothing captured yet');
     expect(screen.queryByRole('button', { name: 'Lyn' })).toBeNull();
-    await fireEvent.focus(window);
+    await focusLibraryWindow();
     await screen.findByRole('button', { name: 'Lyn' });
     await screen.findByRole('button', { name: /text capture in Lyn/i });
     expect(listContexts).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes projects when Recent is chosen without a window focus event', async () => {
+    const listContexts = vi
+      .fn()
+      .mockResolvedValueOnce([inbox])
+      .mockResolvedValue([project, inbox]);
+    render(LibraryPage, { client: createClient({ listContexts }) });
+    await screen.findByRole('button', { name: 'Inbox' });
+    expect(screen.queryByRole('button', { name: 'Lyn' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Recent' }));
+    await screen.findByRole('button', { name: 'Lyn' });
+    expect(listContexts).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases a native focus subscription that finishes after unmount', async () => {
+    let finish!: (unlisten: () => void) => void;
+    const unlisten = vi.fn();
+    vi.mocked(listen).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const client = createClient();
+    const view = render(LibraryPage, { client });
+    await screen.findByRole('button', { name: 'Lyn' });
+    view.unmount();
+    finish(unlisten);
+    await waitFor(() => expect(unlisten).toHaveBeenCalledOnce());
+    await focusLibraryWindow();
+    expect(client.listContexts).toHaveBeenCalledOnce();
   });
 
   it('does not resurrect a removed project from a late focus refresh', async () => {
@@ -345,12 +394,14 @@ describe('responsive Library', () => {
     const listContexts = vi
       .fn()
       .mockResolvedValueOnce([project, inbox])
-      .mockImplementation(
+      .mockResolvedValueOnce([project, inbox])
+      .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
             finish = resolve;
           }),
-      );
+      )
+      .mockResolvedValue([inbox]);
     render(LibraryPage, {
       client: createClient({
         listContexts,
@@ -360,8 +411,8 @@ describe('responsive Library', () => {
       }),
     });
     await fireEvent.click(await screen.findByRole('button', { name: 'Lyn' }));
-    await fireEvent.focus(window);
-    await waitFor(() => expect(listContexts).toHaveBeenCalledTimes(2));
+    await focusLibraryWindow();
+    await waitFor(() => expect(listContexts).toHaveBeenCalledTimes(3));
     await fireEvent.click(
       screen.getByRole('button', { name: 'Delete project' }),
     );

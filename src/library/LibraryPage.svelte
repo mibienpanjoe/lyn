@@ -106,7 +106,8 @@
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let copyFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let playbackTimer: ReturnType<typeof setTimeout> | undefined;
-  let unlistenEnrichment: UnlistenFn | null = null;
+  let destroyed = false;
+  const unlisteners: UnlistenFn[] = [];
 
   const projects = $derived(
     contexts.filter((context) => context.kind === 'project'),
@@ -137,20 +138,35 @@
 
   onMount(() => {
     void initialise();
+    void listen(
+      'tauri://focus',
+      () => {
+        void initialise();
+      },
+      { target: { kind: 'Window', label: 'main' } },
+    )
+      .then(retainListener)
+      .catch(() => {});
     void listen<EnrichmentUpdatedEvent>('enrichment://updated', (event) => {
       void handleEnrichmentUpdate(event.payload);
     })
-      .then((unlisten) => (unlistenEnrichment = unlisten))
+      .then(retainListener)
       .catch(() => {});
   });
 
   onDestroy(() => {
+    destroyed = true;
     contextRequest++;
     clearTimeout(searchTimer);
     clearTimeout(copyFeedbackTimer);
     clearTimeout(playbackTimer);
-    unlistenEnrichment?.();
+    unlisteners.forEach((unlisten) => unlisten());
   });
+
+  function retainListener(unlisten: UnlistenFn) {
+    if (destroyed) unlisten();
+    else unlisteners.push(unlisten);
+  }
 
   function clearPlaybackTimer() {
     clearTimeout(playbackTimer);
@@ -165,6 +181,7 @@
   }
 
   async function initialise() {
+    if (destroyed) return;
     const request = ++contextRequest;
     try {
       const refreshed = await client.listContexts();
@@ -188,7 +205,7 @@
     selected = null;
     selectedSummaryId = null;
     navigationOpen = false;
-    await loadCaptures(false);
+    await initialise();
   }
 
   async function chooseSearch() {
@@ -511,8 +528,6 @@
     );
   }
 </script>
-
-<svelte:window onfocus={initialise} />
 
 <main class="library-shell" class:detail-open={selected || detailLoading}>
   <aside

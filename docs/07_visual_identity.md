@@ -568,7 +568,9 @@ Open or refreshed streams start at the top; loading earlier captures appends the
 below the existing rows without moving the reader’s scroll position. Search
 preserves the backend result ranking. Reactivating the Library refreshes its
 project/context navigation and current capture page, so newly captured projects
-become available without restarting Lyn.
+become available without restarting Lyn. Refresh uses the native Library-window
+focus notification; choosing a browsing scope also refreshes navigation when the
+window is already active.
 
 The selected project toolbar offers Delete project with an inline confirmation
 that names the project. Deletion removes only an empty Library project entry;
