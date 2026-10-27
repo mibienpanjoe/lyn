@@ -36,6 +36,16 @@ stopped before invocation when its input monitor exited. Neither attempt is a
 completed continuity series, and the monitor exit cause remains unclassified.
 Installed 0.7.5 A→B→A painted acceptance and the remaining reception stay open.
 
+A second installed 0.7.5 run completed both post-resolution continuity data
+cases, including one fresh exact save and UI deletion per case. Inspection of
+the A→B→A image still showed the chooser despite restored accessible draft text;
+the controller's glyph-contrast guard is insufficient visual proof. Its final
+cleanup also reproduced missing project navigation after reopen and
+minimize/reactivate. Only a receipt-owned Lyn relaunch exposed the two empty
+projects for confirmed deletion, preserving other rows and the GNOME server.
+The focus-refresh fix therefore remains incomplete for this installed sequence;
+the complete controller and painted A→B→A acceptance did not pass.
+
 ## Boundary and lifecycle
 
 Ordinary desktop launches coordinate a single GUI instance before storage, shortcuts and provider setup; closing Library hides its retained window. Later launches only show/focus that window and ignore launch arguments/cwd, without altering a capture draft. This does not replace the native publication lock or authenticate a provider. The packaged GUI runner’s explicit `--check-reopen` checks this on the current package (including the current leg of an optional roundtrip): same process/window/publication, background capture, preserved draft/data and minimized reopen. CI enables that check. Older packages may still run concurrently until explicitly exited; no process is adopted or killed by the plugin.
