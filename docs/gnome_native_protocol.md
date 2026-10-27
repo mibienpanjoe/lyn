@@ -86,6 +86,17 @@ capture/context/media/job/settings rows. This closes these two continuity and
 presentation cases, not initial-query races, source-closure/TUI/media fault
 reception, installed update/removal/rollback, or the final gate.
 
+A separate private rehearsal uses the ordinary 0.7.7 executable and its
+hash-verified embedded module with a protected GNOME server on owned Xvfb,
+filesystem D-Bus, HOME and XDG directories. It exercises production admission
+and GUI capture without a test-only application endpoint: closing A preserves
+the same window with B, refuses the old save, preserves the painted draft and
+action row, then saves exactly once from B and removes its test data through
+Library. The controller observes GTK's disabled active-tab action for the sole
+survivor rather than attempting to activate it. This qualifies that private
+ordinary-binary path and controller, not the user's service activation or an
+installed-desktop source-closure result.
+
 ## Boundary and lifecycle
 
 Ordinary desktop launches coordinate a single GUI instance before storage, shortcuts and provider setup; closing Library hides its retained window. Later launches only show/focus that window and ignore launch arguments/cwd, without altering a capture draft. This does not replace the native publication lock or authenticate a provider. The packaged GUI runner’s explicit `--check-reopen` checks this on the current package (including the current leg of an optional roundtrip): same process/window/publication, background capture, preserved draft/data and minimized reopen. CI enables that check. Older packages may still run concurrently until explicitly exited; no process is adopted or killed by the plugin.
