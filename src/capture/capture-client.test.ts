@@ -117,8 +117,27 @@ describe('capture client', () => {
     await client.setPopupLayout('media');
 
     expect(invoke).toHaveBeenCalledWith('set_capture_popup_layout', {
-      input: { layout: 'media' },
+      input: { layout: 'media', viewportWidth: window.innerWidth },
     });
+  });
+
+  it('reports the measured CSS viewport without requesting native dimensions', async () => {
+    const original = Object.getOwnPropertyDescriptor(window, 'innerWidth')!;
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 512,
+    });
+    try {
+      const invoke = vi
+        .fn()
+        .mockResolvedValue({ ok: true, data: { layout: 'compact' } });
+      await createCaptureClient(invoke).setPopupLayout('compact');
+      expect(invoke).toHaveBeenCalledWith('set_capture_popup_layout', {
+        input: { layout: 'compact', viewportWidth: 512 },
+      });
+    } finally {
+      Object.defineProperty(window, 'innerWidth', original);
+    }
   });
 
   it('uses opaque screenshot staging and save inputs', async () => {

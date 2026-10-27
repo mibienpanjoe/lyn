@@ -1,6 +1,6 @@
 # Lyn — Typed Tauri IPC Specification
 
-Version: v1.19, 2026-10-25
+Version: v1.20, 2026-10-27
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
@@ -320,13 +320,13 @@ Hide the capture popup after a successful save or cancellation and attempt to re
 
 Resize the native capture window for the current presentation state without exposing arbitrary window dimensions to the frontend.
 
-**Input:** `{ layout: "compact" | "audio" | "error" | "chooser" | "media" }`
+**Input:** `{ layout: "compact" | "audio" | "error" | "chooser" | "media"; viewportWidth?: number }`
 
 **Success:** `CommandResult<{ layout: "compact" | "audio" | "error" | "chooser" | "media" }>`
 
-Rust maps each semantic state to a bounded logical height and preserves the current logical width. The frontend requests `chooser` while context selection is open, `media` for the screenshot-preview state, `audio` for completed-recording controls without an image preview, `error` when inline failure feedback expands an otherwise text-only capture, and `compact` otherwise. A resize failure is recoverable and MUST NOT modify or cancel the active capture session.
+Rust maps each semantic state to a bounded CSS height and preserves the current physical width. The optional `viewportWidth` is the UI's measured `window.innerWidth` in CSS pixels, not a requested native width. It must be finite and within `[1, 16384]`; Rust divides its own physical window width by that measurement and requires the resulting ratio within `[0.5, 8]`. Refused measurements return `VALIDATION_ERROR`. Physical height is the semantic height multiplied by that ratio, rounded up and capped by the current monitor work area with a decoration reserve. Omitted measurements retain the native scale-factor behavior for existing callers. Arbitrary target dimensions are not accepted. The capture client reapplies the semantic layout when its CSS viewport width changes; height-only native resize events do not cause a resize loop. The frontend requests `chooser` while context selection is open, `media` for the screenshot-preview state, `audio` for completed-recording controls without an image preview, `error` when inline failure feedback expands an otherwise text-only capture, and `compact` otherwise. A resize failure is recoverable and MUST NOT modify or cancel the active capture session.
 
-**Errors:** `INTERNAL_ERROR` when the native window cannot be resized.
+**Errors:** `VALIDATION_ERROR` for a refused viewport measurement; `INTERNAL_ERROR` when the native window cannot be resized.
 
 ### `save_text_capture`
 

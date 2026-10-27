@@ -561,6 +561,11 @@ The layout follows the action sequence, not a generic form:
 
 No save-success screen is shown. Durable success returns the user to the previous application.
 
+Popup sizing uses the measured CSS viewport and Rust-owned native width to
+account for fractional text scaling. Returning from the context chooser preserves the draft and keeps
+the action row within the resized native window. When the monitor cannot contain
+the full presentation, the popup surface scrolls rather than hiding its controls.
+
 ### Library — Recent and All captures
 
 Browsing streams display the newest captures at the top, from newest to oldest.

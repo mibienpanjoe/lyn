@@ -56,6 +56,25 @@ preservation on private desktops. Component regressions also cover late refresh
 after deletion and late listener cleanup after unmount. Installed reception of
 this change remains pending; these private results do not replace that check.
 
+Installed 0.7.6 subsequently exposed both newly detected test projects and
+removed them through Library without restarting Lyn, preserving other rows.
+Its stricter rendered-draft check identified a separate 125% text-scaling
+defect: native popup height was 210 pixels while accessible content occupied
+259, clipping the action row. A translated X11 root crop showed the draft text
+but missing controls; `xdotool` root coordinates were also offset on that desktop.
+Those attempts did not save a note and their two empty projects were cleaned.
+
+The 0.7.7 layout correction uses the UI's measured CSS viewport width and
+Rust-owned physical width, with bounded validation and monitor-height limits.
+A private GTK witness reports 640 native pixels, 512 CSS pixels and DPR 1 at
+125%, so DPR alone is insufficient. The old 0.7.6 package reproduces clipping
+at that scale. Both corrected package formats pass two chooser-return cycles
+at 100% and 125%, requiring exact draft/Save OCR inside the native window and
+rejecting the retained chooser image. The 125% run also passes both navigation
+refresh paths and deletion with prior data/folders unchanged. Screenshots were
+inspected. These are private presentation proofs; installed 0.7.7 A→B→A painted
+continuity and the remaining reception still require their own check.
+
 ## Boundary and lifecycle
 
 Ordinary desktop launches coordinate a single GUI instance before storage, shortcuts and provider setup; closing Library hides its retained window. Later launches only show/focus that window and ignore launch arguments/cwd, without altering a capture draft. This does not replace the native publication lock or authenticate a provider. The packaged GUI runner’s explicit `--check-reopen` checks this on the current package (including the current leg of an optional roundtrip): same process/window/publication, background capture, preserved draft/data and minimized reopen. CI enables that check. Older packages may still run concurrently until explicitly exited; no process is adopted or killed by the plugin.

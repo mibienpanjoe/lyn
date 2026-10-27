@@ -35,7 +35,7 @@ def main():
     root = Path(os.environ['XDG_RUNTIME_DIR']).parent
     assert root.name.startswith('lyn-gnome-run-')
     assert os.environ['DBUS_SESSION_BUS_ADDRESS'].startswith(f'unix:path={root}/runtime/')
-    environment = dict(os.environ, LANG='C.UTF-8', GTK_MODULES='atk-bridge')
+    environment = dict(os.environ, LANG='C.UTF-8', GTK_MODULES='atk-bridge', GDK_DPI_SCALE=str(control.get('textScale', 1.0)))
     for name in ('NO_AT_BRIDGE', 'GTK_A11Y'):
         environment.pop(name, None)
         os.environ.pop(name, None)
@@ -294,6 +294,56 @@ def main():
                     print(json.dumps({'check': 'packaged_gui_reopen', 'sameProcess': True,
                                       'sameWindow': True, 'dataUnchanged': True, 'publicationUnchanged': True,
                                       'backgroundCapture': True, 'draftPreserved': True, 'minimizedReopen': True}), flush=True)
+                if control.get('checkDraftReturn'):
+                    command('xdotool', 'key', '--clearmodifiers', 'ctrl+shift+space')
+                    field = wait(lambda: named('Capture text'), 'Draft-return popup absent')
+                    assert field.get_component_iface().grab_focus()
+                    draft = 'Draft return probe 7319'
+                    command('xdotool', 'type', '--clearmodifiers', '--delay', '0', draft)
+                    wait(lambda: field.get_text_iface().get_text(0, -1) == draft, 'Draft-return text not exact')
+                    for turn in range(2):
+                        context_action = button('Choose context') or button('Context Package GUI context. Change context')
+                        assert context_action and context_action.do_action(0)
+                        back = wait(lambda: button('Back to note'), 'Draft-return chooser absent')
+                        def chooser_painted():
+                            image = pixels()
+                            rectangle = region(back, image)
+                            return image if rectangle and read_text(image, rectangle, sdk) == normalize('Back to note') else None
+                        chooser_image = wait(chooser_painted, 'Draft-return chooser did not paint')
+                        assert back.do_action(0)
+                        field = wait(lambda: named('Capture text'), 'Draft did not return from chooser')
+                        assert field.get_text_iface().get_text(0, -1) == draft
+                        def draft_painted():
+                            image = pixels()
+                            rectangle = region(field, image)
+                            save = button('Save')
+                            save_rectangle = region(save, image) if save else None
+                            if not rectangle or not save_rectangle: return None
+                            extra = set(command('xdotool', 'search', '--onlyvisible', '--pid', str(app.pid)).split()) - {library_window}
+                            assert len(extra) == 1
+                            popup_id = int(next(iter(extra)))
+                            assert command('xdotool', 'getwindowpid', str(popup_id)) == str(app.pid)
+                            from Xlib import display as xdisplay
+                            connection = xdisplay.Display()
+                            try:
+                                window = connection.create_resource_object('window', popup_id)
+                                geometry = window.get_geometry()
+                                origin = connection.screen().root.translate_coords(window, 0, 0)
+                                if any(x < origin.x or y < origin.y or x + w > origin.x + geometry.width or y + h > origin.y + geometry.height for x,y,w,h in (rectangle, save_rectangle)): return None
+                            finally: connection.close()
+                            if normalize(draft) not in read_text(image, rectangle, sdk, single_line=False): return None
+                            if read_text(image, save_rectangle, sdk) != normalize('Save'): return None
+                            return image
+                        restored_image = wait(draft_painted, 'Restored draft and Save did not paint')
+                        draft_rectangle = region(field, restored_image)
+                        assert normalize(draft) not in read_text(chooser_image, draft_rectangle, sdk, single_line=False), 'Old chooser frame incorrectly accepted as draft'
+                        screenshot(prefix + f'draft-return-{turn}.png', restored_image)
+                        assert snapshot() == accepted, 'Chooser return changed durable data'
+                    assert button('Cancel').do_action(0)
+                    wait(lambda: named('Capture text') is None, 'Draft-return cancellation did not settle')
+                    assert snapshot() == accepted, 'Draft cancellation changed durable data'
+                    print(json.dumps({'check':'packaged_draft_return', 'turns':2, 'exactDraftText':True,
+                                      'draftAndSavePainted':True, 'withinNativeWindow':True, 'textScale':control.get('textScale',1.0), 'dataUnchanged':True}), flush=True)
                 print(json.dumps({'check': 'packaged_gui', 'version': run['version'],
                                   'exactSave': True, 'libraryAccessible': True, 'helpersInPrivateHome': True,
                                   'captureCount': len(previous_rows), 'preservedPreviousData': step > 0}), flush=True)

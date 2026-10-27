@@ -189,6 +189,7 @@ export function createCaptureClient(call: Invoke = invoke): CaptureClient {
     setPopupLayout: (layout) =>
       command<SetCapturePopupLayoutResult>(call, 'set_capture_popup_layout', {
         layout,
+        viewportWidth: window.innerWidth,
       }),
     cancel: (sessionId) =>
       command<CancelCaptureSessionResult>(call, 'cancel_capture_session', {

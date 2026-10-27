@@ -26,6 +26,7 @@
 
   let { client = captureClient, dismiss }: Props = $props();
 
+  let renderedViewportWidth = window.innerWidth;
   let draft = $state('');
   let session = $state<CaptureSession | null>(null);
   let sources = $state<ListCaptureContextSourcesResult>({
@@ -60,6 +61,7 @@
   );
 
   $effect(() => {
+    renderedViewportWidth = window.innerWidth;
     void client.setPopupLayout(popupLayout).catch(() => undefined);
   });
 
@@ -466,6 +468,12 @@
     }
   }
 
+  function handleResize() {
+    if (renderedViewportWidth === window.innerWidth) return;
+    renderedViewportWidth = window.innerWidth;
+    void client.setPopupLayout(popupLayout).catch(() => undefined);
+  }
+
   function handleKeydown(event: KeyboardEvent) {
     if (event.isComposing || isComposing) return;
     if (event.key === 'Escape') {
@@ -488,7 +496,7 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onresize={handleResize} />
 
 <main class="capture-shell" aria-label="Quick capture">
   <section

@@ -483,10 +483,13 @@ pub struct DismissCapturePopupResult {
     pub focus_restored: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SetCapturePopupLayoutInput {
     pub layout: CapturePopupLayout,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub viewport_width: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1088,6 +1091,7 @@ mod tests {
         let cancel_result = CancelCaptureSessionResult { cancelled: true };
         let popup_layout_input = SetCapturePopupLayoutInput {
             layout: CapturePopupLayout::Media,
+            viewport_width: None,
         };
         let popup_layout_result = SetCapturePopupLayoutResult {
             layout: CapturePopupLayout::Media,
@@ -1231,6 +1235,22 @@ mod tests {
         assert!(serde_json::from_value::<Timestamp>(json!("2026-08-28 10:30")).is_err());
         assert!(serde_json::from_value::<Timestamp>(json!("2026-08-28T10:30:00+01:00")).is_err());
         assert!(serde_json::from_value::<CapturePopupLayout>(json!("600px")).is_err());
+    }
+
+    #[test]
+    fn popup_layout_scale_is_optional_for_existing_callers() {
+        let legacy: SetCapturePopupLayoutInput =
+            serde_json::from_value(json!({ "layout": "compact" })).unwrap();
+        assert_eq!(legacy.viewport_width, None);
+        let scaled: SetCapturePopupLayoutInput =
+            serde_json::from_value(json!({ "layout": "compact", "viewportWidth": 512.0 })).unwrap();
+        assert_eq!(scaled.viewport_width, Some(512.0));
+        assert!(
+            serde_json::from_value::<SetCapturePopupLayoutInput>(
+                json!({ "layout": "compact", "viewportWidth": "1.25" })
+            )
+            .is_err()
+        );
     }
 
     #[test]

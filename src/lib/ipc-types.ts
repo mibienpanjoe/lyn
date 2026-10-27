@@ -114,7 +114,7 @@ export type CancelCaptureSessionResult = { cancelled: boolean, };
 
 export type DismissCapturePopupResult = { dismissed: boolean, focusRestored: boolean, };
 
-export type SetCapturePopupLayoutInput = { layout: CapturePopupLayout, };
+export type SetCapturePopupLayoutInput = { layout: CapturePopupLayout, viewportWidth?: number, };
 
 export type SetCapturePopupLayoutResult = { layout: CapturePopupLayout, };
 

@@ -50,6 +50,8 @@ def main():
     parser.add_argument('--guard-only', action='store_true')
     parser.add_argument('--check-reopen', action='store_true')
     parser.add_argument('--check-project-delete', action='store_true')
+    parser.add_argument('--check-draft-return', action='store_true')
+    parser.add_argument('--text-scale', type=float, choices=(1.0, 1.25), default=1.0)
     args = parser.parse_args()
     previous = [args.previous_receipt, args.previous_portable, args.previous_deb]
     if args.check_project_delete and any(previous):
@@ -84,7 +86,7 @@ def main():
                          'desktop_lifecycle.py', 'packaged_gui_pixels.py', 'packaged_gui_guard.py', 'packaged_gui_runtime.py',
                          'desktop-a11y.conf', 'desktop-openbox.xml'):
                 shutil.copyfile(ROOT / 'prototype' / name, output / name)
-            control = dict(runs=runs, checkProjectDelete=args.check_project_delete, uid=os.getuid(), gid=os.getgid(),
+            control = dict(runs=runs, checkProjectDelete=args.check_project_delete, checkDraftReturn=args.check_draft_return, textScale=args.text_scale, uid=os.getuid(), gid=os.getgid(),
                            home=str(user_home), homeIdentity=identity(user_home), checkout=str(REPO),
                            tmpIdentity=identity(Path('/tmp')), runIdentity=identity(Path('/run')),
                            varlibIdentity=identity(Path('/var/lib')),

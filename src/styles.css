@@ -109,8 +109,10 @@ kbd {
 
 .capture-shell {
   display: grid;
+  height: 100vh;
   min-height: 100vh;
-  place-items: center;
+  overflow-y: auto;
+  place-items: safe center;
   padding: 6px;
 }
 

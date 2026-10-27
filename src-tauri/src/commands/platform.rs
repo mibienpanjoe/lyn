@@ -16,11 +16,14 @@ pub(crate) fn set_capture_popup_layout(
     input: SetCapturePopupLayoutInput,
     window: WebviewWindow,
 ) -> CommandResult<SetCapturePopupLayoutResult> {
-    match crate::platform::popup::resize_capture_popup(&window, input.layout) {
+    use crate::platform::popup::PopupResizeError;
+    match crate::platform::popup::resize_capture_popup(&window, input.layout, input.viewport_width)
+    {
         Ok(()) => CommandResult::success(SetCapturePopupLayoutResult {
             layout: input.layout,
         }),
-        Err(_) => CommandResult::failure(resize_error()),
+        Err(PopupResizeError::InvalidViewport) => CommandResult::failure(validation_error()),
+        Err(PopupResizeError::Platform) => CommandResult::failure(resize_error()),
     }
 }
 

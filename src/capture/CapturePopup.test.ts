@@ -159,6 +159,29 @@ describe('quick-capture popup', () => {
     expect((await axe.run(container)).violations).toEqual([]);
   });
 
+  it('reapplies the semantic layout when the CSS viewport changes', async () => {
+    const original = Object.getOwnPropertyDescriptor(window, 'innerWidth')!;
+    const client = createClient();
+    render(CapturePopup, { client, dismiss: vi.fn() });
+    await waitFor(() =>
+      expect(client.setPopupLayout).toHaveBeenCalledWith('compact'),
+    );
+    vi.mocked(client.setPopupLayout).mockClear();
+    try {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: 512,
+      });
+      await fireEvent.resize(window);
+      expect(client.setPopupLayout).toHaveBeenCalledOnce();
+      expect(client.setPopupLayout).toHaveBeenLastCalledWith('compact');
+      await fireEvent.resize(window);
+      expect(client.setPopupLayout).toHaveBeenCalledOnce();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', original);
+    }
+  });
+
   it('adapts the native window between compact, chooser, image, and audio layouts', async () => {
     const client = createClient();
     render(CapturePopup, { client, dismiss: vi.fn() });
