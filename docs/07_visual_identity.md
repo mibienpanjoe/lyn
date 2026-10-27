@@ -566,7 +566,9 @@ No save-success screen is shown. Durable success returns the user to the previou
 Browsing streams display the newest captures at the top, from newest to oldest.
 Open or refreshed streams start at the top; loading earlier captures appends them
 below the existing rows without moving the reader’s scroll position. Search
-preserves the backend result ranking.
+preserves the backend result ranking. Reactivating the Library refreshes its
+project/context navigation and current capture page, so newly captured projects
+become available without restarting Lyn.
 
 The selected project toolbar offers Delete project with an inline confirmation
 that names the project. Deletion removes only an empty Library project entry;

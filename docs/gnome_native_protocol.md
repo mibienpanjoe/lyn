@@ -8,6 +8,24 @@ On the GTK3.24.33/VTE0.68.0 X11 reference desktop, the0.7.2 package was installe
 
 Installed fault/race, media, reversible update/removal/rollback and final reception still need their own evidence. Isolated GTK/Rust/desktop proofs remain identified as such; they do not become installed results through these completed series. Microphone/transcription and physical suspend/resume remain deferred to the user's manual step. Generic GNOME `installed:false` remains reserved until the full acceptance contract is met.
 
+Installed 0.7.4 post-resolution continuity checks exercised both A→B and A→B→A
+in one owned two-tab window. Each stale save opened the chooser, explicitly
+marked the source stale, left capture rows unchanged, and restored the exact
+draft through the Text interface. Each subsequent fresh invocation saved once
+in the second project's exact branch and restored focus; both synthetic captures
+were deleted through Library controls. The captured window backing images were
+blank, so painted-draft acceptance remains open. Cleanup exposed a separate
+Library defect: newly created projects were absent from its cached navigation
+until relaunch. Both empty test projects were removed through the installed UI
+after relaunch, preserving other rows. This completed those data/lease checks,
+not the full installed reception or the initial-query race gate.
+
+The navigation defect is corrected in 0.7.5 by refreshing contexts and the current
+capture page on Library focus, fencing late context responses across deletion.
+The 0.7.4 packaged fixture reproduced the missing project; both 0.7.5 package
+formats passed same-process/minimize/reactivate discovery and confirmed deletion
+in private desktops. Installed 0.7.5 reception remains separate.
+
 ## Boundary and lifecycle
 
 Ordinary desktop launches coordinate a single GUI instance before storage, shortcuts and provider setup; closing Library hides its retained window. Later launches only show/focus that window and ignore launch arguments/cwd, without altering a capture draft. This does not replace the native publication lock or authenticate a provider. The packaged GUI runner’s explicit `--check-reopen` checks this on the current package (including the current leg of an optional roundtrip): same process/window/publication, background capture, preserved draft/data and minimized reopen. CI enables that check. Older packages may still run concurrently until explicitly exited; no process is adopted or killed by the plugin.

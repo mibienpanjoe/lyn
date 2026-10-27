@@ -300,21 +300,29 @@ def main():
             stop_app()
             assert snapshot() == (previous_rows, previous_contexts), 'Stopping changed accepted capture/context data'
         if control.get('checkProjectDelete'):
-            # Seed one empty project only in this already-admitted private DB,
-            # with the app stopped. The deletion itself must use release IPC/UI.
+            # Seed one empty project only in this admitted private DB while the
+            # existing Library is in the background; reactivation must refresh it.
             project_id = 'b2fd16fa-9650-4a20-92d9-9200949a1952'
             folder = root / 'empty-project'
             folder.mkdir(mode=0o700)
             marker = folder / 'keep.txt'
             marker.write_text('keep project folder')
-            with sqlite3.connect(database) as db:
-                db.execute("INSERT INTO contexts (id,kind,name,project_path,created_at,updated_at) VALUES (?,'project','Package empty project',?,'2026-10-26T00:00:00Z','2026-10-26T00:00:00Z')", (project_id,str(folder)))
-            before_delete = snapshot()
-            assert before_delete[0] == previous_rows
             with (control_path.parent / 'project-delete-app.log').open('w') as log:
                 app = start([str(executable)], cwd=control_path.parent, stdout=log, stderr=subprocess.STDOUT)
                 applications.append(app)
                 pin = _pin_owned_app(app, executable, root / 'runtime', expected_cwd=control_path.parent)
+                wait(lambda: button('Package GUI context'), 'Initial contexts did not load')
+                assert button('Package empty project') is None
+                library_windows = command('xdotool', 'search', '--onlyvisible', '--pid', str(app.pid)).split()
+                assert len(library_windows) == 1
+                library_window = library_windows[0]
+                command('xdotool', 'windowminimize', library_window)
+                wait(lambda: '_NET_WM_STATE_HIDDEN' in command('xprop', '-id', library_window, '_NET_WM_STATE'), 'Library did not minimize before external change')
+                with sqlite3.connect(database) as db:
+                    db.execute("INSERT INTO contexts (id,kind,name,project_path,created_at,updated_at) VALUES (?,'project','Package empty project',?,'2026-10-26T00:00:00Z','2026-10-26T00:00:00Z')", (project_id,str(folder)))
+                before_delete = snapshot()
+                assert before_delete[0] == previous_rows
+                command('xdotool', 'windowactivate', '--sync', library_window)
                 assert wait(lambda: button('Package empty project'), 'Empty project absent').do_action(0)
                 wait(lambda: page_heading(nodes(), 'Package empty project'), 'Project did not open')
                 assert wait(lambda: button('Delete project'), 'Project deletion action absent').do_action(0)
@@ -330,7 +338,8 @@ def main():
                 assert marker.read_text() == 'keep project folder'
                 screenshot('project-deleted.png', wait(lambda: painted('Recent', bodies[-1]), 'Library did not paint after project deletion'))
                 print(json.dumps({'check':'packaged_project_delete', 'cancelUnchanged':True, 'releaseIpc':True,
-                                  'projectRemoved':True, 'previousDataUnchanged':True, 'folderPreserved':True}), flush=True)
+                                  'projectRemoved':True, 'previousDataUnchanged':True, 'folderPreserved':True,
+                                  'focusRefreshWithoutRelaunch':True}), flush=True)
             stop_app()
             assert snapshot() == (previous_rows, previous_contexts)
     except BaseException:

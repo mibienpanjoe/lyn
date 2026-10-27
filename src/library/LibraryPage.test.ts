@@ -320,6 +320,61 @@ describe('responsive Library', () => {
     vi.unstubAllGlobals();
   });
 
+  it('refreshes new projects and captures when the Library regains focus', async () => {
+    const listContexts = vi
+      .fn()
+      .mockResolvedValueOnce([inbox])
+      .mockResolvedValue([project, inbox]);
+    const listCaptures = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [], nextCursor: null })
+      .mockResolvedValue({ items: [textCapture], nextCursor: null });
+    render(LibraryPage, {
+      client: createClient({ listContexts, listCaptures }),
+    });
+    await screen.findByText('Nothing captured yet');
+    expect(screen.queryByRole('button', { name: 'Lyn' })).toBeNull();
+    await fireEvent.focus(window);
+    await screen.findByRole('button', { name: 'Lyn' });
+    await screen.findByRole('button', { name: /text capture in Lyn/i });
+    expect(listContexts).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not resurrect a removed project from a late focus refresh', async () => {
+    let finish!: (contexts: ContextRef[]) => void;
+    const listContexts = vi
+      .fn()
+      .mockResolvedValueOnce([project, inbox])
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+    render(LibraryPage, {
+      client: createClient({
+        listContexts,
+        listCaptures: vi
+          .fn()
+          .mockResolvedValue({ items: [], nextCursor: null }),
+      }),
+    });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Lyn' }));
+    await fireEvent.focus(window);
+    await waitFor(() => expect(listContexts).toHaveBeenCalledTimes(2));
+    await fireEvent.click(
+      screen.getByRole('button', { name: 'Delete project' }),
+    );
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Lyn' })).toBeNull(),
+    );
+    finish([project, inbox]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole('button', { name: 'Lyn' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Recent' })).toBeInTheDocument();
+  });
+
   it('keeps recent captures at the top and appends older pages below', async () => {
     const older = {
       ...textCapture,

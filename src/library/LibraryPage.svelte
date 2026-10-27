@@ -89,6 +89,7 @@
   let error = $state<string | null>(null);
   let navigationOpen = $state(false);
   let listRequest = 0;
+  let contextRequest = 0;
   let detailRequest = 0;
   let copyRequest = 0;
   let copyFeedback = $state<{
@@ -144,6 +145,7 @@
   });
 
   onDestroy(() => {
+    contextRequest++;
     clearTimeout(searchTimer);
     clearTimeout(copyFeedbackTimer);
     clearTimeout(playbackTimer);
@@ -163,13 +165,17 @@
   }
 
   async function initialise() {
-    loading = true;
+    const request = ++contextRequest;
     try {
-      contexts = await client.listContexts();
+      const refreshed = await client.listContexts();
+      if (request !== contextRequest) return;
+      contexts = refreshed;
       await loadCaptures(false);
     } catch (caught) {
-      error = errorMessage(caught, 'The Library could not be loaded.');
-      loading = false;
+      if (request === contextRequest) {
+        error = errorMessage(caught, 'The Library could not be loaded.');
+        loading = false;
+      }
     }
   }
 
@@ -444,6 +450,7 @@
     delete projectDeleteErrors[contextId];
     try {
       await client.deleteProject(contextId);
+      contextRequest++;
       contexts = contexts.filter((context) => context.id !== contextId);
       const removedSearchFilter = searchContextId === contextId;
       if (removedSearchFilter) searchContextId = null;
@@ -504,6 +511,8 @@
     );
   }
 </script>
+
+<svelte:window onfocus={initialise} />
 
 <main class="library-shell" class:detail-open={selected || detailLoading}>
   <aside
