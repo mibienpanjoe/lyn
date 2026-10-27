@@ -24,7 +24,17 @@ The navigation defect is corrected in 0.7.5 by refreshing contexts and the curre
 capture page on Library focus, fencing late context responses across deletion.
 The 0.7.4 packaged fixture reproduced the missing project; both 0.7.5 package
 formats passed same-process/minimize/reactivate discovery and confirmed deletion
-in private desktops. Installed 0.7.5 reception remains separate.
+in private desktops. Installed 0.7.5 subsequently passed package/running-image
+digest verification and the A→B stale-save refusal with unchanged capture rows
+and exact draft restoration. A compositor-root crop was inspected and showed
+the preserved draft text; this closes that text-paint observation only, not
+complete popup-layout acceptance. Returning to the same Library process exposed
+the newly discovered project, which was deleted through its normal confirmation
+without changing other capture/context/media/job rows. The controller stopped
+before a fresh save on a terminal-visibility precondition; a second attempt
+stopped before invocation when its input monitor exited. Neither attempt is a
+completed continuity series, and the monitor exit cause remains unclassified.
+Installed 0.7.5 A→B→A painted acceptance and the remaining reception stay open.
 
 ## Boundary and lifecycle
 
