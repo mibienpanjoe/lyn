@@ -97,6 +97,16 @@ survivor rather than attempting to activate it. This qualifies that private
 ordinary-binary path and controller, not the user's service activation or an
 installed-desktop source-closure result.
 
+The same private ordinary-binary setup separately passes three foreground
+recipes: Bash with a same-cwd sleep group, exec-htop in alpha, and child-htop
+in beta while its parent Bash remains in alpha. Kernel readiness checks and
+retained pidfds establish each shape before the real shortcut. Each capture
+resolves automatically to the expected project/branch, paints the draft/action
+row, saves exactly once and restores focus; the saved Library row is recognized
+from pixels before normal UI cleanup. Prior private data is unchanged. These
+extend the delivered-artifact evidence without a test-only application command;
+they do not close TUI reception on the user's ordinary service/desktop.
+
 ## Boundary and lifecycle
 
 Ordinary desktop launches coordinate a single GUI instance before storage, shortcuts and provider setup; closing Library hides its retained window. Later launches only show/focus that window and ignore launch arguments/cwd, without altering a capture draft. This does not replace the native publication lock or authenticate a provider. The packaged GUI runner’s explicit `--check-reopen` checks this on the current package (including the current leg of an optional roundtrip): same process/window/publication, background capture, preserved draft/data and minimized reopen. CI enables that check. Older packages may still run concurrently until explicitly exited; no process is adopted or killed by the plugin.
