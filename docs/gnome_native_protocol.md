@@ -166,6 +166,15 @@ paints both draft controls and Library text. UI cleanup preserves initial data.
 This qualifies late-app startup in that private setup, not repeated cold-start
 reliability, installed startup ordering or initial-query topology races.
 
+The ordinary-binary private module-absent case starts a real GNOME server with
+no native module mapped. Input remains available, context stays unresolved and
+Save opens the chooser without creating a capture. Returning to the note keeps
+the exact text and complete action row, confirmed by OCR and an inspected
+screenshot; cancellation restores focus and leaves initial tables unchanged.
+This qualifies unavailable-context refusal and draft continuity for that private
+artifact. It does not qualify installed absence, incompatible libraries, manual
+fallback persistence or microphone behavior.
+
 ## Boundary and lifecycle
 
 Ordinary desktop launches coordinate a single GUI instance before storage, shortcuts and provider setup; closing Library hides its retained window. Later launches only show/focus that window and ignore launch arguments/cwd, without altering a capture draft. This does not replace the native publication lock or authenticate a provider. The packaged GUI runner’s explicit `--check-reopen` checks this on the current package (including the current leg of an optional roundtrip): same process/window/publication, background capture, preserved draft/data and minimized reopen. CI enables that check. Older packages may still run concurrently until explicitly exited; no process is adopted or killed by the plugin.
