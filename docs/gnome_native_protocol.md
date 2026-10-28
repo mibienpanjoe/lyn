@@ -158,6 +158,14 @@ private data. No test-only application endpoint is used. This observes endpoint
 replacement and successful fresh admission/capture, not a directly exposed
 protocol generation or installed-desktop crash acceptance.
 
+A separate ordinary-binary private run starts the protected GNOME server and
+its foreground Bash/sleep group before any Lyn process or native publication.
+After Lyn starts, the original kernel process identity is unchanged; the first
+capture automatically saves exactly one alpha/alpha note, restores focus and
+paints both draft controls and Library text. UI cleanup preserves initial data.
+This qualifies late-app startup in that private setup, not repeated cold-start
+reliability, installed startup ordering or initial-query topology races.
+
 ## Boundary and lifecycle
 
 Ordinary desktop launches coordinate a single GUI instance before storage, shortcuts and provider setup; closing Library hides its retained window. Later launches only show/focus that window and ignore launch arguments/cwd, without altering a capture draft. This does not replace the native publication lock or authenticate a provider. The packaged GUI runner’s explicit `--check-reopen` checks this on the current package (including the current leg of an optional roundtrip): same process/window/publication, background capture, preserved draft/data and minimized reopen. CI enables that check. Older packages may still run concurrently until explicitly exited; no process is adopted or killed by the plugin.
