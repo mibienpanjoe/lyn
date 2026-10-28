@@ -97,6 +97,16 @@ survivor rather than attempting to activate it. This qualifies that private
 ordinary-binary path and controller, not the user's service activation or an
 installed-desktop source-closure result.
 
+The separate installed 0.7.7 closed-tab run subsequently passed on the ordinary
+reference GNOME service. Only the owned test process in A was terminated; B
+remained in the same window. The old save was explicitly stale with unchanged
+capture rows, and the exact draft/complete action row were recognized inside
+the native window and inspected. A fresh B invocation saved one correctly
+attributed project/branch note and restored focus. That note and both empty test
+projects were removed through Library, preserving all original rows. This
+qualifies this installed source-closure case, not initial-query races, other
+fault/media cases or the complete installed gate.
+
 The same private ordinary-binary setup separately passes three foreground
 recipes: Bash with a same-cwd sleep group, exec-htop in alpha, and child-htop
 in beta while its parent Bash remains in alpha. Kernel readiness checks and
