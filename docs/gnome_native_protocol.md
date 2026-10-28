@@ -156,6 +156,21 @@ window at 125%, focus restoration and painted Library detail. Normal UI deletion
 removes that capture and its media file. This automatic case is independent of
 the manual-correction case above; neither is installed-desktop media reception.
 
+Installed 0.7.7 subsequently passes the automatic PNG path on the reference
+GNOME desktop. The ordinary shortcut resolves alpha/gnome-alpha, stages a fixed
+192×96 synthetic clipboard image and exact user caption, then saves one image
+without manual correction. Preview/caption/Save and compact Library detail are
+recognized from pixels and inspected. Every saved RGBA byte matches the fixed
+recipe; committed bytes/checksum/dimensions and metadata agree with the saved
+SQLite snapshot. Source focus returns after save. Normal UI deletion removes
+the capture and committed media file, then the empty test project; all original
+capture/context/media/job/settings/migration rows remain unchanged. The owned
+clipboard producer is bounded and tied to its controller by pidfd; it neither
+reads the prior clipboard nor opens a microphone. A test-controller map-order
+race was corrected with a bounded wait for the exact popup, retaining the
+single-window/PID/focus checks. Installed staged-image source loss/manual
+correction, audio and the remaining lifecycle/update gates are still separate.
+
 The ordinary 0.7.7 binary also passes a private abrupt-app-crash rehearsal.
 After one exact automatic save, only the pidfd-pinned private Lyn instance is
 killed. Its abandoned socket retains its original inode/change-time evidence;
