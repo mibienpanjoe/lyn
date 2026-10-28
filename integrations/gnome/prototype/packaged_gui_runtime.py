@@ -265,6 +265,9 @@ def main():
                             wait(lambda: page_heading(nodes(), 'Recent'), 'Second launch did not reopen the original Library')
                             assert app.poll() is None and snapshot() == accepted
                             assert library_window in command('xdotool', 'search', '--onlyvisible', '--pid', str(app.pid)).split()
+                            wait(lambda: command('xdotool', 'getactivewindow') == library_window,
+                                 'Second launch showed Library without foreground activation')
+                            assert command('xdotool', 'getwindowpid', library_window) == str(app.pid)
                             assert (publication.stat().st_ino, publication.read_bytes()) == publication_before, 'Second launch changed native publication'
                         finally:
                             if duplicate.poll() is None:
@@ -293,7 +296,8 @@ def main():
                     screenshot(prefix + 'reopened-library.png')
                     print(json.dumps({'check': 'packaged_gui_reopen', 'sameProcess': True,
                                       'sameWindow': True, 'dataUnchanged': True, 'publicationUnchanged': True,
-                                      'backgroundCapture': True, 'draftPreserved': True, 'minimizedReopen': True}), flush=True)
+                                      'backgroundCapture': True, 'draftPreserved': True, 'minimizedReopen': True,
+                                      'foregroundConfirmed': True}), flush=True)
                 if control.get('checkDraftReturn'):
                     command('xdotool', 'key', '--clearmodifiers', 'ctrl+shift+space')
                     field = wait(lambda: named('Capture text'), 'Draft-return popup absent')
