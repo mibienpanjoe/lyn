@@ -168,8 +168,20 @@ capture/context/media/job/settings/migration rows remain unchanged. The owned
 clipboard producer is bounded and tied to its controller by pidfd; it neither
 reads the prior clipboard nor opens a microphone. A test-controller map-order
 race was corrected with a bounded wait for the exact popup, retaining the
-single-window/PID/focus checks. Installed staged-image source loss/manual
-correction, audio and the remaining lifecycle/update gates are still separate.
+single-window/PID/focus checks. Audio and the remaining lifecycle/update gates
+are still separate.
+
+A separate installed 0.7.7 PNG run then closes only its pidfd-pinned synthetic
+source while the image is staged. The old save opens the chooser with an explicit
+source-stale indicator and no capture/asset changes. Returning to the note retains
+the exact staged bytes, caption and complete painted controls. Explicit selection
+of the existing standalone context then permits one save with that exact context
+UUID and no branch. Every committed RGBA byte, checksum and dimensions match the
+original fixture; corrected draft and Library detail screenshots are inspected.
+Normal UI cleanup removes only that capture, its media file and the now-empty
+synthetic project, preserving the existing correction context and every original
+data row. This qualifies installed image continuity and manual correction after
+source loss, without opening the microphone or closing a working terminal.
 
 The ordinary 0.7.7 binary also passes a private abrupt-app-crash rehearsal.
 After one exact automatic save, only the pidfd-pinned private Lyn instance is
