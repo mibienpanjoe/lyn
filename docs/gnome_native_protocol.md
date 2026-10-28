@@ -135,6 +135,17 @@ window at 125%, focus restoration and painted Library detail. Normal UI deletion
 removes that capture and its media file. This automatic case is independent of
 the manual-correction case above; neither is installed-desktop media reception.
 
+The ordinary 0.7.7 binary also passes a private abrupt-app-crash rehearsal.
+After one exact automatic save, only the pidfd-pinned private Lyn instance is
+killed. Its abandoned socket retains its original inode/change-time evidence;
+relaunch publishes a different instance without restarting the same GNOME
+server or foreground group. The prior capture remains unchanged and visibly
+painted before a second exact automatic save from that same source. Both notes
+and the empty project are then deleted through Library, preserving initial
+private data. No test-only application endpoint is used. This observes endpoint
+replacement and successful fresh admission/capture, not a directly exposed
+protocol generation or installed-desktop crash acceptance.
+
 ## Boundary and lifecycle
 
 Ordinary desktop launches coordinate a single GUI instance before storage, shortcuts and provider setup; closing Library hides its retained window. Later launches only show/focus that window and ignore launch arguments/cwd, without altering a capture draft. This does not replace the native publication lock or authenticate a provider. The packaged GUI runner’s explicit `--check-reopen` checks this on the current package (including the current leg of an optional roundtrip): same process/window/publication, background capture, preserved draft/data and minimized reopen. CI enables that check. Older packages may still run concurrently until explicitly exited; no process is adopted or killed by the plugin.
