@@ -194,6 +194,19 @@ private data. No test-only application endpoint is used. This observes endpoint
 replacement and successful fresh admission/capture, not a directly exposed
 protocol generation or installed-desktop crash acceptance.
 
+Installed 0.7.7 then passes the abrupt-app-crash case on the reference desktop.
+Only the receipt-validated, pidfd-pinned Lyn process is killed after one exact
+synthetic save and an empty/no-media/no-recording preflight. Relaunch uses the
+same verified binary and ordinary user state. The publication changes, while
+the abandoned socket's identity and metadata remain unchanged. The original
+GNOME server/window and foreground shell survive. The prior note remains exact
+in SQLite and visibly painted before a second distinct automatic save from that
+source. Both saves restore source focus; normal UI cleanup removes the two test
+notes and empty project, preserving all initial rows. The restarted Lyn remains
+running with its new owned process receipt. This qualifies that installed app
+crash/reconnect/persistence path, not terminal-server crash, direct observation of
+protocol generations, all startup/race cases or the final reception gate.
+
 A separate ordinary-binary private run starts the protected GNOME server and
 its foreground Bash/sleep group before any Lyn process or native publication.
 After Lyn starts, the original kernel process identity is unchanged; the first
