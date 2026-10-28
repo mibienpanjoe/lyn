@@ -117,6 +117,18 @@ from pixels before normal UI cleanup. Prior private data is unchanged. These
 extend the delivered-artifact evidence without a test-only application command;
 they do not close TUI reception on the user's ordinary service/desktop.
 
+Installed 0.7.7 separately passes the Bash foreground-group recipe with a
+same-cwd sleep child on the reference desktop. The real shortcut resolves alpha,
+saves exactly one note, restores focus and paints the draft/action row and saved
+Library row; normal UI cleanup preserves all original data. Its single cold
+sample is 1019.63 ms input-ready / 1024.84 ms context-ready, not a steady-state
+percentile or a cold-start performance qualification. The following exec-TUI
+attempt saves exactly once with correct attribution/focus but fails its Library
+pixel checkpoint; it is not a successful end-to-end series. A later diagnostic
+shows the exact note visibly painted. Failure-time pixels/active-window evidence
+are required before attributing that refusal to a product or verifier defect;
+the interrupted synthetic capture/project remain pending explicit UI cleanup.
+
 The private ordinary-binary PNG path also passes source-window loss with a
 staged image: repeated invocation retains its bytes/caption, the old save is
 refused with no persisted capture/asset, and explicit manual correction saves
