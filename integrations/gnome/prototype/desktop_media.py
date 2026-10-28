@@ -52,7 +52,7 @@ def run_image_closed_source(*, sdk, app, window, library_window, database, start
     import sqlite3
     import subprocess
     from gi.repository import Atspi, GdkPixbuf
-    from desktop_accessibility import page_heading
+    from desktop_accessibility import library_detail_scope
     from desktop_pixels import region_has_contrast
 
     caption = "synthetic-image-closed-source-caption-ENDOFNOTE"
@@ -185,7 +185,7 @@ def run_image_closed_source(*, sdk, app, window, library_window, database, start
 
     capture = wait_for(row, "Saved image absent from Library")
     assert capture.do_action(0)
-    wait_for(lambda: page_heading(nodes(app.pid), "All captures"), "Library heading absent")
+    wait_for(lambda: library_detail_scope(nodes(app.pid), "All captures", "Screenshot"), "Library heading absent")
     painted = wait_for(lambda: image_painted(caption), "Saved Library detail image did not paint")
     print(json.dumps({"check": "native_closed_source_image_saved", "savedCount": 1,
                       "manualContext": manual_name, "captionAndBytesMatch": True,

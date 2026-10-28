@@ -2,7 +2,7 @@
 
 import unittest
 
-from desktop_accessibility import page_heading, html_alert
+from desktop_accessibility import page_heading, html_alert, library_detail_scope
 
 
 class Node:
@@ -40,6 +40,51 @@ class PageHeadingTest(unittest.TestCase):
                            {"level": "2"}, {"toolkit": "GTK"}, {"tag": ""}):
             with self.subTest(attributes=attributes):
                 self.assertIsNone(page_heading([heading(**attributes)], "All captures"))
+
+
+class LibraryDetailScopeTest(unittest.TestCase):
+    def detail(self, **overrides):
+        return Node("Screenshot", **({"toolkit": "WebKitGTK", "tag": "h2", "id": "capture-detail-title",
+                                    "computed-role": "heading", "level": "2"} | overrides))
+
+    def back(self, name="Back to All captures", **overrides):
+        return Node(name, **({"toolkit": "WebKitGTK", "tag": "button", "computed-role": "button"} | overrides))
+
+    def test_wide_detail_requires_selected_detail_and_exact_scope_heading(self):
+        scope = heading()
+        self.assertIs(library_detail_scope([scope, self.detail()], "All captures", "Screenshot"), scope)
+        self.assertIsNone(library_detail_scope([scope], "All captures", "Screenshot"))
+
+    def test_compact_detail_uses_exact_html_back_control(self):
+        back = self.back()
+        self.assertIs(library_detail_scope([back, self.detail()], "All captures", "Screenshot"), back)
+        self.assertIsNone(library_detail_scope([self.back("All captures"), self.detail()], "All captures", "Screenshot"))
+
+    def test_voice_detail_requires_its_own_kind(self):
+        back = self.back()
+        voice = Node("Voice note", **self.detail().attributes)
+        self.assertIs(library_detail_scope([back, voice], "All captures", "Voice note"), back)
+        self.assertIsNone(library_detail_scope([back, voice], "All captures", "Screenshot"))
+
+    def test_wrong_scope_kind_or_missing_detail_refuses(self):
+        for nodes in ([self.back("Back to Recent"), self.detail()], [self.back()],
+                      [self.back(), Node("Voice note", **self.detail().attributes)]):
+            with self.subTest(nodes=nodes):
+                self.assertIsNone(library_detail_scope(nodes, "All captures", "Screenshot"))
+
+    def test_lookalike_back_and_detail_nodes_refuse(self):
+        for override in ({"tag": "span"}, {"computed-role": "link"}, {"toolkit": "GTK"}):
+            with self.subTest(override=override):
+                self.assertIsNone(library_detail_scope([self.back(**override), self.detail()], "All captures", "Screenshot"))
+        for override in ({"id": "other"}, {"tag": "h1"}, {"level": "1"}, {"toolkit": "GTK"}):
+            with self.subTest(override=override):
+                self.assertIsNone(library_detail_scope([self.back(), self.detail(**override)], "All captures", "Screenshot"))
+
+    def test_ambiguous_scope_or_selected_detail_refuses(self):
+        for nodes in ([heading(), heading(), self.detail(), self.back()],
+                      [self.back(), self.back(), self.detail()], [self.back(), self.detail(), self.detail()]):
+            with self.subTest(nodes=nodes):
+                self.assertIsNone(library_detail_scope(nodes, "All captures", "Screenshot"))
 
 
 class HtmlAlertTest(unittest.TestCase):

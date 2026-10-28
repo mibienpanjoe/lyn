@@ -107,6 +107,17 @@ from pixels before normal UI cleanup. Prior private data is unchanged. These
 extend the delivered-artifact evidence without a test-only application command;
 they do not close TUI reception on the user's ordinary service/desktop.
 
+The private ordinary-binary PNG path also passes source-window loss with a
+staged image: repeated invocation retains its bytes/caption, the old save is
+refused with no persisted capture/asset, and explicit manual correction saves
+one 192×96 image with the exact caption and checksum. Its pixels are verified
+in staging and painted Library detail; normal UI deletion removes the capture
+and committed media file. The private clipboard is synthetic and no microphone
+is opened. This is a manual-correction save, not an automatic image commit or
+installed-desktop media acceptance. The media verifier now requires the selected
+detail heading plus either the wide scope heading or exact compact back control;
+12 semantic regressions preserve refusal of wrong scopes, kinds and duplicates.
+
 ## Boundary and lifecycle
 
 Ordinary desktop launches coordinate a single GUI instance before storage, shortcuts and provider setup; closing Library hides its retained window. Later launches only show/focus that window and ignore launch arguments/cwd, without altering a capture draft. This does not replace the native publication lock or authenticate a provider. The packaged GUI runner’s explicit `--check-reopen` checks this on the current package (including the current leg of an optional roundtrip): same process/window/publication, background capture, preserved draft/data and minimized reopen. CI enables that check. Older packages may still run concurrently until explicitly exited; no process is adopted or killed by the plugin.

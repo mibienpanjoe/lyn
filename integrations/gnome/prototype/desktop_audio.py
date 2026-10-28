@@ -18,7 +18,7 @@ def run_audio_closed_source(*, app, window, library_window, database,
     from pathlib import Path
     import sqlite3
     from gi.repository import Atspi
-    from desktop_accessibility import page_heading
+    from desktop_accessibility import library_detail_scope
     from desktop_pixels import region_has_contrast
 
     caption = "synthetic-audio-closed-source-caption-ENDOFNOTE"
@@ -148,7 +148,7 @@ def run_audio_closed_source(*, app, window, library_window, database,
 
     def detail_painted():
         visible = nodes(app.pid)
-        if not page_heading(visible, "All captures") or named(app.pid, "Play voice note") is None:
+        if not library_detail_scope(visible, "All captures", "Voice note") or named(app.pid, "Play voice note") is None:
             return False
         text = next((node for node in visible if (node.get_attributes() or {}).get("tag") == "p"
                      and (node.get_name() == caption or ("Text" in node.get_interfaces()
