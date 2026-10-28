@@ -122,12 +122,21 @@ same-cwd sleep child on the reference desktop. The real shortcut resolves alpha,
 saves exactly one note, restores focus and paints the draft/action row and saved
 Library row; normal UI cleanup preserves all original data. Its single cold
 sample is 1019.63 ms input-ready / 1024.84 ms context-ready, not a steady-state
-percentile or a cold-start performance qualification. The following exec-TUI
-attempt saves exactly once with correct attribution/focus but fails its Library
-pixel checkpoint; it is not a successful end-to-end series. A later diagnostic
-shows the exact note visibly painted. Failure-time pixels/active-window evidence
-are required before attributing that refusal to a product or verifier defect;
-the interrupted synthetic capture/project remain pending explicit UI cleanup.
+percentile or a cold-start performance qualification. An initial exec-TUI
+attempt saves correctly but fails the Library pixel checkpoint. A subsequent
+failure-time diagnostic establishes that another window is foreground while
+Library coordinates are sampled; CLI relaunch did not establish foreground
+Library on this desktop. This interrupted attempt remains a failed series.
+
+After explicit activation of the PID-checked Library window, the interrupted
+capture/project are removed through UI. Separate installed exec-htop and
+child-htop runs then pass with exact pre-invocation kernel shapes and pidfds:
+the exec case saves alpha/alpha; the child case saves beta/beta while its parent
+shell remains in alpha. Both save one new ID, preserve prior rows, restore source
+focus and paint exact draft/action/Library text. All own notes and empty projects
+are removed through Library. These qualify the installed foreground recipes
+with explicit Library activation; they do not prove foreground activation from
+a duplicate CLI launch or close the other installed fault/media/update gates.
 
 The private ordinary-binary PNG path also passes source-window loss with a
 staged image: repeated invocation retains its bytes/caption, the old save is
