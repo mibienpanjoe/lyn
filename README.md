@@ -13,6 +13,13 @@
   <code>local-first</code> · <code>desktop</code> · <code>tauri</code> · <code>rust</code> · <code>svelte</code> · <code>sqlite</code>
 </p>
 
+<p align="center">
+  <a href="https://github.com/mibienpanjoe/lyn/releases">Download</a> ·
+  <a href="#from-source-development">Build from source</a> ·
+  <a href="#context-providers-linux-x11">Context providers</a> ·
+  <a href="#documentation">Documentation</a>
+</p>
+
 ```text
 global shortcut → type, paste, or record → Enter → return to work
 ```
@@ -37,7 +44,7 @@ Traditional note apps interrupt flow: open a notebook, name a page, pick a folde
 
 ## Download / install
 
-Installers are published on **[GitHub Releases](https://github.com/mibienpanjoe/lyn/releases)** (manual download; no in-app auto-updater).
+The latest published installers are the **[0.6.8 prerelease](https://github.com/mibienpanjoe/lyn/releases/tag/v0.6.8)**. Download them manually from GitHub Releases; Lyn has no in-app auto-updater. The 0.7.7 builds used for native GNOME validation are local builds and have not been published as a release.
 
 | Artifact | Platform | Notes |
 |---|---|---|
@@ -112,7 +119,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 |---|---|
 | Quick capture | Text, screenshot paste, voice note; Enter saves and dismisses |
 | Context | Live sessions + saved contexts; ambiguity never guesses |
-| Library | Chronology by project, detail inspection, capture deletion, play/open media by opaque ID |
+| Library | Newest captures first, project timelines, detail inspection, media playback and capture deletion |
+| Projects | Remove an empty project from the Library without deleting its folder |
 | Search | Bounded local FTS over note bodies and user-visible captions |
 | Settings | Shortcut, theme, provider tie-break order, 1-click integrations installer, optional local speech model, installed app version |
 
@@ -122,12 +130,14 @@ Settings can install a **CPU-only** whisper.cpp engine and multilingual Whisper 
 
 ## Context providers (Linux X11)
 
-Providers are optional. You can configure all of them with **1-click directly in Lyn Settings (under Integrations & Context Providers)** with zero terminal commands, or manually using the guides below:
+Providers are optional. Configure them in **Settings → Integrations & Context Providers**, or follow the manual guides below. Browser setup also requires loading the companion extension in your browser.
 
 - **VS Code & Cursor:** [`integrations/vscode/`](integrations/vscode/README.md) — 1-click install in Lyn Settings, or `pnpm provider:vscode:package` → install `/tmp/lyn-context-provider.vsix` via `code` or `cursor`
 - **Browser (Chrome, Chromium, Brave, Edge, Firefox):** [`integrations/browser/`](integrations/browser/README.md) — 1-click register in Lyn Settings, or `pnpm provider:browser:install` → load unpacked extension in browser
 - **Kitty:** [`integrations/kitty/`](integrations/kitty/README.md) — 1-click configure in Lyn Settings, or watcher path in `kitty.conf`
 - **Shell helper:** [`integrations/shell/`](integrations/shell/README.md) — 1-click add to `~/.bashrc` in Lyn Settings. Opening Lyn refreshes the helper automatically; start a new terminal after an update.
+
+On the reference Linux/X11 stack, a locally built 0.7.7 package can also prepare the native GNOME Terminal integration from Settings. It identifies the invoking window and tab using verified local metadata. When an exact source cannot be established, Lyn asks you to choose a context. Activation and compatibility are limited to the [documented reference stack and acceptance scope](docs/gnome_native_protocol.md#installed-reference-reception-matrix).
 
 Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
