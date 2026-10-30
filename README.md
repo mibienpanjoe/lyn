@@ -51,10 +51,12 @@ Installers are published on **[GitHub Releases](https://github.com/mibienpanjoe/
 
 | Target | Status |
 |---|---|
-| Pop!_OS 22.04 LTS / Ubuntu-compatible, x86_64, **X11** | Verified baseline (dev); package install pending owner smoke |
+| Pop!_OS 22.04 LTS / Ubuntu-compatible, x86_64, **X11** | Reference package installed; core capture verified through 0.7.7; full GNOME acceptance still in progress |
 | Windows x86_64 | Expansion — buildable; claim support only after `.exe` smoke |
 | macOS | Deferred |
 | Wayland | Deferred |
+
+The native GNOME integration has been tested in local 0.7.7 builds on the reference X11/GTK 3.24.33/VTE 0.68.0 stack. These local results do not imply a published native release. See the [verified cases and remaining acceptance](docs/gnome_native_protocol.md#installed-reference-reception-matrix).
 
 Toolchain for from-source builds: Node 24.12.0, pnpm 10.28.0, Rust 1.96.1, plus [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for the host OS.
 
@@ -86,9 +88,9 @@ For the isolated native resource check after packaging:
 
 ```bash
 pnpm provider:gnome:package:test \
-  --receipt dist-packages/lyn-0.6.8-linux-x86_64-native.json \
-  --portable dist-packages/lyn-0.6.8-linux-x86_64.tar.gz \
-  --deb src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/Lyn_0.6.8_amd64.deb
+  --receipt dist-packages/lyn-0.7.7-linux-x86_64-native.json \
+  --portable dist-packages/lyn-0.7.7-linux-x86_64.tar.gz \
+  --deb src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/Lyn_0.7.7_amd64.deb
 ```
 
 This developer check needs the [GNOME fixture prerequisites](AGENTS.md). It verifies and loads the package-extracted module in private Xvfb/D-Bus, without rebuilding that module or installing either package. It does not launch the packaged GUI.

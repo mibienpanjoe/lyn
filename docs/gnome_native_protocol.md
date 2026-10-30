@@ -1,12 +1,57 @@
 # Native GNOME metadata protocol
 
-**Status:** Accepted implementation contract for Linux/X11. The native entry, Rust broker, capture wiring, guarded management UI and local DEB/portable packaging are implemented. Reference installed reception is in progress on0.7.2; its actual default GNOME service loads the owned module and the installed app admits its connection. This is distinct from a published native release or complete installed acceptance. The bounded safety audit's memory/diagnostic limitations remain, including the separate global LSan qualification. This page does not expand compatibility beyond the verified reference stack.
+**Status:** Accepted implementation contract for Linux/X11. The native entry,
+Rust broker, capture wiring, guarded management UI and local DEB/portable
+packaging are implemented. The most recent accepted installed reference runs
+use 0.7.7 (2026-10-28), following the initial 0.7.2 reception. Installed acceptance
+and final review remain partial; no published native release follows from these
+results. The bounded safety audit's memory/diagnostic limitations remain,
+including the nonzero global LSan diagnostic and historical unexplained initial
+query refusal. Compatibility remains limited to the verified reference stack.
 
-### Partial installed reference reception
+### Installed reference reception matrix
+
+This table is the current coverage summary, reconciled against retained operator
+results on 2026-10-30. **Installed proven** refers to the ordinary reference
+desktop and the version shown; **private proven** refers to the stated fixture,
+not an installed result. Historical pending/failure statements below describe
+their original runs and do not reopen cases with later accepted evidence.
+Existing successful cases need another run only after a relevant change, a
+failure or a newly identified coverage gap.
+
+| Requirement | Accepted evidence | Remaining boundary |
+| --- | --- | --- |
+| Ordinary GNOME activation and connection | Installed 0.7.2: exact package, owned module mapping and Settings Connected | Full management/recovery reception remains separate |
+| Concurrent windows | Installed 0.7.2: 20 pairs, 40 exact saves, no wrong attribution (`5d02d63de3`) | Acquired; no repeat solely because other cases remain open |
+| Steady windows and tabs | Installed 0.7.2: 100 measured invocations per series, initialization separate (`35d9bd6155`, `c6bbde093c`) | Those latency distributions describe 0.7.2, not a measured 0.7.7 percentile |
+| Post-resolution A→B and A→B→A | Installed 0.7.7: stale refusal, painted draft/controls, fresh exact save and cleanup (`a2937d8898`) | Initial-query races are a different case |
+| Closed source/tab | Installed 0.7.7: A closes, B survives, no opportunistic save, draft preserved and fresh exact B save (`96b7109e00`) | Server/process identity recycling is separate |
+| Shell and foreground TUI policy | Installed 0.7.7: Bash/sleep, exec-htop and child-htop in beta with parent Bash in alpha (`5192baa359`, `001ddf999b`, `7552b1beac`) | Uncovered remote/multiplexed/container cases remain unresolved |
+| Automatic PNG save | Installed 0.7.7: exact project/branch, caption, RGBA bytes, SQLite, painted preview/Library, focus and cleanup (`54fb9aebaa`) | Acquired for the fixed synthetic image path |
+| PNG after source loss and manual correction | Installed 0.7.7: stale save writes nothing, bytes/draft retained, existing context UUID selected, exact save and cleanup (`acbb15642a`) | Acquired; this manual save is not counted as automatic |
+| Abrupt Lyn crash/reconnect | Installed 0.7.7: retained original source, durable prior note painted, fresh exact save, new publication and unchanged abandoned socket (`430cc4785f`) | GNOME server crash and numeric identity reuse are separate |
+| Lyn before/after the terminal server | Installed 0.7.2 concurrent series starts sources after Lyn; installed 0.7.7 crash/relaunch retains the original server/source before the new Lyn process and exact save (`430cc4785f`) | Ordering is acquired; first-ever cold admission without a previous publication has separate private ordinary-binary evidence |
+| Topology change during initial query | Private native desktop fixture: A→B and A→B→A after invocation, refusal and intact draft | Installed timing case not yet proven |
+| Cwd change, stale live selection and connection generation | Private native desktop fixtures: stale selection/save refusal, intact draft and fresh exact save | Installed cases not yet proven |
+| PID/PTY/XID reuse and shell exit | Private kernel/desktop fixtures at their documented boundaries | Not qualified by the installed app-crash or closed-tab cases alone |
+| Module absent, slow or disconnected | Private fixtures; ordinary 0.7.7 absent-module case also preserves input/draft without an automatic guess | Installed degraded-path reception not yet proven |
+| WAV continuity, correction and late-result refusal | Private native/backend and synthetic-device fixtures | Ordinary installed audio-device path and physical microphone/transcription are not proven; physical tests deferred manually |
+| Library navigation and popup scaling | Installed 0.7.6/0.7.7: new projects discovered/deleted without restart; exact draft/action row at 125% | Duplicate CLI launch foreground is not established on the GNOME desktop |
+| Library duplicate launch | Installed 0.7.2: same process/window/publication; both 0.7.7 packages pass explicit foreground checks on private Openbox | Later GNOME CLI foreground refusal retained; private success does not clear it |
+| Management update/removal/recovery/rollback | Private transaction, real-manager and package fixtures at their documented boundaries | Installed lifecycle reception remains open; last installed launcher observation has no previous module digest, so no distinct-payload rollback is claimed |
+| Other-provider regressions and final performance verdict | Existing targeted and historical checks remain evidence within their versions/scopes | Final relevant-current-code review and verification still required |
+| Physical sleep/wake | Deferred manually by the user | No machine suspension is claimed |
+
+### Reference reception history
 
 On the GTK3.24.33/VTE0.68.0 X11 reference desktop, the0.7.2 package was installed and its executable digest verified. The ordinary GNOME service loaded the exact stored native module after an operator-managed restart; real Settings reported Connected. A normal close/relaunch of Lyn retained its PID, Library window and native publication. Twenty concurrent window pairs then saved40 correctly attributed notes. Separate continuous window and tab series each passed one initialization plus100 steady invocations, checking automatic project/branch, exactly one new SQLite ID, unchanged prior capture records and focus restoration. No manual source choice qualified as automatic success. Input-ready p95 was159.22ms for windows and144.10ms for tabs; context-ready p95 was169.16ms and152.39ms respectively. These are external UI observations on that desktop without concurrent Lyn compilation, not wire-deadline measurements. Earlier controller-precondition interruptions and a tab series interrupted by concurrent user desktop activity are retained separately and do not count as completed series.
 
-Installed fault/race, media, reversible update/removal/rollback and final reception still need their own evidence. Isolated GTK/Rust/desktop proofs remain identified as such; they do not become installed results through these completed series. Microphone/transcription and physical suspend/resume remain deferred to the user's manual step. Generic GNOME `installed:false` remains reserved until the full acceptance contract is met.
+At that initial 0.7.2 checkpoint, installed fault/race, media, reversible
+management and final reception remained open. Subsequent accepted installed
+text/PNG/source-loss/crash cases are recorded below and in the current matrix.
+Private proofs remain identified by environment. Microphone/transcription and
+physical suspend/resume stay deferred to the user's manual step. Generic GNOME
+`installed:false` remains reserved until the full acceptance contract is met.
 
 Installed 0.7.4 post-resolution continuity checks exercised both A→B and A→B→A
 in one owned two-tab window. Each stale save opened the chooser, explicitly
@@ -212,8 +257,10 @@ its foreground Bash/sleep group before any Lyn process or native publication.
 After Lyn starts, the original kernel process identity is unchanged; the first
 capture automatically saves exactly one alpha/alpha note, restores focus and
 paints both draft controls and Library text. UI cleanup preserves initial data.
-This qualifies late-app startup in that private setup, not repeated cold-start
-reliability, installed startup ordering or initial-query topology races.
+This qualifies first-ever late-app startup in that private setup, not repeated
+cold-start reliability or initial-query topology races. The original installed
+before/after-server ordering criterion is separately covered by the concurrent
+and app-crash/relaunch receipts in the current matrix.
 
 The ordinary-binary private module-absent case starts a real GNOME server with
 no native module mapped. Input remains available, context stays unresolved and
