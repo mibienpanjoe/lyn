@@ -5,7 +5,7 @@ Local, privacy-bounded context provider for web browsers (Google Chrome, Chromiu
 ## How it works
 
 1. **Companion Extension (`integrations/browser/`):**
-   A lightweight Manifest V3 WebExtension that reports the focused tab and invokes capture from it (`lyn.capture`). Chrome, Chromium, Brave, and Edge cannot bind `Ctrl+Alt+Shift+L` as a suggested key, so the companion suggests `Alt+Shift+L` (rebindable in the browser). Editor, Cursor, and Kitty keep `Ctrl+Alt+Shift+L`.
+   A lightweight Manifest V3 WebExtension that reports the focused tab and invokes capture from it (`lyn.capture`). The companion suggests `Alt+L`, rebindable in the browser; editor and Kitty integrations use the same combination by default.
    - Sends only sanitized `file:` and localhost-family URLs (no query, fragment, or title).
    - Ignores incognito / private browsing tabs completely.
    - Remote sites open capture without automatic project resolution.
@@ -13,6 +13,8 @@ Local, privacy-bounded context provider for web browsers (Google Chrome, Chromiu
    A small, secure Rust binary communicating via standard input/output with Chrome / Firefox, forwarding messages to Lyn's private Unix socket (`$XDG_RUNTIME_DIR/lyn-browser-v1.sock`). The helper shuts down the Unix write side after the payload so Lyn can bound the read and check the peer uid.
 3. **Localhost Port Resolution:**
    When you test local web services (`http://localhost:5173`, `http://127.0.0.1:3000`, `http://[::1]:…`), Lyn inspects `/proc/net/tcp` and `/proc/net/tcp6`, maps listen inodes to same-user processes, skips `docker-proxy`, and binds the capture only when every remaining listener shares one working directory. Two processes with different cwds, or a Docker published port with no other proven project directory, stay unresolved.
+
+Existing browser shortcut assignments can be retained across extension updates. Check the browser's extension shortcut settings and select `Alt+L` if it did not update or is already in use. Browser or operating-system shortcuts may take priority.
 
 ## Setup
 

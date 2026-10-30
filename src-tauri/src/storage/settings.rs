@@ -162,7 +162,7 @@ pub(crate) fn valid_shortcut(shortcut: &str) -> bool {
         && shortcut.split('+').all(|part| !part.is_empty())
 }
 
-pub(crate) const INTEGRATION_INVOKE_SHORTCUT: &str = "Control+Alt+Shift+L";
+pub(crate) const INTEGRATION_INVOKE_SHORTCUT: &str = "Alt+L";
 
 pub(crate) fn is_reserved_integration_shortcut(shortcut: &str) -> bool {
     canonicalize_shortcut_parts(shortcut)
@@ -231,8 +231,8 @@ mod tests {
         assert!(valid_shortcut("Control+Shift+Space"));
         assert!(!valid_shortcut(" Control+Space"));
         assert!(!valid_shortcut("Control++Space"));
-        assert!(is_reserved_integration_shortcut("Control+Alt+Shift+L"));
-        assert!(is_reserved_integration_shortcut("Ctrl+Alt+Shift+L"));
+        assert!(is_reserved_integration_shortcut("Alt+L"));
+        assert!(is_reserved_integration_shortcut("l+alt"));
         assert!(!is_reserved_integration_shortcut("Control+Shift+Space"));
         assert!(!is_reserved_integration_shortcut("Control+Alt+L"));
         assert!(valid_provider_order(&[

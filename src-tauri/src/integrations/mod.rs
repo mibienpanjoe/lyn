@@ -725,7 +725,7 @@ fn install_kitty(home: &Path) -> InstallIntegrationResult {
 
     let conf_file = kitty_dir.join("kitty.conf");
     let existing_content = fs::read_to_string(&conf_file).unwrap_or_default();
-    let mut new_content = existing_content;
+    let mut new_content = existing_content.clone();
     let mut changed = false;
     if !new_content.contains("lyn_context_watcher.py") {
         new_content.push_str(&format!(
@@ -734,11 +734,41 @@ fn install_kitty(home: &Path) -> InstallIntegrationResult {
         ));
         changed = true;
     }
-    if !new_content.contains("lyn_capture.py") {
-        new_content.push_str(&format!(
-            "\nmap ctrl+alt+shift+l kitten {}\n",
-            capture_file.display()
-        ));
+    let old_mapping = format!("map ctrl+alt+shift+l kitten {}", capture_file.display());
+    let new_mapping = format!("map alt+l kitten {}", capture_file.display());
+    let has_old = new_content.lines().any(|line| line == old_mapping);
+    let has_capture = new_content.contains("lyn_capture.py");
+    if has_old || !has_capture {
+        let conflicting = new_content.lines().any(|line| {
+            let mut words = line.split_whitespace();
+            words.next() == Some("map")
+                && words.any(|key| key.eq_ignore_ascii_case("alt+l"))
+                && line.trim() != new_mapping
+        });
+        if conflicting {
+            return InstallIntegrationResult {
+                configuration_revision: None,
+                id: IntegrationId::Kitty,
+                success: false,
+                message: "Alt+L is already mapped in kitty.conf; preserve it and choose a shortcut manually.".to_owned(),
+                installed: has_capture,
+            };
+        }
+        if has_old {
+            new_content = new_content
+                .split_inclusive('\n')
+                .map(|line| {
+                    let body = line.trim_end_matches(['\r', '\n']);
+                    if body == old_mapping {
+                        format!("{}{}", new_mapping, &line[body.len()..])
+                    } else {
+                        line.to_owned()
+                    }
+                })
+                .collect();
+        } else {
+            new_content.push_str(&format!("\n{new_mapping}\n"));
+        }
         changed = true;
     }
     if changed && let Err(e) = fs::write(&conf_file, new_content) {
@@ -1043,10 +1073,59 @@ mod tests {
         let kitty = fs::read_to_string(kitty_conf).unwrap();
         assert!(kitty.contains("map ctrl+shift+y new_tab"));
         assert_eq!(kitty.matches("watcher ").count(), 1);
-        assert_eq!(kitty.matches("map ctrl+alt+shift+l kitten ").count(), 1);
+        assert_eq!(kitty.matches("map alt+l kitten ").count(), 1);
         let bash = fs::read_to_string(bashrc).unwrap();
         assert!(bash.contains("alias keepme='echo local'"));
         assert_eq!(bash.matches("# Lyn Context Provider").count(), 1);
+    }
+
+    #[test]
+    fn kitty_shortcut_migration_preserves_custom_bindings_and_refuses_conflicts() {
+        let temp = tempdir().unwrap();
+        let home = temp.path();
+        let dir = home.join(".config/kitty");
+        fs::create_dir_all(&dir).unwrap();
+        let conf = dir.join("kitty.conf");
+        let capture = dir.join("lyn_capture.py");
+        let old = format!("map ctrl+alt+shift+l kitten {}\n", capture.display());
+        fs::write(&conf, format!("map ctrl+shift+y new_tab\n{old}")).unwrap();
+        assert!(install_kitty(home).success);
+        let result = fs::read_to_string(&conf).unwrap();
+        assert!(result.contains("map ctrl+shift+y new_tab"));
+        assert!(!result.contains(&old));
+        assert!(result.contains(&format!("map alt+l kitten {}", capture.display())));
+        assert!(install_kitty(home).success);
+        assert_eq!(fs::read_to_string(&conf).unwrap(), result);
+
+        let conflict = format!("map alt+l new_tab\n{old}");
+        fs::write(&conf, &conflict).unwrap();
+        assert!(!install_kitty(home).success);
+        assert_eq!(fs::read_to_string(&conf).unwrap(), conflict);
+
+        let custom = format!(
+            "watcher {}/lyn_context_watcher.py\nmap ctrl+q kitten {}\n",
+            dir.display(),
+            capture.display()
+        );
+        fs::write(&conf, &custom).unwrap();
+        assert!(install_kitty(home).success);
+        assert_eq!(fs::read_to_string(&conf).unwrap(), custom);
+
+        let crlf = format!(
+            "watcher {}/lyn_context_watcher.py\r\nmap ctrl+shift+y new_tab\r\n{}\r\n",
+            dir.display(),
+            old.trim_end()
+        );
+        fs::write(&conf, crlf).unwrap();
+        assert!(install_kitty(home).success);
+        assert_eq!(
+            fs::read_to_string(&conf).unwrap(),
+            format!(
+                "watcher {}/lyn_context_watcher.py\r\nmap ctrl+shift+y new_tab\r\nmap alt+l kitten {}\r\n",
+                dir.display(),
+                capture.display()
+            )
+        );
     }
 
     #[test]
@@ -1152,7 +1231,7 @@ mod tests {
         assert!(manifest_json["key"].is_string());
         assert_eq!(
             manifest_json["commands"]["lyn.capture"]["suggested_key"]["default"],
-            "Alt+Shift+L"
+            "Alt+L"
         );
         assert_eq!(
             manifest_json["background"]["service_worker"],
@@ -1180,7 +1259,7 @@ mod tests {
         );
         assert_eq!(
             firefox_extension["commands"]["lyn.capture"]["suggested_key"]["default"],
-            "Alt+Shift+L"
+            "Alt+L"
         );
     }
 

@@ -177,7 +177,11 @@ test('manifest.json defines consistent Chromium key and Firefox Gecko ID', () =>
   assert.strictEqual(id, 'aecihlceemkggejjmpphmnhpdcgnhife');
   assert.strictEqual(
     manifest.commands?.['lyn.capture']?.suggested_key?.default,
-    'Alt+Shift+L',
+    'Alt+L',
+  );
+  assert.strictEqual(
+    manifest.commands?.['lyn.capture']?.suggested_key?.mac,
+    'Alt+L',
   );
   assert.strictEqual(manifest.background?.service_worker, 'background.js');
 });
@@ -197,6 +201,10 @@ test('manifest.firefox.json uses an event page instead of a service worker', () 
   assert.strictEqual(manifest.background?.service_worker, undefined);
   assert.strictEqual(
     manifest.commands?.['lyn.capture']?.suggested_key?.default,
-    'Alt+Shift+L',
+    'Alt+L',
+  );
+  assert.strictEqual(
+    manifest.commands?.['lyn.capture']?.suggested_key?.mac,
+    'Alt+L',
   );
 });

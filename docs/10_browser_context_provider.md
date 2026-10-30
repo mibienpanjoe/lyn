@@ -54,7 +54,7 @@ In particular, for developers testing local web services (`http://localhost:<por
 5. **Localhost Process Verification:**
    For local ports (`localhost`, `127.0.0.1`, `::1`), Lyn queries `/proc/net/tcp` and `/proc/net/tcp6`, maps listen inodes to same-user processes, skips `docker-proxy`, and accepts a directory only when every remaining listener shares one cwd. The first matching PID is never chosen by itself.
 6. **Source-tab invoke:**
-   `lyn.capture` sends protocol v2 `{kind: invoke, requestId}` over Native Messaging while the tab still has focus. Chromium cannot register `Ctrl+Alt+Shift+L` as a suggested command, so the companion suggests `Alt+Shift+L` (rebindable in the browser). Firefox MV3 loads `background.scripts` rather than a service worker. Window identity is assigned by Rust. Replayed `requestId` values are ignored. The Native Messaging helper shuts down its Unix write side after the JSON payload so the broker can bound the read.
+   `lyn.capture` sends protocol v2 `{kind: invoke, requestId}` over Native Messaging while the tab still has focus. The companion suggests `Alt+L`, rebindable in the browser. Firefox MV3 loads `background.scripts` rather than a service worker. Window identity is assigned by Rust. Replayed `requestId` values are ignored. The Native Messaging helper shuts down its Unix write side after the JSON payload so the broker can bound the read.
 
 ## Evidence Ranking & Tie-Breaking
 

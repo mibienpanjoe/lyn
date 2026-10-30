@@ -76,7 +76,7 @@ pnpm install
 pnpm tauri dev
 ```
 
-Default shortcut: `Ctrl+Shift+Space` opens quick capture. The Library window is the main shell.
+Default shortcut: `Ctrl+Shift+Space` opens quick capture. The editor, Kitty and browser integrations suggest `Alt+L`; their existing user bindings can take precedence. Keep the global shortcut different. The Library window is the main shell.
 
 ### Build release packages
 
@@ -95,9 +95,9 @@ For the isolated native resource check after packaging:
 
 ```bash
 pnpm provider:gnome:package:test \
-  --receipt dist-packages/lyn-0.7.7-linux-x86_64-native.json \
-  --portable dist-packages/lyn-0.7.7-linux-x86_64.tar.gz \
-  --deb src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/Lyn_0.7.7_amd64.deb
+  --receipt dist-packages/lyn-0.7.8-linux-x86_64-native.json \
+  --portable dist-packages/lyn-0.7.8-linux-x86_64.tar.gz \
+  --deb src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/Lyn_0.7.8_amd64.deb
 ```
 
 This developer check needs the [GNOME fixture prerequisites](AGENTS.md). It verifies and loads the package-extracted module in private Xvfb/D-Bus, without rebuilding that module or installing either package. It does not launch the packaged GUI.

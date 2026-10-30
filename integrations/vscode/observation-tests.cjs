@@ -13,6 +13,25 @@ const {
 
 const instanceId = '7af0a690-8948-4f0a-b9f0-51e43c583efa';
 
+test('capture uses Alt+L for both focused surfaces', () => {
+  const manifest = require('./package.json');
+  const bindings = manifest.contributes.keybindings.filter(
+    (binding) => binding.command === 'lyn.capture',
+  );
+  assert.deepEqual(
+    bindings.map((binding) => binding.key),
+    ['alt+l', 'alt+l'],
+  );
+  assert.deepEqual(
+    bindings.map((binding) => binding.mac),
+    ['alt+l', 'alt+l'],
+  );
+  assert.deepEqual(
+    bindings.map((binding) => binding.args.surface),
+    ['terminal', 'editor'],
+  );
+});
+
 test('terminal shortcut skips the shell by default without writing user settings', () => {
   const manifest = require('./package.json');
   assert.deepEqual(manifest.contributes.configurationDefaults, {

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lyn Context Provider",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Privacy-bounded local context integration for Lyn",
   "browser_specific_settings": {
     "gecko": {
@@ -16,8 +16,8 @@
     "lyn.capture": {
       "description": "Lyn: Capture from this tab",
       "suggested_key": {
-        "default": "Alt+Shift+L",
-        "mac": "MacCtrl+Shift+L"
+        "default": "Alt+L",
+        "mac": "Alt+L"
       }
     }
   }

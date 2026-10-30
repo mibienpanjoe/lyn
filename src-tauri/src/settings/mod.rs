@@ -39,7 +39,9 @@ pub(crate) fn update(
     if !settings::valid_shortcut(&next.global_shortcut) {
         return Err(SettingsError::InvalidShortcut);
     }
-    if settings::is_reserved_integration_shortcut(&next.global_shortcut) {
+    if next.global_shortcut != current.global_shortcut
+        && settings::is_reserved_integration_shortcut(&next.global_shortcut)
+    {
         return Err(SettingsError::ReservedShortcut);
     }
     if !settings::valid_provider_order(&next.provider_tie_break_order) {
@@ -72,7 +74,10 @@ pub(crate) fn update(
 mod tests {
     use crate::{
         contract::{ContextProviderKind, LanguageSetting, SettingsPatch, ThemeSetting},
-        storage::{Database, settings::SettingsRepository},
+        storage::{
+            Database,
+            settings::{self, SettingsRepository},
+        },
     };
 
     use super::{SettingsError, SettingsPlatform, update};
@@ -140,7 +145,7 @@ mod tests {
         let result = update(
             &mut database,
             SettingsPatch {
-                global_shortcut: Some("Ctrl+Alt+Shift+L".to_owned()),
+                global_shortcut: Some("Alt+L".to_owned()),
                 ..SettingsPatch::default()
             },
             &mut platform,
@@ -155,6 +160,29 @@ mod tests {
                 .global_shortcut,
             "Control+Shift+Space"
         );
+    }
+
+    #[test]
+    fn previously_configured_integration_key_does_not_block_unrelated_updates() {
+        let mut database = Database::open_in_memory().unwrap();
+        let mut current = settings::load(database.connection()).unwrap();
+        current.global_shortcut = "Alt+L".to_owned();
+        let transaction = database.connection_mut().transaction().unwrap();
+        settings::save(&transaction, &current).unwrap();
+        transaction.commit().unwrap();
+        let mut platform = platform(false);
+        platform.shortcut = "Alt+L".to_owned();
+        let result = update(
+            &mut database,
+            SettingsPatch {
+                theme: Some(ThemeSetting::Dark),
+                ..SettingsPatch::default()
+            },
+            &mut platform,
+        )
+        .unwrap();
+        assert_eq!(result.global_shortcut, "Alt+L");
+        assert_eq!(result.theme, ThemeSetting::Dark);
     }
 
     #[test]

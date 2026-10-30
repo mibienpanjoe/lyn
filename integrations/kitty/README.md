@@ -14,8 +14,10 @@ For a development checkout, add these absolute paths to `kitty.conf`:
 
 ```text
 watcher /home/mj/projects/lyn/integrations/kitty/lyn_context_watcher.py
-map ctrl+alt+shift+l kitten /home/mj/projects/lyn/integrations/kitty/lyn_capture.py
+map alt+l kitten /home/mj/projects/lyn/integrations/kitty/lyn_capture.py
 ```
+
+Reinstalling through Lyn migrates its exact previous default mapping to `Alt+L`. An existing conflicting `Alt+L` mapping is preserved and must be resolved manually; custom Lyn mappings are preserved.
 
 Restart Kitty after adding the watcher and kitten. Kitty applies watcher configuration to newly created windows. Keep Lyn running while testing so the private runtime socket exists.
 

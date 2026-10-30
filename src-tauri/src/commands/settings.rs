@@ -225,7 +225,7 @@ mod tests {
         let database = Mutex::new(Database::open_in_memory().unwrap());
 
         let result = update_settings_value(
-            json!({ "patch": { "globalShortcut": "Control+Alt+Shift+L" } }),
+            json!({ "patch": { "globalShortcut": "Alt+L" } }),
             &database,
             &mut ConflictingPlatform,
         );

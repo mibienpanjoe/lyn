@@ -7,7 +7,7 @@ has focus.
 The extension sends only an ephemeral per-window identifier, focus state, a
 `surface` of `editor` or `terminal`, and one local directory hint over Lyn's
 user-only Unix socket. Heartbeats are protocol v1 window observations.
-`Lyn: Capture from this window` (`lyn.capture`, `Ctrl+Alt+Shift+L`) sends a
+`Lyn: Capture from this window` (`lyn.capture`, `Alt+L`) sends a
 v2 invoke frame with a request generation. Editor invocations use the workspace
 folder list and ignore the last-used `activeTerminal`. Terminal invocations
 send that focused terminal's live `shellIntegration.cwd` when it is a local
@@ -36,6 +36,8 @@ For Cursor:
 pnpm provider:vscode:package
 cursor --install-extension /tmp/lyn-context-provider.vsix --force
 ```
+
+Existing user keybindings take precedence over the extension default; review your keybindings if `Alt+L` is already assigned.
 
 Reload existing VS Code or Cursor windows after installation. While Lyn is running, the
 extension reconnects to its local socket automatically.
