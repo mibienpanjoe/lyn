@@ -39,7 +39,8 @@ failure or a newly identified coverage gap.
 | Library navigation and popup scaling | Installed 0.7.6/0.7.7: new projects discovered/deleted without restart; exact draft/action row at 125% | Duplicate CLI launch foreground is not established on the GNOME desktop |
 | Library duplicate launch | Installed 0.7.2: same process/window/publication; both 0.7.7 packages pass explicit foreground checks on private Openbox | Later GNOME CLI foreground refusal retained; private success does not clear it |
 | Management update/removal/recovery/rollback | Private transaction, real-manager and package fixtures at their documented boundaries | Installed lifecycle reception remains open; last installed launcher observation has no previous module digest, so no distinct-payload rollback is claimed |
-| Other-provider regressions and final performance verdict | Existing targeted and historical checks remain evidence within their versions/scopes | Final relevant-current-code review and verification still required |
+| Hosted build and package verification | Branch-dispatched workflow [41023476844](https://github.com/mibienpanjoe/lyn/actions/runs/41023476844) passed for `7b920df`: Linux frontend, package guards, native package/resource and private packaged GUI checks; Windows installer build passed | Publication was skipped. Hosted private checks do not prove an installed desktop or Windows runtime. Later documentation-only commits are outside that run |
+| Other-provider regressions and final performance verdict | Current local provider fixtures pass: VS Code 12, browser 13, Kitty 9 and shell bootstrap | Fixture results do not establish live integrations; final relevant-current-code review and performance verdict remain |
 | Physical sleep/wake | Deferred manually by the user | No machine suspension is claimed |
 
 ### Reference reception history
