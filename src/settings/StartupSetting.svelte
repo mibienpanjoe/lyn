@@ -54,7 +54,7 @@
   });
 </script>
 
-<section aria-labelledby="startup-title">
+<section class="settings-section" aria-labelledby="startup-title">
   <div>
     <h2 id="startup-title">{french ? 'Démarrage' : 'Startup'}</h2>
     <p>
@@ -65,6 +65,7 @@
   </div>
   <button
     type="button"
+    class="secondary-action"
     role="switch"
     aria-checked={enabled === true}
     disabled={busy || enabled === null}
@@ -89,32 +90,11 @@
         ? 'Impossible de confirmer le démarrage automatique.'
         : 'Could not confirm automatic startup.'}
     </p>
-    <button type="button" disabled={busy} onclick={refresh}
-      >{french ? 'Vérifier à nouveau' : 'Check again'}</button
+    <button
+      class="secondary-action"
+      type="button"
+      disabled={busy}
+      onclick={refresh}>{french ? 'Vérifier à nouveau' : 'Check again'}</button
     >
   {/if}
 </section>
-
-<style>
-  section {
-    display: grid;
-    gap: 1rem;
-    padding: 1.5rem 0;
-    border-bottom: 1px solid var(--border, #343434);
-  }
-  h2 {
-    font-size: 1rem;
-    margin: 0 0 0.4rem;
-  }
-  p {
-    margin: 0;
-    font-size: 0.875rem;
-    opacity: 0.75;
-  }
-  button {
-    display: flex;
-    gap: 0.6rem;
-    align-items: center;
-    font-size: 0.875rem;
-  }
-</style>

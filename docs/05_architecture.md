@@ -747,7 +747,13 @@ provider services as in ADR-012. Explicitly quitting Lyn still makes integration
 shortcuts unavailable until Lyn is relaunched; login startup is not a watchdog.
 
 Linux is the acceptance priority. The plugin provides Windows/macOS registration
-mechanisms, but neither platform is runtime-validated here. Unit/component checks
-and a Linux compile do not prove login-manager execution, installed background
-focus behaviour, or the still-open installed Alt+L acceptance. Those require
+mechanisms, but neither platform is runtime-validated here. A real Linux GUI
+fixture with a masked home and private Xvfb/D-Bus verified background and repeated
+background launches stay hidden, ordinary launch reopens the retained instance,
+Settings creates the exact desktop entry, its registered command starts services
+without a visible window, registration survives process restart, and disabling it
+removes the entry. The startup Settings screen was inspected with software
+rendering; accessibility responses alone were insufficient to prove painting.
+These checks do not prove login-manager execution, installed background focus
+behaviour, or the still-open installed Alt+L acceptance. Those require
 packaged/installed checks; no user logout is performed automatically.
