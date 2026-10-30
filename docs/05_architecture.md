@@ -407,7 +407,7 @@ Tauri startup
 
 If storage initialization fails, Lyn may show diagnostics and settings but MUST NOT accept captures deceptively.
 
-Closing Library hides its existing window while background capture remains available. A subsequent ordinary launch brings that same window forward without starting another capture service or provider broker, or modifying an active draft. The desktop single-instance plugin is registered first; its callback ignores launch arguments and working-directory values. Linux coordination is scoped to the session bus and does not replace the native broker’s exclusive publication/admission boundary. Shell/Native Messaging helper entry modes still dispatch before GUI startup. See ADR-012.
+Closing Library hides its existing window while background capture remains available. A subsequent ordinary launch brings that same window forward without starting another capture service or provider broker, or modifying an active draft. The desktop single-instance plugin is registered first; its callback ignores working-directory values and all launch arguments except the exact background-start flag. Linux coordination is scoped to the session bus and does not replace the native broker’s exclusive publication/admission boundary. Shell/Native Messaging helper entry modes still dispatch before GUI startup. See ADR-012.
 
 ### Quick invocation and context preparation
 
@@ -720,6 +720,34 @@ The owning [native protocol contract](gnome_native_protocol.md) defines framing,
 
 **Status:** Accepted, 2026-10-26; implementation reception in progress.
 
-The existing PRD requires capture to remain available without a visible Library. Destroying its window while retaining the hidden popup leaves a process that cannot reopen Library; a second launch may then compete for shortcuts and the native broker. Closing Library therefore hides it, while the official [Tauri single-instance plugin](https://docs.rs/tauri-plugin-single-instance/2.4.0/tauri_plugin_single_instance/) routes later ordinary launches to unminimize/show/focus that same window before another instance reaches application setup. It receives no capture authority: arguments and cwd are ignored, no payload reaches the frontend, and no session is created or cancelled. Helper modes remain outside this GUI coordination.
+The existing PRD requires capture to remain available without a visible Library. Destroying its window while retaining the hidden popup leaves a process that cannot reopen Library; a second launch may then compete for shortcuts and the native broker. Closing Library therefore hides it, while the official [Tauri single-instance plugin](https://docs.rs/tauri-plugin-single-instance/2.4.0/tauri_plugin_single_instance/) routes later ordinary launches to unminimize/show/focus that same window before another instance reaches application setup. It receives no capture authority: cwd and all arguments except `--background` are ignored, no payload reaches the frontend, and no session is created or cancelled. Helper modes remain outside this GUI coordination.
 
 Version2.4.0 is pinned to preserve the existing Tauri2.11 dependency set. Linux coordination depends on its session bus; it is not a machine-global or cross-user lock, nor does it adopt older already-running versions without the plugin. The native broker retains its independent strict publication lease. The packaged Linux fixture checks hidden/minimized reopen, one retained PID/window/publication, background shortcut, draft preservation, exact data and helper targets. These checks do not establish Windows/macOS runtime acceptance.
+
+
+### ADR-013 — Optional background startup at login
+
+**Status:** Accepted, 2026-10-30; Linux implementation validation in progress.
+
+Capture integrations require the desktop process to be running. Settings offers
+“Start Lyn when I log in”, backed by the operating system registration rather
+than a second SQLite preference. It is opt-in: reading Settings never enables
+startup. The official [Tauri autostart plugin](https://v2.tauri.app/plugin/autostart/)
+is pinned to 2.5.1 to preserve the existing Tauri dependency set. Only Library
+has permission to read, enable or disable this registration; capture has none.
+The UI reads the registration after mutation and reports unavailable or
+unconfirmed state instead of treating a dispatched write as success.
+
+Registration launches Lyn with the exact `--background` argument. Both windows
+start hidden; an ordinary first launch shows Library after setup. A background
+launch leaves Library hidden and a repeated background launch does not show or
+focus an existing instance. Ordinary relaunch still reopens that instance.
+No argument supplies capture context. Closing Library retains shortcut and
+provider services as in ADR-012. Explicitly quitting Lyn still makes integration
+shortcuts unavailable until Lyn is relaunched; login startup is not a watchdog.
+
+Linux is the acceptance priority. The plugin provides Windows/macOS registration
+mechanisms, but neither platform is runtime-validated here. Unit/component checks
+and a Linux compile do not prove login-manager execution, installed background
+focus behaviour, or the still-open installed Alt+L acceptance. Those require
+packaged/installed checks; no user logout is performed automatically.

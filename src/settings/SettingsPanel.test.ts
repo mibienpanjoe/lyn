@@ -16,6 +16,8 @@ import type {
   ManageGnomeActivationResult,
 } from '../lib/ipc-types';
 import SettingsPanel from './SettingsPanel.svelte';
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => false) }));
 import type { SpeechModelClient } from './model-client';
 import { SettingsCommandError, type SettingsClient } from './settings-client';
 import {
@@ -122,7 +124,7 @@ describe('Settings', () => {
     });
 
     await screen.findByRole('heading', { name: 'Quick capture' });
-    expect(screen.getByText(/Ctrl\+Alt\+Shift\+L/)).toBeVisible();
+    expect(screen.getByText(/Alt\+L/)).toBeVisible();
     expect(screen.getByText('Ctrl', { selector: 'kbd' })).toBeVisible();
     expect(screen.getByText('Shift', { selector: 'kbd' })).toBeVisible();
     expect(screen.getByText('Space', { selector: 'kbd' })).toBeVisible();

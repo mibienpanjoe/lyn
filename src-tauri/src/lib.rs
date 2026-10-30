@@ -21,6 +21,7 @@ mod perf;
 mod platform;
 mod security;
 mod settings;
+mod startup;
 mod storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -47,7 +48,10 @@ fn desktop_runtime_event(_app: &tauri::AppHandle, event: tauri::RunEvent) {
 fn desktop_builder(helper_root: Option<std::path::PathBuf>) -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        if startup::is_background_launch(&args) {
+            return;
+        }
         // A launch reopens the existing Library, never a second broker/session.
         // Invocation arguments and caller paths are not context observations.
         if let Some(window) = app.get_webview_window("main") {
@@ -56,6 +60,11 @@ fn desktop_builder(helper_root: Option<std::path::PathBuf>) -> tauri::Builder<ta
             let _ = window.set_focus();
         }
     }));
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        Some(vec!["--background"]),
+    ));
     let builder = builder
         .register_uri_scheme_protocol("lyn-media", |context, request| {
             let not_found = || {
@@ -214,6 +223,11 @@ fn desktop_builder(helper_root: Option<std::path::PathBuf>) -> tauri::Builder<ta
                 contract::ThemeSetting::Dark => Some(tauri::Theme::Dark),
             };
             app.set_theme(theme);
+            if !startup::is_background_launch(&std::env::args().collect::<Vec<_>>()) {
+                if let Some(window) = app.get_webview_window("main") {
+                    window.show()?;
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

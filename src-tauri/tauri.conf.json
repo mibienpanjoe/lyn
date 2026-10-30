@@ -14,6 +14,7 @@
       {
         "label": "main",
         "title": "Lyn",
+        "visible": false,
         "width": 1040,
         "height": 720,
         "minWidth": 640,

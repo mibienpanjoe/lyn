@@ -1,4 +1,5 @@
 <script lang="ts">
+  import StartupSetting from './StartupSetting.svelte';
   import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import CheckIcon from '@lucide/svelte/icons/check';
@@ -712,6 +713,8 @@
           {/if}
         </div>
       </section>
+
+      <StartupSetting french={draft.language === 'french'} />
 
       <section class="settings-section" aria-labelledby="providers-title">
         <div>
