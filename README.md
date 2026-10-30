@@ -10,10 +10,6 @@
 </p>
 
 <p align="center">
-  <code>local-first</code> · <code>desktop</code> · <code>tauri</code> · <code>rust</code> · <code>svelte</code> · <code>sqlite</code>
-</p>
-
-<p align="center">
   <a href="https://github.com/mibienpanjoe/lyn/releases">Download</a> ·
   <a href="#from-source-development">Build from source</a> ·
   <a href="#context-providers-linux-x11">Context providers</a> ·
