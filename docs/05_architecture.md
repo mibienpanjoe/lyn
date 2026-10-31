@@ -757,3 +757,12 @@ rendering; accessibility responses alone were insufficient to prove painting.
 These checks do not prove login-manager execution, installed background focus
 behaviour, or the still-open installed Alt+L acceptance. Those require
 packaged/installed checks; no user logout is performed automatically.
+
+
+Installed 0.8.0 follow-up: package hash, running executable and the exact
+`/usr/bin/lyn --background` login entry were verified in read-only checks. The
+user reported successful Alt+L capture without manually opening Lyn. This is
+user-reported installed shortcut acceptance, not a completed automated desktop
+series or proof of a new login session. The desktop controller stopped on
+minimized-window reopening/focus before testing Alt+L. Actual logout/login
+execution and automated installed reopening remain unconfirmed.

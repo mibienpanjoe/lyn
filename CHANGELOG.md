@@ -16,6 +16,11 @@
 
 ### Validation limits
 
-- Linux startup has real GUI evidence in an isolated session. Actual login-manager
-  execution and installed Alt+L acceptance remain pending. Windows/macOS startup
-  support has not been runtime-validated.
+- Linux startup registration and background launch have real GUI evidence in an
+  isolated session. On installed 0.8.0, the package identity and startup entry were
+  verified; the user confirmed Alt+L works while Lyn runs in the background,
+  without manually opening Library. This is user-reported shortcut acceptance.
+- Actual logout/login execution remains unconfirmed. The installed controller
+  stopped on minimized-window reopening/focus checks before testing the shortcut;
+  it does not establish automated installed reopening or shortcut acceptance.
+- Windows/macOS startup support has not been runtime-validated.
