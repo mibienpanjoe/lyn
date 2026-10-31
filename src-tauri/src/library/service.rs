@@ -207,7 +207,7 @@ pub(super) fn select_capture_fields(from_clause: &str) -> String {
             SELECT status FROM enrichment_jobs job
             WHERE job.capture_id = c.id
             ORDER BY job.updated_at DESC, job.id DESC LIMIT 1
-        ), 'not_requested')
+        ), 'not_requested'), c.caption_revision
      {from_clause}
      JOIN contexts context ON context.id = c.context_id
      LEFT JOIN media_assets media ON media.capture_id = c.id"
@@ -277,6 +277,7 @@ pub(super) fn decode_capture_row(
         source_window_title: row.get(8)?,
         updated_at,
         enrichment_status,
+        caption_revision: row.get(20)?,
     };
     Ok(DecodedCapture { summary, detail })
 }

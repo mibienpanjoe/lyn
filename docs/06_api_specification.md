@@ -4,7 +4,7 @@ Version: v1.20, 2026-10-27
 
 Derived from: [`05_architecture.md`](05_architecture.md)
 
-Contract status: **Shared primitives, manual and live contexts, capture-session lifecycle, durable text/media save, popup window controls, paged Library reads, committed-media actions, bounded local search, and transactional settings are implemented. Persistent post-commit enrichment coordination is implemented behind an adapter boundary; local speech/model delivery remains gated by G2.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
+Contract status: **Shared primitives, manual and live contexts, capture-session lifecycle, durable text/media save, popup window controls, paged Library reads, committed-media actions, bounded local search, and transactional settings are implemented. Persistent post-commit enrichment coordination is implemented behind an adapter boundary; local speech/model delivery uses the optional Parakeet package; installed recognition acceptance remains pending.** Lyn has no HTTP API or web backend. This document specifies the typed interface between the Svelte Frontend Shell and Rust Command Gateway.
 
 ## Conventions
 
@@ -728,7 +728,7 @@ GNOME prepares only a first installation from the validated embedded bundle at i
 
 The UI sends one preparation request, retires its cached offers and refreshes after either result or error. It shows localized preparation success only when refreshed configured authority has the exact returned revision, never claiming a running module. A failed refresh keeps old installation/management offers disabled until an accepted read. No automatic retry or apply action follows. Default builds still have no install offer; packaging, genuine Tauri IPC and installed acceptance remain separate verification boundaries.
 
-`get_settings`, `update_settings`, and `get_app_version` are implemented. Speech-model commands and model-progress events in this section remain proposed behind G2 and are not registered by the current build.
+`get_settings`, `update_settings`, and `get_app_version` are implemented. Speech-model commands and model-progress events are registered. The optional package is Parakeet v3 Q8; its [distribution decision](09_local_speech_distribution_decision.md) owns lifecycle and artifact details.
 
 ```ts
 interface AppSettings {
@@ -783,6 +783,8 @@ Shortcut registration and settings persistence MUST behave transactionally from 
 interface SpeechModelStatus {
   state: "not_installed" | "downloading" | "installed" | "invalid";
   modelId: string | null;
+  label: string;
+  errorCode: ErrorCode | null;
   downloadedBytes: number | null;
   totalBytes: number | null;
 }
@@ -811,6 +813,15 @@ Remove the installed local model after active transcription releases it. Existin
 **Success:** `CommandResult<{ removed: true }>`
 
 **Errors:** `MODEL_NOT_AVAILABLE`, `INTERNAL_ERROR`.
+
+### Voice caption correction and explicit transcription retry
+
+`CaptureDetail.captionRevision: number` exposes the stored caption revision. These Library-only commands accept closed typed inputs and return `CommandResult<{ accepted: boolean }>`:
+
+- `update_voice_caption`: `{ captureId, expectedCaptionRevision, caption }`. Audio captures only; trim and bound the caption to 500 Unicode characters. Empty text clears it. Atomically compare the revision, write user ownership, increment the revision, update FTS and retire pending/running/failed enrichment. A stale edit leaves stored data unchanged and returns `ENRICHMENT_FAILED`; the UI preserves its correction draft.
+- `retry_voice_transcription`: `{ captureId, expectedCaptionRevision }`. Require installed Parakeet, enabled speech, an unchanged captionless audio capture and a failed/skipped speech job. Atomically change only that job to pending, then start the background worker. Duplicate/stale/ineligible requests refuse. Never accept media paths or a client-selected engine.
+
+Both reject unknown fields (`VALIDATION_ERROR`) and return safe storage failures. Retry also returns `MODEL_NOT_AVAILABLE` with the route to Settings when the package or opt-in is missing. Failed/interrupted jobs require explicit retry; they are not reclaimed automatically. `enrichment://updated` refreshes settled Library state. Generated captions remain bounded to 500 characters; no separate full transcript is stored.
 
 ## Events
 
@@ -953,6 +964,8 @@ No concrete model distributor is selected in the source overview. A release MUST
 | Intelligence | `get_speech_model_status` | Local Speech Adapter | No |
 | Intelligence | `install_speech_model` | Local Speech Adapter | Local model state |
 | Intelligence | `remove_speech_model` | Local Speech Adapter | Local model state |
+| Intelligence | `retry_voice_transcription` | Enrichment Service | Explicit pending job |
+| Library | `update_voice_caption` | Enrichment Service | Caption revision and FTS |
 
 ## Contract Verification
 

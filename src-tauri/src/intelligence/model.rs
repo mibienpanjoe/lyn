@@ -4,7 +4,7 @@ use std::{
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -15,33 +15,20 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::Emitter;
 
-pub(crate) const MODEL_ID: &str = "whisper-base-multilingual-v1";
-pub(crate) const MODEL_LABEL: &str = "Multilingual base";
-pub(crate) const ENGINE_URL: &str = "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-ubuntu-x64.tar.gz";
-pub(crate) const ENGINE_SIZE: u64 = 9_497_583;
+pub(crate) const MODEL_ID: &str = "parakeet-tdt-0.6b-v3-q8-v1";
+pub(crate) const MODEL_LABEL: &str = "Parakeet v3 · Q8";
+pub(crate) const ENGINE_URL: &str = "https://github.com/mudler/parakeet.cpp/releases/download/v0.6.1/parakeet-v0.6.1-lib-linux-cpu-x64.tar.gz";
+pub(crate) const ENGINE_SIZE: u64 = 1_490_872;
 pub(crate) const ENGINE_SHA256: &str =
-    "46811a3ecf584307480a220b9ef5ff81b7b22dc41577cbc274ce3afc61f753b1";
-pub(crate) const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin";
-pub(crate) const MODEL_SIZE: u64 = 147_951_465;
+    "5a2b439e83d1b6ab66c55bcfc48751ee48e53727d5b3ea33a6bc0e8626f1397c";
+pub(crate) const MODEL_URL: &str = "https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/07a08a3a405d20c5434b9a1442f6e6cf571f57ad/tdt-0.6b-v3-q8_0.gguf";
+pub(crate) const MODEL_SIZE: u64 = 940_663_680;
 pub(crate) const MODEL_SHA256: &str =
-    "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe";
-
-const ENGINE_ARCHIVE_ALIASES: [(&str, &str); 8] = [
-    ("libwhisper.so", "libwhisper.so.1"),
-    ("libwhisper.so.1", "libwhisper.so.1.9.2"),
-    ("libggml.so", "libggml.so.0"),
-    ("libggml.so.0", "libggml.so.0.18.1"),
-    ("libggml-base.so", "libggml-base.so.0"),
-    ("libggml-base.so.0", "libggml-base.so.0.18.1"),
-    ("libparakeet.so", "libparakeet.so.1"),
-    ("libparakeet.so.1", "libparakeet.so.1.9.2"),
-];
-
-const ENGINE_RUNTIME_ALIASES: [(&str, &str); 3] = [
-    ("libwhisper.so.1", "libwhisper.so.1.9.2"),
-    ("libggml.so.0", "libggml.so.0.18.1"),
-    ("libggml-base.so.0", "libggml-base.so.0.18.1"),
-];
+    "4d69a4a6683f4f2d952bad794c1357ca6eb628027695b4699c5a9ad4cd07d757";
+const MODEL_FILE: &str = "tdt-0.6b-v3-q8_0.gguf";
+const MODEL_LICENSE: &str = include_str!("notices/CC-BY-4.0.txt");
+const MODEL_NOTICE: &str = "Parakeet TDT 0.6B v3, copyright NVIDIA.\nOriginal: https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3\nConverted and quantized to GGUF Q8_0 by mudler/parakeet.cpp.\nChanges: model format conversion and Q8 quantization; not retrained by Lyn.\nLicense: CC BY 4.0 https://creativecommons.org/licenses/by/4.0/\n";
+const ENGINE_ROOT: &str = "parakeet-v0.6.1-lib-linux-cpu-x64";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModelError {
@@ -59,6 +46,9 @@ pub(crate) struct SpeechModelManager {
     app_data_dir: PathBuf,
     paths: SpeechPaths,
     runtime: Arc<Mutex<RuntimeState>>,
+    worker: Arc<Mutex<Option<super::speech_worker::SpeechWorker>>>,
+    inference_cancelled: Arc<AtomicBool>,
+    wake: Arc<(Mutex<u64>, Condvar)>,
 }
 
 #[derive(Debug)]
@@ -67,6 +57,7 @@ struct RuntimeState {
     cancellation: Option<Arc<AtomicBool>>,
     in_use: bool,
     worker_running: bool,
+    enabled: bool,
 }
 
 impl SpeechModelManager {
@@ -88,7 +79,11 @@ impl SpeechModelManager {
                 cancellation: None,
                 in_use: false,
                 worker_running: false,
+                enabled: false,
             })),
+            worker: Arc::new(Mutex::new(None)),
+            inference_cancelled: Arc::new(AtomicBool::new(false)),
+            wake: Arc::new((Mutex::new(0), Condvar::new())),
         }
     }
 
@@ -110,6 +105,22 @@ impl SpeechModelManager {
         self.status().state == crate::contract::SpeechModelState::Installed
     }
 
+    pub(crate) fn set_enabled(&self, enabled: bool) {
+        if let Ok(mut runtime) = self.runtime.lock() {
+            runtime.enabled = enabled;
+            if !enabled {
+                self.inference_cancelled.store(true, Ordering::Release);
+            }
+        }
+        self.notify_work();
+        if !enabled {
+            // Active calls own the worker mutex; their bounded wait observes cancellation.
+            if let Ok(mut worker) = self.worker.try_lock() {
+                worker.take();
+            }
+        }
+    }
+
     pub(crate) fn processor(&self) -> LocalSpeechProcessor {
         LocalSpeechProcessor {
             manager: self.clone(),
@@ -117,6 +128,7 @@ impl SpeechModelManager {
     }
 
     pub(crate) fn begin_worker(&self) -> bool {
+        self.notify_work();
         self.runtime.lock().is_ok_and(|mut runtime| {
             if runtime.worker_running
                 || runtime.status.state != crate::contract::SpeechModelState::Installed
@@ -126,6 +138,54 @@ impl SpeechModelManager {
             runtime.worker_running = true;
             true
         })
+    }
+
+    fn notify_work(&self) {
+        let (generation, wake) = &*self.wake;
+        if let Ok(mut generation) = generation.lock() {
+            *generation = generation.wrapping_add(1);
+            wake.notify_all();
+        }
+    }
+
+    pub(crate) fn work_generation(&self) -> u64 {
+        self.wake
+            .0
+            .lock()
+            .map(|generation| *generation)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn wait_for_work(&self, observed: u64) -> bool {
+        if self.inference_cancelled.load(Ordering::Acquire) {
+            return false;
+        }
+        let remaining = self
+            .worker
+            .lock()
+            .ok()
+            .and_then(|worker| worker.as_ref().map(|worker| worker.idle_remaining()));
+        let Some(remaining) = remaining else {
+            return false;
+        };
+        if remaining.is_zero() {
+            return false;
+        }
+        let (generation, wake) = &*self.wake;
+        let Ok(generation) = generation.lock() else {
+            return false;
+        };
+        if *generation != observed {
+            return true;
+        }
+        wake.wait_timeout_while(generation, remaining, |current| *current == observed)
+            .is_ok_and(|(_, timeout)| !timeout.timed_out())
+    }
+
+    pub(crate) fn retire_worker(&self) {
+        if let Ok(mut worker) = self.worker.lock() {
+            worker.take();
+        }
     }
 
     pub(crate) fn finish_worker(&self) {
@@ -139,13 +199,13 @@ impl SpeechModelManager {
         model_id: &str,
         app: tauri::AppHandle,
     ) -> Result<(), ModelError> {
-        if model_id != MODEL_ID {
+        if model_id != MODEL_ID || !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
             return Err(ModelError::InvalidModelId);
         }
         let cancellation = Arc::new(AtomicBool::new(false));
         {
             let mut runtime = self.runtime.lock().map_err(|_| ModelError::Io)?;
-            if runtime.cancellation.is_some() {
+            if runtime.cancellation.is_some() || runtime.in_use {
                 return Err(ModelError::Busy);
             }
             runtime.status = status(
@@ -193,6 +253,8 @@ impl SpeechModelManager {
         if runtime.cancellation.is_some() || runtime.in_use {
             return Err(ModelError::Busy);
         }
+        self.worker.lock().map_err(|_| ModelError::Io)?.take();
+        self.notify_work();
         let removed = self.paths.remove(model_id)?;
         runtime.status = status(
             crate::contract::SpeechModelState::NotInstalled,
@@ -257,8 +319,8 @@ impl SpeechModelManager {
                 .map_err(|_| ModelError::Io)?;
         }
         let engine = staging.join("engine.tar.gz");
-        let model = staging.join("ggml-base.bin");
-        let deadline = Instant::now() + Duration::from_secs(300);
+        let model = staging.join(MODEL_FILE);
+        let deadline = Instant::now() + Duration::from_secs(1200);
         let result = (|| {
             download_artifact(
                 ENGINE_URL,
@@ -298,9 +360,11 @@ impl SpeechModelManager {
             let mut runtime = self.runtime.lock().map_err(|_| "MODEL_NOT_AVAILABLE")?;
             if runtime.status.state != crate::contract::SpeechModelState::Installed
                 || runtime.in_use
+                || !runtime.enabled
             {
                 return Err("MODEL_NOT_AVAILABLE");
             }
+            self.inference_cancelled.store(false, Ordering::Release);
             runtime.in_use = true;
         }
         let result = self.transcribe_inner(job);
@@ -315,65 +379,47 @@ impl SpeechModelManager {
         job: &crate::enrichment::EnrichmentJob,
     ) -> Result<Option<String>, &'static str> {
         let canonical_audio = resolve_audio_path(&self.app_data_dir, &job.media_relative_path)?;
-        let engine = self.paths.engine_path();
-        let model = self.paths.model_path();
-        let engine_dir = engine.parent().ok_or("MODEL_NOT_AVAILABLE")?.to_path_buf();
-        let threads = std::thread::available_parallelism()
-            .map(|value| value.get().min(4))
-            .unwrap_or(1);
-        let threads = threads.to_string();
-        let mut child = Command::new(&engine)
-            .current_dir(&engine_dir)
-            .env("LD_LIBRARY_PATH", &engine_dir)
-            .args([
-                "--model",
-                model.to_str().ok_or("MODEL_NOT_AVAILABLE")?,
-                "--file",
-                canonical_audio.to_str().ok_or("INVALID_MEDIA")?,
-                "--threads",
-                &threads,
-                "--language",
-                "auto",
-                "--no-gpu",
-                "--no-prints",
-                "--no-timestamps",
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| "MODEL_NOT_AVAILABLE")?;
-        let stdout = child.stdout.take().ok_or("ENRICHMENT_FAILED")?;
-        let reader = std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = stdout.take(512 * 1024 + 1).read_to_end(&mut bytes);
-            bytes
-        });
-        let deadline = Instant::now() + Duration::from_secs(300);
-        let status = loop {
-            if let Some(status) = child.try_wait().map_err(|_| "ENRICHMENT_FAILED")? {
-                break status;
-            }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("ENRICHMENT_TIMEOUT");
-            }
-            std::thread::sleep(Duration::from_millis(25));
-        };
-        let bytes = reader.join().map_err(|_| "ENRICHMENT_FAILED")?;
-        if !status.success() || bytes.len() > 512 * 1024 {
-            return Err("ENRICHMENT_FAILED");
+        let mut worker = self.worker.lock().map_err(|_| "ENRICHMENT_FAILED")?;
+        if self.inference_cancelled.load(Ordering::Acquire) {
+            return Err("ENRICHMENT_CANCELLED");
         }
-        let transcript = String::from_utf8(bytes).map_err(|_| "INVALID_RESULT")?;
-        let transcript = transcript.trim();
-        if transcript.is_empty() {
-            return Ok(None);
+        if worker.as_mut().is_some_and(|worker| !worker.reusable()) {
+            worker.take();
         }
-        if transcript.chars().count() > 500 {
-            return Err("RESULT_TOO_LONG");
+        if worker.is_none() {
+            *worker = Some(super::speech_worker::SpeechWorker::start(
+                &self.app_data_dir,
+            )?);
         }
-        Ok(Some(transcript.to_owned()))
+        let result = worker
+            .as_mut()
+            .ok_or("ENRICHMENT_FAILED")?
+            .transcribe(&canonical_audio, &self.inference_cancelled);
+        if result.is_err() || self.inference_cancelled.load(Ordering::Acquire) {
+            worker.take();
+        }
+        if self.inference_cancelled.load(Ordering::Acquire) {
+            return Err("ENRICHMENT_CANCELLED");
+        }
+        result.map(|text| text.and_then(|text| caption_from_transcript(&text)))
     }
+}
+
+fn caption_from_transcript(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let mut caption: String = text.chars().take(500).collect();
+    if text.chars().count() > 500 {
+        // Keep the existing caption contract without failing a useful long recording.
+        if let Some(boundary) = caption.rfind(char::is_whitespace) {
+            if boundary > caption.len() / 2 {
+                caption.truncate(boundary);
+            }
+        }
+    }
+    Some(caption.trim_end().to_owned())
 }
 
 fn resolve_audio_path(app_data_dir: &Path, stored_path: &str) -> Result<PathBuf, &'static str> {
@@ -559,11 +605,11 @@ impl SpeechPaths {
     }
 
     pub(crate) fn model_path(&self) -> PathBuf {
-        self.active_package().join("model").join("ggml-base.bin")
+        self.active_package().join("model").join(MODEL_FILE)
     }
 
     pub(crate) fn engine_path(&self) -> PathBuf {
-        self.active_package().join("engine").join("whisper-cli")
+        self.active_package().join("engine").join("libparakeet.so")
     }
 
     pub(crate) fn installed_valid(&self) -> bool {
@@ -579,7 +625,14 @@ impl SpeechPaths {
             && manifest.model_sha256 == MODEL_SHA256
             && executable_file(&self.engine_path())
             && verify_engine_package(&self.active_package()).is_ok()
-            && verify_runtime_aliases(&self.active_package().join("engine")).is_ok()
+            && fs::read_to_string(self.active_package().join("notices/CC-BY-4.0.txt"))
+                .ok()
+                .as_deref()
+                == Some(MODEL_LICENSE)
+            && fs::read_to_string(self.active_package().join("notices/MODEL-NOTICE.txt"))
+                .ok()
+                .as_deref()
+                == Some(MODEL_NOTICE)
             && verify_file(&self.model_path(), MODEL_SIZE, MODEL_SHA256).is_ok()
     }
 
@@ -627,11 +680,22 @@ impl SpeechPaths {
         fs::create_dir_all(&model_dir).map_err(|_| ModelError::Io)?;
         fs::create_dir_all(&notices_dir).map_err(|_| ModelError::Io)?;
         fs::create_dir_all(&artifacts_dir).map_err(|_| ModelError::Io)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&package, fs::Permissions::from_mode(0o700))
+                .map_err(|_| ModelError::Io)?;
+        }
         extract_engine(engine_archive, &engine_dir, &notices_dir)?;
         probe_engine(&engine_dir)?;
+        write_new(&notices_dir.join("CC-BY-4.0.txt"), MODEL_LICENSE.as_bytes())?;
+        write_new(
+            &notices_dir.join("MODEL-NOTICE.txt"),
+            MODEL_NOTICE.as_bytes(),
+        )?;
         fs::rename(engine_archive, artifacts_dir.join("engine.tar.gz"))
             .map_err(|_| ModelError::Io)?;
-        fs::rename(model_file, model_dir.join("ggml-base.bin")).map_err(|_| ModelError::Io)?;
+        fs::rename(model_file, model_dir.join(MODEL_FILE)).map_err(|_| ModelError::Io)?;
         let manifest = InstalledManifest {
             model_id: MODEL_ID.to_owned(),
             engine_sha256: ENGINE_SHA256.to_owned(),
@@ -666,82 +730,102 @@ impl SpeechPaths {
 }
 
 fn probe_engine(engine_dir: &Path) -> Result<(), ModelError> {
-    let mut child = Command::new(engine_dir.join("whisper-cli"))
-        .current_dir(engine_dir)
-        .env("LD_LIBRARY_PATH", engine_dir)
-        .arg("--version")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| ModelError::InvalidArtifact)?;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        if let Some(status) = child.try_wait().map_err(|_| ModelError::InvalidArtifact)? {
-            if !status.success() {
-                return Err(ModelError::InvalidArtifact);
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        let mut child = Command::new(std::env::current_exe().map_err(|_| ModelError::Io)?)
+            .arg("--lyn-speech-probe")
+            .arg(engine_dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| ModelError::InvalidArtifact)?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    return if status.success() {
+                        Ok(())
+                    } else {
+                        Err(ModelError::InvalidArtifact)
+                    };
+                }
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(ModelError::InvalidArtifact);
+                }
             }
-            let mut output = String::new();
-            child
-                .stdout
-                .take()
-                .ok_or(ModelError::InvalidArtifact)?
-                .take(1025)
-                .read_to_string(&mut output)
-                .map_err(|_| ModelError::InvalidArtifact)?;
-            return (output.len() <= 1024 && output.contains("1.9.2"))
-                .then_some(())
-                .ok_or(ModelError::InvalidArtifact);
         }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(ModelError::InvalidArtifact);
-        }
-        std::thread::sleep(Duration::from_millis(10));
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    {
+        let _ = engine_dir;
+        Err(ModelError::InvalidArtifact)
     }
 }
 
 fn verify_engine_package(package: &Path) -> Result<(), ModelError> {
-    let archive_path = package.join("artifacts").join("engine.tar.gz");
+    let archive_path = package.join("artifacts/engine.tar.gz");
     verify_file(&archive_path, ENGINE_SIZE, ENGINE_SHA256)?;
-    let decoder =
-        GzDecoder::new(File::open(archive_path).map_err(|_| ModelError::InvalidArtifact)?);
+    visit_engine(&archive_path, |name, entry| {
+        let installed = engine_destination(package, name);
+        let mut expected = Vec::new();
+        entry
+            .read_to_end(&mut expected)
+            .map_err(|_| ModelError::InvalidArtifact)?;
+        if fs::read(installed).map_err(|_| ModelError::InvalidArtifact)? != expected {
+            return Err(ModelError::InvalidArtifact);
+        }
+        Ok(())
+    })
+}
+
+fn engine_destination(package: &Path, name: &str) -> PathBuf {
+    if name == "LICENSE" {
+        package.join("notices/parakeet.cpp-LICENSE")
+    } else {
+        package.join("engine").join(name)
+    }
+}
+
+fn visit_engine(
+    archive_path: &Path,
+    mut visit: impl FnMut(&str, &mut dyn Read) -> Result<(), ModelError>,
+) -> Result<(), ModelError> {
+    let decoder = GzDecoder::new(File::open(archive_path).map_err(|_| ModelError::InvalidArchive)?);
     let mut archive = tar::Archive::new(decoder);
-    let mut verified_cli = false;
-    let mut verified_license = false;
-    for entry in archive.entries().map_err(|_| ModelError::InvalidArtifact)? {
-        let mut entry = entry.map_err(|_| ModelError::InvalidArtifact)?;
-        if !entry.header().entry_type().is_file() {
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in archive.entries().map_err(|_| ModelError::InvalidArchive)? {
+        let mut entry = entry.map_err(|_| ModelError::InvalidArchive)?;
+        let path = entry
+            .path()
+            .map_err(|_| ModelError::InvalidArchive)?
+            .into_owned();
+        if path == Path::new(ENGINE_ROOT) && entry.header().entry_type().is_dir() {
             continue;
         }
-        let path = entry.path().map_err(|_| ModelError::InvalidArtifact)?;
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            return Err(ModelError::InvalidArtifact);
-        };
-        let installed = if name == "whisper-cli" {
-            verified_cli = true;
-            Some(package.join("engine").join(name))
-        } else if name == "LICENSE" {
-            verified_license = true;
-            Some(package.join("notices").join("whisper.cpp-LICENSE"))
-        } else if name.starts_with("libwhisper.so") || name.starts_with("libggml") {
-            Some(package.join("engine").join(name))
-        } else {
-            None
-        };
-        if let Some(installed) = installed {
-            let mut expected = Vec::new();
-            entry
-                .read_to_end(&mut expected)
-                .map_err(|_| ModelError::InvalidArtifact)?;
-            let actual = fs::read(installed).map_err(|_| ModelError::InvalidArtifact)?;
-            if actual != expected {
-                return Err(ModelError::InvalidArtifact);
-            }
+        if !entry.header().entry_type().is_file() || path.parent() != Some(Path::new(ENGINE_ROOT)) {
+            return Err(ModelError::InvalidArchive);
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or(ModelError::InvalidArchive)?;
+        if !["libparakeet.so", "LICENSE", "parakeet_capi.h", "README.md"].contains(&name)
+            || !seen.insert(name.to_owned())
+            || entry.size() > 4 * 1024 * 1024
+        {
+            return Err(ModelError::InvalidArchive);
+        }
+        if ["libparakeet.so", "LICENSE"].contains(&name) {
+            visit(name, &mut entry)?;
         }
     }
-    if !verified_cli || !verified_license {
-        return Err(ModelError::InvalidArtifact);
+    if !seen.contains("libparakeet.so") || !seen.contains("LICENSE") {
+        return Err(ModelError::InvalidArchive);
     }
     Ok(())
 }
@@ -802,119 +886,20 @@ fn extract_engine(
     engine_dir: &Path,
     notices_dir: &Path,
 ) -> Result<(), ModelError> {
-    let file = File::open(archive_path).map_err(|_| ModelError::InvalidArchive)?;
-    let decoder = GzDecoder::new(file);
-    let mut archive = tar::Archive::new(decoder);
-    let mut found_cli = false;
-    let mut found_license = false;
-    for entry in archive.entries().map_err(|_| ModelError::InvalidArchive)? {
-        let mut entry = entry.map_err(|_| ModelError::InvalidArchive)?;
-        let path = entry.path().map_err(|_| ModelError::InvalidArchive)?;
-        if path.is_absolute()
-            || path
-                .components()
-                .any(|component| matches!(component, Component::ParentDir))
-        {
-            return Err(ModelError::InvalidArchive);
-        }
-        if entry.header().entry_type().is_symlink() {
-            let target = entry
-                .link_name()
-                .map_err(|_| ModelError::InvalidArchive)?
-                .ok_or(ModelError::InvalidArchive)?;
-            if !accepted_engine_alias(&path, &target) {
-                return Err(ModelError::InvalidArchive);
-            }
-            continue;
-        }
-        if !(entry.header().entry_type().is_file() || entry.header().entry_type().is_dir()) {
-            return Err(ModelError::InvalidArchive);
-        }
-        if entry.header().entry_type().is_dir() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            return Err(ModelError::InvalidArchive);
-        };
-        let destination = if name == "whisper-cli" {
-            found_cli = true;
-            Some(engine_dir.join(name))
-        } else if name == "LICENSE" {
-            found_license = true;
-            Some(notices_dir.join("whisper.cpp-LICENSE"))
-        } else if name.starts_with("libwhisper.so") || name.starts_with("libggml") {
-            Some(engine_dir.join(name))
+    visit_engine(archive_path, |name, entry| {
+        let destination = if name == "LICENSE" {
+            notices_dir.join("parakeet.cpp-LICENSE")
         } else {
-            None
+            engine_dir.join(name)
         };
-        if let Some(destination) = destination {
-            let mut output = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(destination)
-                .map_err(|_| ModelError::InvalidArchive)?;
-            io::copy(&mut entry, &mut output).map_err(|_| ModelError::InvalidArchive)?;
-            output.sync_all().map_err(|_| ModelError::Io)?;
-        }
-    }
-    if !found_cli || !found_license {
-        return Err(ModelError::InvalidArchive);
-    }
-    for (alias, source) in ENGINE_RUNTIME_ALIASES {
-        copy_new(&engine_dir.join(source), &engine_dir.join(alias))?;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(
-            engine_dir.join("whisper-cli"),
-            fs::Permissions::from_mode(0o700),
-        )
-        .map_err(|_| ModelError::Io)?;
-    }
-    Ok(())
-}
-
-fn accepted_engine_alias(path: &Path, target: &Path) -> bool {
-    if target.components().count() != 1
-        || !matches!(target.components().next(), Some(Component::Normal(_)))
-    {
-        return false;
-    }
-    let Some(alias) = path.file_name().and_then(|name| name.to_str()) else {
-        return false;
-    };
-    let Some(target) = target.to_str() else {
-        return false;
-    };
-    ENGINE_ARCHIVE_ALIASES.contains(&(alias, target))
-}
-
-fn copy_new(source: &Path, destination: &Path) -> Result<(), ModelError> {
-    let mut source = File::open(source).map_err(|_| ModelError::InvalidArchive)?;
-    let mut destination = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)
-        .map_err(|_| ModelError::InvalidArchive)?;
-    io::copy(&mut source, &mut destination).map_err(|_| ModelError::InvalidArchive)?;
-    destination.sync_all().map_err(|_| ModelError::Io)
-}
-
-fn verify_runtime_aliases(engine_dir: &Path) -> Result<(), ModelError> {
-    for (alias, source) in ENGINE_RUNTIME_ALIASES {
-        let alias = engine_dir.join(alias);
-        if !alias
-            .symlink_metadata()
-            .map_err(|_| ModelError::InvalidArtifact)?
-            .is_file()
-            || fs::read(&alias).map_err(|_| ModelError::InvalidArtifact)?
-                != fs::read(engine_dir.join(source)).map_err(|_| ModelError::InvalidArtifact)?
-        {
-            return Err(ModelError::InvalidArtifact);
-        }
-    }
-    Ok(())
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(destination)
+            .map_err(|_| ModelError::InvalidArchive)?;
+        io::copy(entry, &mut output).map_err(|_| ModelError::InvalidArchive)?;
+        output.sync_all().map_err(|_| ModelError::Io)
+    })
 }
 
 fn executable_file(path: &Path) -> bool {
@@ -1010,7 +995,7 @@ mod tests {
         let mut header = tar::Header::new_gnu();
         header.set_entry_type(tar::EntryType::Symlink);
         header
-            .set_path("whisper-bin-ubuntu-x64/whisper-cli")
+            .set_path(format!("{}/libparakeet.so", super::ENGINE_ROOT))
             .unwrap();
         header.set_link_name("/bin/sh").unwrap();
         header.set_size(0);
@@ -1035,7 +1020,7 @@ mod tests {
     }
 
     #[test]
-    fn pinned_engine_aliases_are_materialized_as_regular_files() {
+    fn native_archive_extracts_only_the_pinned_regular_members() {
         let directory = tempdir().unwrap();
         let archive_path = directory.path().join("engine.tar.gz");
         let encoder = GzEncoder::new(
@@ -1043,67 +1028,93 @@ mod tests {
             Compression::default(),
         );
         let mut archive = tar::Builder::new(encoder);
-        for (path, bytes) in [
-            ("whisper-bin-ubuntu-x64/whisper-cli", b"cli".as_slice()),
-            ("whisper-bin-ubuntu-x64/LICENSE", b"license".as_slice()),
-            (
-                "whisper-bin-ubuntu-x64/libwhisper.so.1.9.2",
-                b"whisper".as_slice(),
-            ),
-            (
-                "whisper-bin-ubuntu-x64/libggml.so.0.18.1",
-                b"ggml".as_slice(),
-            ),
-            (
-                "whisper-bin-ubuntu-x64/libggml-base.so.0.18.1",
-                b"ggml-base".as_slice(),
-            ),
+        for (name, bytes) in [
+            ("libparakeet.so", b"library".as_slice()),
+            ("LICENSE", b"license".as_slice()),
         ] {
             let mut header = tar::Header::new_gnu();
-            header.set_path(path).unwrap();
             header.set_size(bytes.len() as u64);
-            header.set_mode(0o700);
+            header.set_mode(0o600);
             header.set_cksum();
-            archive.append(&header, bytes).unwrap();
-        }
-        for (path, target) in [
-            (
-                "whisper-bin-ubuntu-x64/libwhisper.so.1",
-                "libwhisper.so.1.9.2",
-            ),
-            ("whisper-bin-ubuntu-x64/libggml.so.0", "libggml.so.0.18.1"),
-            (
-                "whisper-bin-ubuntu-x64/libggml-base.so.0",
-                "libggml-base.so.0.18.1",
-            ),
-        ] {
-            let mut header = tar::Header::new_gnu();
-            header.set_entry_type(tar::EntryType::Symlink);
-            header.set_path(path).unwrap();
-            header.set_link_name(target).unwrap();
-            header.set_size(0);
-            header.set_cksum();
-            archive.append(&header, std::io::empty()).unwrap();
+            archive
+                .append_data(&mut header, format!("{}/{name}", super::ENGINE_ROOT), bytes)
+                .unwrap();
         }
         archive.into_inner().unwrap().finish().unwrap();
-
         let engine = directory.path().join("engine");
         let notices = directory.path().join("notices");
         std::fs::create_dir_all(&engine).unwrap();
         std::fs::create_dir_all(&notices).unwrap();
-
         extract_engine(&archive_path, &engine, &notices).unwrap();
+        assert_eq!(
+            std::fs::read(engine.join("libparakeet.so")).unwrap(),
+            b"library"
+        );
+        assert_eq!(
+            std::fs::read(notices.join("parakeet.cpp-LICENSE")).unwrap(),
+            b"license"
+        );
+    }
 
-        for (alias, source) in [
-            ("libwhisper.so.1", "libwhisper.so.1.9.2"),
-            ("libggml.so.0", "libggml.so.0.18.1"),
-            ("libggml-base.so.0", "libggml-base.so.0.18.1"),
-        ] {
-            assert!(engine.join(alias).symlink_metadata().unwrap().is_file());
-            assert_eq!(
-                std::fs::read(engine.join(alias)).unwrap(),
-                std::fs::read(engine.join(source)).unwrap()
-            );
-        }
+    #[test]
+    fn long_transcripts_produce_a_bounded_unicode_caption() {
+        let text = "école technique ".repeat(80);
+        let caption = super::caption_from_transcript(&text).unwrap();
+        assert!(caption.chars().count() <= 500);
+        assert!(text.starts_with(&caption));
+        assert_eq!(super::caption_from_transcript("  "), None);
+    }
+
+    #[test]
+    fn old_whisper_package_is_not_adopted_or_removed() {
+        let directory = tempdir().unwrap();
+        let old = directory
+            .path()
+            .join("speech/active/whisper-base-multilingual-v1");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("keep"), "existing package").unwrap();
+        let paths = SpeechPaths::new(directory.path());
+        assert!(!paths.installed_valid());
+        assert_eq!(
+            paths.remove("whisper-base-multilingual-v1"),
+            Err(ModelError::InvalidModelId)
+        );
+        assert!(old.join("keep").exists());
+    }
+    #[test]
+    fn warm_owner_wakes_for_new_work_and_retires_expired_or_disabled_children() {
+        let directory = tempdir().unwrap();
+        let manager = super::SpeechModelManager::new(directory.path());
+        manager.set_enabled(true);
+        let mut command = std::process::Command::new("python3");
+        command.args(["-c", "import time;time.sleep(30)"]);
+        *manager.worker.lock().unwrap() =
+            Some(super::super::speech_worker::SpeechWorker::spawn(&mut command).unwrap());
+        let observed = manager.work_generation();
+        let notifier = manager.clone();
+        let wake = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            notifier.notify_work();
+        });
+        assert!(manager.wait_for_work(observed));
+        wake.join().unwrap();
+        manager
+            .worker
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .expire_for_test();
+        assert!(!manager.wait_for_work(manager.work_generation()));
+        manager.retire_worker();
+        assert!(manager.worker.lock().unwrap().is_none());
+        manager.set_enabled(false);
+        manager.set_enabled(true);
+        // Re-enabling cannot resurrect the cancellation token of an old active job.
+        assert!(
+            manager
+                .inference_cancelled
+                .load(std::sync::atomic::Ordering::Acquire)
+        );
     }
 }

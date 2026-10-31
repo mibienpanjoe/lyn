@@ -102,6 +102,8 @@ describe('visual accessibility verification', () => {
 
   it('treats the Library brand mark as decorative beside the visible Lyn name', async () => {
     const library: LibraryClient = {
+      updateVoiceCaption: vi.fn(),
+      retryVoiceTranscription: vi.fn(),
       listContexts: vi.fn().mockResolvedValue([]),
       listCaptures: vi.fn().mockResolvedValue({ items: [], nextCursor: null }),
       getCapture: vi.fn(),

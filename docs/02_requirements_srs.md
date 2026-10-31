@@ -76,7 +76,7 @@ This specification defines the intended MVP. Performance figures marked **provis
 - **FR-053**: Saved MVP voice notes MUST use WAV, 16 kHz, mono, 16-bit PCM unless an ADR explicitly supersedes this contract.
 - **FR-054**: A saved audio file MUST be held in Lyn-managed local storage.
 - **FR-055**: If the user supplied a non-blank caption, Lyn MUST store it unchanged and MUST NOT generate or apply a replacement title.
-- **FR-056**: If the caption is blank and local speech recognition is enabled, Lyn MAY transcribe the audio and derive a short local caption.
+- **FR-056**: If the caption is blank and local speech recognition is enabled, Lyn MAY transcribe the audio and derive a short local caption after durable save. Library MUST identify generated captions and allow a revision-checked user correction; a late result MUST NOT replace that correction.
 - **FR-057**: Voice notes MUST remain savable when the speech engine or model is absent, disabled, busy, or failing.
 - **FR-058**: Transcription and derived-caption work MUST run after capture acceptance and MUST NOT delay saving.
 - **FR-059**: Playback MUST use the saved or staged local audio and MUST NOT upload it.
@@ -106,9 +106,9 @@ This specification defines the intended MVP. Performance figures marked **provis
 
 - **FR-081**: Core capture, Library, media, and search features MUST work without an account or internet connection.
 - **FR-082**: Local speech recognition MUST be opt-in.
-- **FR-083**: Lyn MAY offer download and removal of a compatible local speech model through settings.
-- **FR-084**: Model availability, download progress, and failure MUST be visible to the user.
-- **FR-085**: Disabling local intelligence MUST stop new transcription work without changing or deleting existing captures.
+- **FR-083**: Lyn MAY offer download and removal of a compatible local speech model through settings. The accepted optional Parakeet package loads on demand, reuses one model between nearby notes and unloads after 60 seconds idle; distribution is owned by document 09.
+- **FR-084**: Model availability, download progress, and failure MUST be visible to the user. Failed or interrupted transcription MUST wait for explicit Library retry; it MUST NOT replay automatically.
+- **FR-085**: Disabling local intelligence MUST stop new transcription work, cancel the active speech child and release its loaded model without changing or deleting existing captures.
 - **FR-086**: A model download failure MUST NOT affect any core feature.
 - **FR-087**: Lyn MUST provide settings for the global shortcut and provider tie-break order when those settings are supported by the target platform. A preference MUST NOT override stronger invocation-bound evidence.
 

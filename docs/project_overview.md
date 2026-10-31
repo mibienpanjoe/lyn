@@ -432,19 +432,19 @@ mono
 
 This format is simple, reliable, and directly suitable for local speech recognition.
 
-## Optional Local Speech Recognition — whisper.cpp
+## Optional Local Speech Recognition — Parakeet
 
-**whisper.cpp** can provide local speech-to-text functionality.
+**Parakeet TDT 0.6B v3** provides the selected optional local speech-to-text path. The [speech distribution decision](09_local_speech_distribution_decision.md) owns its package and lifecycle.
 
 Its role in Lyn is optional.
 
-It should not be bundled as a mandatory heavyweight dependency. A user may enable it through a Local Intelligence setting and download a small model locally.
+It should not be bundled as a mandatory heavyweight dependency. A user may enable it through a Local Intelligence setting and download its model locally.
 
 Voice workflow:
 
 ```text
 audio
-→ whisper.cpp
+→ Parakeet
 → transcript
 → lightweight local title extraction
 ```

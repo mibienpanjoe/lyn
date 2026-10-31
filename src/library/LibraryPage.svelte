@@ -173,10 +173,51 @@
     playbackTimer = undefined;
   }
 
+  async function refreshVoice(captureId: string) {
+    await loadCaptures(false);
+    if (selectedSummaryId === captureId) {
+      const current = await client.getCapture(captureId);
+      if (selectedSummaryId === captureId) selected = current;
+    }
+  }
+
+  async function mutateVoice(
+    captureId: string,
+    revision: number,
+    caption?: string,
+  ): Promise<boolean> {
+    error = null;
+    try {
+      if (caption === undefined)
+        await client.retryVoiceTranscription(captureId, revision);
+      else await client.updateVoiceCaption(captureId, revision, caption);
+    } catch (caught) {
+      error =
+        caught instanceof Error
+          ? caught.message
+          : 'The voice note could not be updated.';
+      // Refresh authority while the editor retains the user's unsaved correction.
+      try {
+        await refreshVoice(captureId);
+      } catch {
+        /* Keep the original actionable error. */
+      }
+      return false;
+    }
+    try {
+      await refreshVoice(captureId);
+    } catch {
+      error =
+        'The change was accepted. Reopen this capture to refresh its details.';
+    }
+    return true;
+  }
+
   async function handleEnrichmentUpdate(event: EnrichmentUpdatedEvent) {
     await loadCaptures(false);
     if (selectedSummaryId === event.captureId) {
-      selected = await client.getCapture(event.captureId);
+      const current = await client.getCapture(event.captureId);
+      if (selectedSummaryId === event.captureId) selected = current;
     }
   }
 
@@ -762,6 +803,9 @@
           onplay={toggleAudio}
           onopen={openMedia}
           ondelete={deleteCapture}
+          onsavecaption={(id, revision, caption) =>
+            mutateVoice(id, revision, caption)}
+          onretrytranscription={(id, revision) => mutateVoice(id, revision)}
         />
       </aside>
     {:else}

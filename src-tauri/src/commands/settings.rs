@@ -62,8 +62,15 @@ pub(crate) fn update_settings(
             details: ErrorDetails::default(),
         });
     }
-    let mut platform = NativeSettingsPlatform::new(app);
-    update_settings_value(input, database.inner(), &mut platform)
+    let mut platform = NativeSettingsPlatform::new(app.clone());
+    let result = update_settings_value(input, database.inner(), &mut platform);
+    if let CommandResult::Success { data, .. } = &result {
+        speech.set_enabled(data.local_speech_enabled);
+        if data.local_speech_enabled {
+            crate::spawn_enrichment_worker(app);
+        }
+    }
+    result
 }
 
 fn update_settings_value(

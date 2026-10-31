@@ -1,4 +1,5 @@
 <script lang="ts">
+  import VoiceCaption from './VoiceCaption.svelte';
   import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
   import CheckIcon from '@lucide/svelte/icons/check';
   import CopyIcon from '@lucide/svelte/icons/copy';
@@ -23,6 +24,15 @@
     onplay: () => void;
     onopen: () => void;
     ondelete: () => void;
+    onsavecaption: (
+      captureId: string,
+      revision: number,
+      caption: string,
+    ) => Promise<boolean>;
+    onretrytranscription: (
+      captureId: string,
+      revision: number,
+    ) => Promise<boolean>;
   }
 
   let {
@@ -37,6 +47,8 @@
     onplay,
     onopen,
     ondelete,
+    onsavecaption,
+    onretrytranscription,
   }: Props = $props();
 
   const t = $derived(getTranslations(language));
@@ -154,9 +166,12 @@
           Voice note unavailable
         </div>
       {/if}
-      {#if capture.caption}
-        <p class="detail-caption">{capture.caption}</p>
-      {/if}
+      <VoiceCaption
+        {capture}
+        {language}
+        onsave={onsavecaption}
+        onretry={onretrytranscription}
+      />
     {/if}
 
     {#if copyableText}

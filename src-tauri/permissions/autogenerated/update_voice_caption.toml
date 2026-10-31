@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-voice-caption"
+description = "Enables the update_voice_caption command without any pre-configured scope."
+commands.allow = ["update_voice_caption"]
+
+[[permission]]
+identifier = "deny-update-voice-caption"
+description = "Denies the update_voice_caption command without any pre-configured scope."
+commands.deny = ["update_voice_caption"]

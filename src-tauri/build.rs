@@ -99,6 +99,8 @@ fn main() {
         "install_speech_model",
         "cancel_speech_model_install",
         "remove_speech_model",
+        "retry_voice_transcription",
+        "update_voice_caption",
     ];
 
     tauri_build::try_build(

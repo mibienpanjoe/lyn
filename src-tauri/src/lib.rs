@@ -145,9 +145,16 @@ fn desktop_builder(helper_root: Option<std::path::PathBuf>) -> tauri::Builder<ta
             let speech_manager = intelligence::model::SpeechModelManager::new(&app_data_dir);
             let database_path = app_data_dir.join("lyn.db");
             let mut database = storage::Database::open(database_path)?;
-            let settings = storage::settings::SettingsRepository::new(database.connection())
+            let mut settings = storage::settings::SettingsRepository::new(database.connection())
                 .get()
                 .unwrap_or_default();
+            if settings.local_speech_enabled && !speech_manager.installed() {
+                // A previous engine's opt-in cannot silently enable its replacement.
+                settings.local_speech_enabled = false;
+                let transaction = database.connection_mut().transaction()?;
+                storage::settings::save(&transaction, &settings)?;
+                transaction.commit()?;
+            }
             let referenced_paths =
                 storage::media_assets::MediaAssetRepository::new(database.connection())
                     .referenced_relative_paths()?;
@@ -156,6 +163,7 @@ fn desktop_builder(helper_root: Option<std::path::PathBuf>) -> tauri::Builder<ta
             let mut media_store = media::staging::MediaStore::open(app_data_dir)?;
             media_store.reconcile(&referenced_paths)?;
             app.manage(Mutex::new(database));
+            speech_manager.set_enabled(settings.local_speech_enabled);
             app.manage(speech_manager);
             app.manage(Mutex::new(media_store));
             app.manage(Mutex::new(platform::clipboard::NativeClipboardPlatform));
@@ -268,6 +276,8 @@ fn desktop_builder(helper_root: Option<std::path::PathBuf>) -> tauri::Builder<ta
             commands::model::install_speech_model,
             commands::model::cancel_speech_model_install,
             commands::model::remove_speech_model,
+            commands::model::retry_voice_transcription,
+            commands::model::update_voice_caption,
         ])
 }
 
@@ -283,34 +293,50 @@ pub(crate) fn spawn_enrichment_worker(app: tauri::AppHandle) {
     if std::thread::Builder::new()
         .name("lyn-speech-enrichment".to_owned())
         .spawn(move || {
-            let enabled = app
-                .state::<Mutex<storage::Database>>()
-                .lock()
-                .ok()
-                .and_then(|database| {
-                    storage::settings::SettingsRepository::new(database.connection())
-                        .get()
-                        .ok()
-                })
-                .is_some_and(|settings| settings.local_speech_enabled);
-            if enabled {
-                let database = app.state::<Mutex<storage::Database>>();
-                let mut processor = worker_manager.processor();
-                loop {
-                    let Ok((processed, event)) =
-                        enrichment::process_one(database.inner(), true, &mut processor)
-                    else {
-                        break;
-                    };
-                    if let Some(event) = event {
-                        let _ = app.emit("enrichment://updated", event);
-                    }
-                    if !processed {
-                        break;
-                    }
+            let database = app.state::<Mutex<storage::Database>>();
+            let mut processor = worker_manager.processor();
+            let drained_normally = loop {
+                let observed = worker_manager.work_generation();
+                let enabled = database
+                    .lock()
+                    .ok()
+                    .and_then(|database| storage::settings::load(database.connection()).ok());
+                let Some(settings) = enabled else {
+                    break false;
+                };
+                if !settings.local_speech_enabled {
+                    break true;
                 }
-            }
+                let Ok((processed, event)) =
+                    enrichment::process_one(database.inner(), true, &mut processor)
+                else {
+                    break false;
+                };
+                if let Some(event) = event {
+                    let _ = app.emit("enrichment://updated", event);
+                }
+                if !processed && !worker_manager.wait_for_work(observed) {
+                    break true;
+                }
+            };
+            // PDEATHSIG follows this spawning thread: keep it alive through warm
+            // reuse, and retire its child before allowing another owner to start.
+            worker_manager.retire_worker();
             worker_manager.finish_worker();
+            // Catch work committed during the final no-work/owner-release gap.
+            // Storage errors stop here rather than causing a thread respawn loop.
+            let pending = drained_normally
+                && database.lock().ok().is_some_and(|database| {
+                    storage::settings::load(database.connection())
+                    .is_ok_and(|settings| settings.local_speech_enabled)
+                    && database.connection().query_row(
+                        "SELECT EXISTS(SELECT 1 FROM enrichment_jobs WHERE status = 'pending')",
+                        [], |row| row.get::<_, bool>(0),
+                    ).unwrap_or(false)
+                });
+            if pending {
+                spawn_enrichment_worker(app);
+            }
         })
         .is_err()
     {
@@ -722,4 +748,9 @@ mod tests {
             None
         );
     }
+}
+
+/// Internal local speech child entry, before GUI initialization.
+pub fn run_local_speech_helper() -> Option<std::process::ExitCode> {
+    intelligence::speech_worker::helper_mode()
 }

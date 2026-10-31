@@ -89,14 +89,14 @@ const modelClient: SpeechModelClient = {
   status: vi.fn().mockResolvedValue({
     state: 'not_installed',
     modelId: null,
-    label: 'Multilingual base',
+    label: 'Parakeet v3 · Q8',
     downloadedBytes: null,
     totalBytes: null,
     errorCode: null,
   }),
   install: vi.fn().mockResolvedValue({
     accepted: true,
-    modelId: 'whisper-base-multilingual-v1',
+    modelId: 'parakeet-tdt-0.6b-v3-q8-v1',
   }),
   cancel: vi.fn().mockResolvedValue({ cancelled: true }),
   remove: vi.fn().mockResolvedValue({ removed: true }),
@@ -293,8 +293,8 @@ describe('Settings', () => {
       intClient: defaultIntClient,
     });
     expect(await screen.findByText('Model not installed')).toBeVisible();
-    expect(screen.getByText('Multilingual base')).toBeVisible();
-    expect(screen.getByText('Approximately 150 MB')).toBeVisible();
+    expect(screen.getByText('Parakeet v3 · Q8')).toBeVisible();
+    expect(screen.getByText('Approximately 942 MB')).toBeVisible();
     expect(
       screen.getByText(
         'Generate searchable captions for voice captures entirely on this device.',
@@ -315,8 +315,8 @@ describe('Settings', () => {
       ...modelClient,
       status: vi.fn().mockResolvedValue({
         state: 'not_installed',
-        modelId: 'whisper-base-multilingual-v1',
-        label: 'Multilingual base',
+        modelId: 'parakeet-tdt-0.6b-v3-q8-v1',
+        label: 'Parakeet v3 · Q8',
         downloadedBytes: null,
         totalBytes: null,
         errorCode: 'MODEL_DOWNLOAD_FAILED',
@@ -340,8 +340,8 @@ describe('Settings', () => {
       ...modelClient,
       status: vi.fn().mockResolvedValue({
         state: 'installed',
-        modelId: 'whisper-base-multilingual-v1',
-        label: 'Multilingual base',
+        modelId: 'parakeet-tdt-0.6b-v3-q8-v1',
+        label: 'Parakeet v3 · Q8',
         downloadedBytes: null,
         totalBytes: null,
         errorCode: null,

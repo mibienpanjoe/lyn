@@ -9,8 +9,6 @@ use crate::{
     storage::StorageError,
 };
 
-const MAX_ATTEMPTS: u32 = 3;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EnrichmentKind {
     SpeechCaption,
@@ -116,9 +114,9 @@ impl<'a> EnrichmentQueue<'a> {
         self.connection
             .execute(
                 "UPDATE enrichment_jobs
-                 SET status = 'pending', updated_at = ?1
-                 WHERE status = 'running' AND attempt_count < ?2",
-                params![Timestamp::now_utc().to_string(), MAX_ATTEMPTS],
+                 SET status = 'failed', last_error_code = 'ENRICHMENT_INTERRUPTED', updated_at = ?1
+                 WHERE status = 'running'",
+                params![Timestamp::now_utc().to_string()],
             )
             .map_err(Into::into)
     }
@@ -131,9 +129,9 @@ impl<'a> EnrichmentQueue<'a> {
                         jobs.attempt_count, media.relative_path, media.duration_ms
                  FROM enrichment_jobs jobs
                  JOIN media_assets media ON media.capture_id = jobs.capture_id
-                 WHERE jobs.status IN ('pending', 'failed') AND jobs.attempt_count < ?1
+                 WHERE jobs.status = 'pending'
                  ORDER BY jobs.updated_at, jobs.id LIMIT 1",
-                [MAX_ATTEMPTS],
+                [],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
@@ -180,6 +178,64 @@ impl<'a> EnrichmentQueue<'a> {
         }))
     }
 
+    pub(crate) fn retry_voice(
+        &mut self,
+        capture_id: CaptureId,
+        expected_revision: u32,
+    ) -> Result<bool, EnrichmentError> {
+        let changed = self.connection.execute(
+            "UPDATE enrichment_jobs SET status = 'pending', attempt_count = 0,
+             input_revision = ?2, last_error_code = NULL, updated_at = ?3
+             WHERE capture_id = ?1 AND kind = 'speech_caption' AND status IN ('failed', 'skipped')
+             AND EXISTS (SELECT 1 FROM captures WHERE id = ?1 AND kind = 'audio'
+                 AND caption IS NULL AND caption_source IS NULL AND caption_revision = ?2)",
+            params![
+                capture_id.to_string(),
+                expected_revision,
+                Timestamp::now_utc().to_string()
+            ],
+        )?;
+        Ok(changed == 1)
+    }
+
+    pub(crate) fn update_voice_caption(
+        &mut self,
+        capture_id: CaptureId,
+        expected_revision: u32,
+        caption: &str,
+    ) -> Result<bool, EnrichmentError> {
+        let transaction = self.connection.transaction()?;
+        let changed = transaction.execute(
+            "UPDATE captures SET caption = ?3, caption_source = ?4,
+                caption_revision = caption_revision + 1, updated_at = ?5
+             WHERE id = ?1 AND kind = 'audio' AND caption_revision = ?2",
+            params![
+                capture_id.to_string(),
+                expected_revision,
+                if caption.is_empty() {
+                    None
+                } else {
+                    Some(caption)
+                },
+                if caption.is_empty() {
+                    None
+                } else {
+                    Some("user")
+                },
+                Timestamp::now_utc().to_string()
+            ],
+        )?;
+        if changed == 1 {
+            transaction.execute(
+                "UPDATE enrichment_jobs SET status = 'skipped', updated_at = ?2
+                WHERE capture_id = ?1 AND status IN ('pending', 'running', 'failed')",
+                params![capture_id.to_string(), Timestamp::now_utc().to_string()],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(changed == 1)
+    }
+
     pub(crate) fn apply_generated(
         &mut self,
         job: &EnrichmentJob,
@@ -195,21 +251,28 @@ impl<'a> EnrichmentQueue<'a> {
              SET caption = ?1, caption_source = ?2,
                  caption_revision = caption_revision + 1, updated_at = ?3
              WHERE id = ?4 AND caption IS NULL AND caption_source IS NULL
-               AND caption_revision = ?5",
+               AND caption_revision = ?5
+               AND EXISTS (SELECT 1 FROM enrichment_jobs WHERE id = ?6 AND status = 'running'
+                    AND input_revision = ?5 AND attempt_count = ?7)",
             params![
                 caption,
                 caption_source_name(job.kind.source()),
                 Timestamp::now_utc().to_string(),
                 job.capture_id.to_string(),
                 job.input_revision,
+                job.id,
+                job.attempt_count,
             ],
         )?;
         transaction.execute(
-            "UPDATE enrichment_jobs SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            "UPDATE enrichment_jobs SET status = ?1, updated_at = ?2
+             WHERE id = ?3 AND status = 'running' AND input_revision = ?4 AND attempt_count = ?5",
             params![
                 if applied == 1 { "completed" } else { "skipped" },
                 Timestamp::now_utc().to_string(),
                 job.id,
+                job.input_revision,
+                job.attempt_count,
             ],
         )?;
         transaction.commit()?;
@@ -246,12 +309,14 @@ impl<'a> EnrichmentQueue<'a> {
         self.connection.execute(
             "UPDATE enrichment_jobs
              SET status = ?1, last_error_code = ?2, updated_at = ?3
-             WHERE id = ?4 AND status = 'running'",
+             WHERE id = ?4 AND status = 'running' AND input_revision = ?5 AND attempt_count = ?6",
             params![
                 status,
                 safe_error_code,
                 Timestamp::now_utc().to_string(),
                 job.id,
+                job.input_revision,
+                job.attempt_count,
             ],
         )?;
         Ok(())
@@ -279,7 +344,19 @@ pub(crate) fn process_one(
     let mut database = database
         .lock()
         .map_err(|_| EnrichmentError::InvalidStoredJob)?;
+    let enabled = crate::storage::settings::load(database.connection())?.local_speech_enabled;
     let mut queue = EnrichmentQueue::new(database.connection_mut());
+    if !enabled {
+        queue.skip(&job)?;
+        return Ok((
+            true,
+            Some(crate::contract::EnrichmentUpdatedEvent {
+                capture_id: job.capture_id,
+                status: crate::contract::EnrichmentStatus::Skipped,
+                caption_changed: false,
+            }),
+        ));
+    }
     let event = match generated {
         Ok(Some(caption)) => {
             let changed = queue.apply_generated(&job, &caption)?;
@@ -303,7 +380,7 @@ pub(crate) fn process_one(
         }
         Err(code) => {
             queue.fail(&job, code)?;
-            (job.attempt_count >= MAX_ATTEMPTS).then_some(crate::contract::EnrichmentUpdatedEvent {
+            Some(crate::contract::EnrichmentUpdatedEvent {
                 capture_id: job.capture_id,
                 status: crate::contract::EnrichmentStatus::Failed,
                 caption_changed: false,
@@ -357,7 +434,7 @@ mod tests {
         storage::{Database, captures::CaptureRepository, contexts::ContextRepository},
     };
 
-    use super::{EnrichmentKind, EnrichmentQueue, MAX_ATTEMPTS};
+    use super::{EnrichmentKind, EnrichmentQueue};
 
     fn audio(database: &mut Database, caption: Option<&str>) -> CaptureId {
         let context = ContextRepository::new(database.connection())
@@ -442,32 +519,23 @@ mod tests {
     }
 
     #[test]
-    fn failures_retry_only_to_the_bound_and_disabled_work_can_be_skipped() {
+    fn failed_work_waits_for_explicit_retry() {
         let mut database = Database::open_in_memory().unwrap();
         let capture_id = audio(&mut database, None);
         let mut queue = EnrichmentQueue::new(database.connection_mut());
         queue
             .enqueue(capture_id, EnrichmentKind::SpeechCaption, 0)
             .unwrap();
-        for attempt in 1..=MAX_ATTEMPTS {
-            let job = queue.claim_next().unwrap().unwrap();
-            assert_eq!(job.attempt_count, attempt);
-            queue.fail(&job, "MODEL_NOT_AVAILABLE").unwrap();
-        }
+        let job = queue.claim_next().unwrap().unwrap();
+        queue.fail(&job, "MODEL_NOT_AVAILABLE").unwrap();
         assert!(queue.claim_next().unwrap().is_none());
-
-        let second = audio(&mut database, None);
-        let mut queue = EnrichmentQueue::new(database.connection_mut());
-        queue
-            .enqueue(second, EnrichmentKind::SpeechCaption, 0)
-            .unwrap();
-        let disabled = queue.claim_next().unwrap().unwrap();
-        queue.skip(&disabled).unwrap();
-        assert!(queue.claim_next().unwrap().is_none());
+        assert!(queue.retry_voice(capture_id, 0).unwrap());
+        assert!(!queue.retry_voice(capture_id, 0).unwrap());
+        assert!(queue.claim_next().unwrap().is_some());
     }
 
     #[test]
-    fn interrupted_running_job_returns_to_pending_after_restart() {
+    fn interrupted_running_job_waits_for_explicit_retry_after_restart() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("lyn.db");
         {
@@ -483,7 +551,7 @@ mod tests {
         let mut queue = EnrichmentQueue::new(reopened.connection_mut());
 
         assert_eq!(queue.recover_interrupted().unwrap(), 1);
-        assert!(queue.claim_next().unwrap().is_some());
+        assert!(queue.claim_next().unwrap().is_none());
     }
 
     #[test]
@@ -503,5 +571,66 @@ mod tests {
             super::schedule_after_commit(database.connection_mut(), capture_id, true, true,)
                 .unwrap()
         );
+    }
+    #[test]
+    fn manual_correction_retires_inflight_results_and_stale_edits() {
+        let mut database = Database::open_in_memory().unwrap();
+        let capture_id = audio(&mut database, None);
+        let mut queue = EnrichmentQueue::new(database.connection_mut());
+        queue
+            .enqueue(capture_id, EnrichmentKind::SpeechCaption, 0)
+            .unwrap();
+        let job = queue.claim_next().unwrap().unwrap();
+        assert!(
+            queue
+                .update_voice_caption(capture_id, 0, "Correction française")
+                .unwrap()
+        );
+        assert!(
+            !queue
+                .apply_generated(&job, "Late automatic result")
+                .unwrap()
+        );
+        assert!(
+            !queue
+                .update_voice_caption(capture_id, 0, "Stale correction")
+                .unwrap()
+        );
+        assert!(!queue.retry_voice(capture_id, 0).unwrap());
+        let stored: (String, String, u32) = database
+            .connection()
+            .query_row(
+                "SELECT caption, caption_source, caption_revision FROM captures WHERE id = ?1",
+                [capture_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(stored, ("Correction française".into(), "user".into(), 1));
+        let indexed: i64 = database
+            .connection()
+            .query_row(
+                "SELECT count(*) FROM captures_fts WHERE captures_fts MATCH 'Correction'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexed, 1);
+    }
+    #[test]
+    fn stale_completion_cannot_consume_a_newly_queued_retry() {
+        let mut database = Database::open_in_memory().unwrap();
+        let capture_id = audio(&mut database, None);
+        let mut queue = EnrichmentQueue::new(database.connection_mut());
+        queue
+            .enqueue(capture_id, EnrichmentKind::SpeechCaption, 0)
+            .unwrap();
+        let old = queue.claim_next().unwrap().unwrap();
+        assert!(queue.update_voice_caption(capture_id, 0, "").unwrap());
+        assert!(queue.retry_voice(capture_id, 1).unwrap());
+        assert!(!queue.apply_generated(&old, "Late text").unwrap());
+        queue.fail(&old, "LATE_FAILURE").unwrap();
+        let fresh = queue.claim_next().unwrap().unwrap();
+        assert_eq!(fresh.input_revision, 1);
+        assert!(queue.apply_generated(&fresh, "Fresh result").unwrap());
     }
 }

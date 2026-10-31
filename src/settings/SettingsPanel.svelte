@@ -1010,7 +1010,7 @@
         <div class="speech-controls">
           <div class="model-row">
             <div class="model-identity">
-              <strong>{model?.label ?? 'Multilingual base'}</strong>
+              <strong>{model?.label ?? 'Parakeet v3 · Q8'}</strong>
               <span>{t.modelApproxSize}</span>
             </div>
             <div class="model-management">

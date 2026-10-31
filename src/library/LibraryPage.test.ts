@@ -97,11 +97,14 @@ function detail(capture: CaptureSummary): CaptureDetail {
     sourceWindowTitle: null,
     updatedAt: capture.capturedAt,
     enrichmentStatus: 'not_requested',
+    captionRevision: 0,
   };
 }
 
 function createClient(overrides: Partial<LibraryClient> = {}): LibraryClient {
   return {
+    retryVoiceTranscription: vi.fn().mockResolvedValue({ accepted: true }),
+    updateVoiceCaption: vi.fn().mockResolvedValue({ accepted: true }),
     listContexts: vi.fn().mockResolvedValue([project, inbox]),
     listCaptures: vi.fn().mockResolvedValue({
       items: [textCapture, imageCapture],

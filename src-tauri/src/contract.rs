@@ -285,6 +285,27 @@ pub enum EnrichmentStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetryVoiceTranscriptionInput {
+    pub capture_id: CaptureId,
+    pub expected_caption_revision: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateVoiceCaptionInput {
+    pub capture_id: CaptureId,
+    pub expected_caption_revision: u32,
+    pub caption: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceCaptureMutationResult {
+    pub accepted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct EnrichmentUpdatedEvent {
     pub capture_id: CaptureId,
@@ -556,6 +577,7 @@ pub struct CaptureDetail {
     pub source_window_title: Option<String>,
     pub updated_at: Timestamp,
     pub enrichment_status: EnrichmentStatus,
+    pub caption_revision: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -891,6 +913,9 @@ pub fn typescript_bindings() -> String {
         MediaMimeType::decl(&config),
         EnrichmentStatus::decl(&config),
         EnrichmentUpdatedEvent::decl(&config),
+        RetryVoiceTranscriptionInput::decl(&config),
+        UpdateVoiceCaptionInput::decl(&config),
+        VoiceCaptureMutationResult::decl(&config),
         ContextRef::decl(&config),
         SelectedProjectDirectory::decl(&config),
         PickProjectDirectoryResult::decl(&config),
@@ -1071,6 +1096,7 @@ mod tests {
             source_window_title: Some("Lyn".to_owned()),
             updated_at: captured_at.clone(),
             enrichment_status: EnrichmentStatus::NotRequested,
+            caption_revision: 0,
         };
         let page = Page {
             items: vec![detail.clone()],

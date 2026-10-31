@@ -122,7 +122,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ## Optional local speech
 
-Settings can install a **CPU-only** whisper.cpp engine and multilingual Whisper `base` model after an explicit user action. Model install is the only network-capable path; capture and Library work offline without it. See [`docs/09_local_speech_distribution_decision.md`](docs/09_local_speech_distribution_decision.md).
+Settings can install a **CPU-only Parakeet v3 Q8** package (approximately 942 MB, Linux x86_64) after an explicit user action. The model loads on demand, stays warm for nearby notes, and unloads after 60 seconds idle. Voice captions can be corrected in Library and failed transcription retried explicitly. Model install is the only network-capable path; capture and Library work offline without it. See [`docs/09_local_speech_distribution_decision.md`](docs/09_local_speech_distribution_decision.md).
 
 ## Context providers (Linux X11)
 
@@ -150,4 +150,4 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 
 SPDX: [MIT](LICENSE)
 
-Optional local speech downloads (whisper.cpp / Whisper `base`) are also MIT-licensed upstream; release notes must retain their attribution when those components are documented.
+The optional parakeet.cpp runtime is MIT-licensed. The Parakeet v3 model is CC BY 4.0; its installed package retains NVIDIA/conversion attribution and the license text.

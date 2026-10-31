@@ -117,7 +117,8 @@ Optional local intelligence may enrich saved material, but saving never depends 
 - Store structured data and settings in local SQLite storage.
 - Store screenshots and audio as local files under Lyn-managed application data.
 - Keep the frontend behind typed Tauri commands rather than giving it direct SQL or unrestricted filesystem access.
-- Allow the user to enable optional local speech recognition and download a compatible local model.
+- Allow the user to download optional Parakeet speech recognition, enable it separately, and receive captions after saving. Load on demand, reuse briefly, and release the model after inactivity.
+- Let users correct voice captions and explicitly retry failed transcription in Library without changing the saved recording.
 
 ## 5. Out of Scope for the MVP
 

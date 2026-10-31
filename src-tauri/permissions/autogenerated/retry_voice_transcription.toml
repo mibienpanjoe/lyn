@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-retry-voice-transcription"
+description = "Enables the retry_voice_transcription command without any pre-configured scope."
+commands.allow = ["retry_voice_transcription"]
+
+[[permission]]
+identifier = "deny-retry-voice-transcription"
+description = "Denies the retry_voice_transcription command without any pre-configured scope."
+commands.deny = ["retry_voice_transcription"]

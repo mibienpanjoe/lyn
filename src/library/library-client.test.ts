@@ -108,3 +108,24 @@ describe('Library IPC client', () => {
     });
   });
 });
+
+describe('voice capture mutations', () => {
+  it('sends only the capture, revision and correction through typed commands', async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: { accepted: true } });
+    const client = createLibraryClient(invoke);
+    await client.updateVoiceCaption('capture-id', 3, 'Corrected caption');
+    expect(invoke).toHaveBeenLastCalledWith('update_voice_caption', {
+      input: {
+        captureId: 'capture-id',
+        expectedCaptionRevision: 3,
+        caption: 'Corrected caption',
+      },
+    });
+    await client.retryVoiceTranscription('capture-id', 4);
+    expect(invoke).toHaveBeenLastCalledWith('retry_voice_transcription', {
+      input: { captureId: 'capture-id', expectedCaptionRevision: 4 },
+    });
+  });
+});

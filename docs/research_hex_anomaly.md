@@ -4,6 +4,8 @@
 
 **Scope:** Public `anomalyco/hex` repository and Lyn's accepted requirements / speech decision. This is a research note, not a claim that HEX has been run on Lyn's reference machine.
 
+> Follow-up, 2026-10-31: the owner accepted a Parakeet v3 Q8 replacement with on-demand loading and 60-second warm reuse. The [speech decision](09_local_speech_distribution_decision.md) supersedes this note's recommendation to keep Whisper while evaluating. This dated research remains historical; no quality benchmark follows from the decision.
+
 ## Executive recommendation
 
 HEX is a useful reference for turning local speech into a fast, dependable interaction. The strongest ideas for Lyn are its native inference path, warm model/session ownership, explicit model and language selection, measured startup/inference/tail latency, and recovery-oriented UX. Its headline performance numbers do not transfer to Lyn: the published measurements are mainly Apple Silicon with Metal, and the tested English Parakeet configurations do not establish French quality or Linux CPU performance.

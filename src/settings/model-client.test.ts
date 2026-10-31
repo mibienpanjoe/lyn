@@ -7,11 +7,11 @@ describe('speech model client', () => {
   it('uses the fixed product model id rather than accepting a path or URL', async () => {
     const invoke = vi.fn().mockResolvedValue({
       ok: true,
-      data: { accepted: true, modelId: 'whisper-base-multilingual-v1' },
+      data: { accepted: true, modelId: 'parakeet-tdt-0.6b-v3-q8-v1' },
     });
     await createSpeechModelClient(invoke).install();
     expect(invoke).toHaveBeenCalledWith('install_speech_model', {
-      input: { modelId: 'whisper-base-multilingual-v1' },
+      input: { modelId: 'parakeet-tdt-0.6b-v3-q8-v1' },
     });
   });
 

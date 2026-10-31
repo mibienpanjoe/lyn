@@ -1,6 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if let Some(code) = lyn_lib::run_local_speech_helper() {
+        std::process::exit(if code == std::process::ExitCode::SUCCESS {
+            0
+        } else {
+            1
+        });
+    }
     #[cfg(target_os = "linux")]
     {
         let argv0 = std::env::args_os().next();

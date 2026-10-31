@@ -17,6 +17,7 @@ import type {
   Page,
   SearchResultItem,
   Timestamp,
+  VoiceCaptureMutationResult,
 } from '../lib/ipc-types';
 
 type Invoke = <T>(
@@ -45,6 +46,15 @@ export interface LibraryClient {
   ): Promise<Page<CaptureSummary>>;
   getCapture(captureId: string): Promise<CaptureDetail>;
   deleteCapture(captureId: string): Promise<DeleteCaptureResult>;
+  retryVoiceTranscription(
+    captureId: string,
+    expectedCaptionRevision: number,
+  ): Promise<VoiceCaptureMutationResult>;
+  updateVoiceCaption(
+    captureId: string,
+    expectedCaptionRevision: number,
+    caption: string,
+  ): Promise<VoiceCaptureMutationResult>;
   searchCaptures(
     query: string,
     filters: SearchFilters,
@@ -94,6 +104,17 @@ export function createLibraryClient(call: Invoke = invoke): LibraryClient {
       command<CaptureDetail>(call, 'get_capture', { captureId }),
     deleteCapture: (captureId) =>
       command<DeleteCaptureResult>(call, 'delete_capture', { captureId }),
+    retryVoiceTranscription: (captureId, expectedCaptionRevision) =>
+      command<VoiceCaptureMutationResult>(call, 'retry_voice_transcription', {
+        captureId,
+        expectedCaptionRevision,
+      }),
+    updateVoiceCaption: (captureId, expectedCaptionRevision, caption) =>
+      command<VoiceCaptureMutationResult>(call, 'update_voice_caption', {
+        captureId,
+        expectedCaptionRevision,
+        caption,
+      }),
     searchCaptures: (query, filters, cursor = null) =>
       command<Page<SearchResultItem>>(call, 'search_captures', {
         query,

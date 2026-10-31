@@ -72,6 +72,12 @@ export type EnrichmentStatus = "not_requested" | "pending" | "completed" | "skip
 
 export type EnrichmentUpdatedEvent = { captureId: CaptureId, status: EnrichmentStatus, captionChanged: boolean, };
 
+export type RetryVoiceTranscriptionInput = { captureId: CaptureId, expectedCaptionRevision: number, };
+
+export type UpdateVoiceCaptionInput = { captureId: CaptureId, expectedCaptionRevision: number, caption: string, };
+
+export type VoiceCaptureMutationResult = { accepted: boolean, };
+
 export type ContextRef = { id: ContextId, kind: ContextKind, name: string, };
 
 export type SelectedProjectDirectory = { selectedDirectoryToken: DirectorySelectionToken, suggestedName: string, };
@@ -126,7 +132,7 @@ export type MediaSummary = { mediaId: MediaId, kind: MediaKind, previewUri: stri
 
 export type CaptureSummary = { id: CaptureId, kind: CaptureKind, context: ContextRef, branchName: string | null, capturedAt: Timestamp, textExcerpt: string | null, caption: string | null, captionSource: CaptionSource | null, media: MediaSummary | null, };
 
-export type CaptureDetail = { id: CaptureId, kind: CaptureKind, context: ContextRef, branchName: string | null, capturedAt: Timestamp, textExcerpt: string | null, caption: string | null, captionSource: CaptionSource | null, media: MediaSummary | null, textBody: string | null, sourceApp: string | null, sourceWindowTitle: string | null, updatedAt: Timestamp, enrichmentStatus: EnrichmentStatus, };
+export type CaptureDetail = { id: CaptureId, kind: CaptureKind, context: ContextRef, branchName: string | null, capturedAt: Timestamp, textExcerpt: string | null, caption: string | null, captionSource: CaptionSource | null, media: MediaSummary | null, textBody: string | null, sourceApp: string | null, sourceWindowTitle: string | null, updatedAt: Timestamp, enrichmentStatus: EnrichmentStatus, captionRevision: number, };
 
 export type Page<T> = { items: Array<T>, nextCursor: string | null, };
 

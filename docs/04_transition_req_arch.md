@@ -46,7 +46,7 @@ The asynchronous policy layer for generated screenshot metadata and voice transc
 
 ### Local Speech Adapter
 
-The optional adapter around whisper.cpp, its installed model, transcription execution, and model lifecycle. It returns results or typed failures to Enrichment Service and does not participate in save acceptance.
+The optional adapter around Parakeet, its installed model, transcription execution, and model lifecycle. It returns results or typed failures to Enrichment Service and does not participate in save acceptance.
 
 ### Platform Service
 

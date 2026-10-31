@@ -10,7 +10,7 @@ import type {
 } from '../lib/ipc-types';
 import { SettingsCommandError } from './settings-client';
 
-const MODEL_ID = 'whisper-base-multilingual-v1';
+const MODEL_ID = 'parakeet-tdt-0.6b-v3-q8-v1';
 
 type Invoke = <T>(
   command: string,

@@ -161,6 +161,8 @@ For documentation changes, also run:
 
 Packaging targets are `.deb`, Linux binary tarball, and Windows NSIS `.exe`. Artifacts are unsigned for v1 and distributed via GitHub Releases only (no in-app updater). macOS and Wayland remain deferred. Add new exact commands here and to `README.md` in the same change.
 
+Optional speech uses Parakeet TDT 0.6B v3 Q8 through the pinned parakeet.cpp CPU library on Linux x86_64; `docs/09_local_speech_distribution_decision.md` owns its artifact/lifecycle/acceptance policy. The same executable dispatches `--lyn-speech-worker` / `--lyn-speech-probe` before Tauri initialization. Never expose those private paths or flags through IPC. Use one model on demand, private framed pipes, a 60-second idle lifetime and five-minute job deadline. Disablement cancels work; failures/interrupted jobs require explicit Library retry. Caption edits compare the stored caption revision and retain manual ownership. Retain old Whisper files without executing/adopting them; a missing replacement resets the old speech opt-in. No real Parakeet installed acceptance is implied by worker fixtures.
+
 ## Coding Style & Naming Conventions
 
 Write concise Markdown with descriptive headings and relative links. Keep numbered filenames stable. Never present proposed designs as implemented or verified.

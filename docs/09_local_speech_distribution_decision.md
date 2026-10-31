@@ -1,122 +1,80 @@
 # Lyn — G2 Local Speech Distribution Decision
 
-Status: **Accepted for T30 implementation**, 2026-09-01
+Status: **Parakeet replacement accepted for implementation**, 2026-10-31. Supersedes the 2026-09-01 Whisper package decision. Installed transcription quality, latency and memory acceptance remain pending.
 
-Derived from: [`02_requirements_srs.md`](02_requirements_srs.md), [`05_architecture.md`](05_architecture.md), and [`06_api_specification.md`](06_api_specification.md)
+Derived from: [`02_requirements_srs.md`](02_requirements_srs.md), [`05_architecture.md`](05_architecture.md), [`06_api_specification.md`](06_api_specification.md), and [`research_hex_anomaly.md`](research_hex_anomaly.md).
 
-## Decision
+## Decision and user behavior
 
-Lyn will offer one optional, multilingual, CPU-first local speech package on the first verified target: Linux x86_64. Installation is an explicit Settings action. Rust owns an immutable allowlist containing engine and model identities, exact origins, sizes, and SHA-256 digests. Downloads use Lyn-owned staging and become active only after complete verification. They never participate in capture acceptance.
+Lyn offers one optional, CPU-only, local **Parakeet TDT 0.6B v3 Q8** package on Linux x86_64. The owner accepted replacing Whisper because its transcription was unsatisfactory. This is an implementation decision, not evidence that Parakeet's accuracy has passed acceptance.
 
-| Component | Accepted artifact |
-|---|---|
-| Engine | `whisper.cpp` v1.9.2, upstream commit `306c88f`, official Ubuntu x64 release asset |
-| Model | OpenAI Whisper multilingual `base`, converted to whisper.cpp GGML as `ggml-base.bin` |
-| Product model ID | `whisper-base-multilingual-v1` |
-| Languages | Automatic multilingual transcription; no translation mode |
-| Acceleration | CPU only; no CUDA, Vulkan, OpenVINO, or remote fallback |
+- Install explicitly through Settings, then enable automatic transcription separately. Both download and enablement remain optional; no model is bundled with core Lyn.
+- Save the WAV and close capture immediately. Only committed, captionless voice notes are eligible for background enrichment (FR-056, FR-057, FR-082, INV-02).
+- Load on the first transcription, reuse one model for nearby notes, and unload after **60 seconds without a job**. Never prewarm on application startup, recording or installation.
+- Run one transcription at a time, with at most four compute threads. Stop the worker when speech is disabled or its package is removed. A timeout, crash or invalid worker response retires that worker; the next explicit job gets a fresh one.
+- Recognition remains entirely on-device, without HTTP listeners, cloud fallback, accounts or API fees. Native inference runs in a Lyn-owned child process over private stdin/stdout pipes, isolating native failure and permitting a hard job deadline. An application crash also terminates its child. The spawning enrichment thread remains alive through the warm idle wait (condition-variable wakeups, no database polling); Linux parent-death signaling follows that thread, so it must retire its child before exiting.
+- Preserve saved audio on every failure. Generated captions remain editable and revision-checked; a manual caption always wins. The existing caption/search contract is at most 500 characters: longer recognition is shortened for the caption, not retained as a separate full transcript.
+- Missing/failed speech remains separate from durable capture. Installation Retry retries installation; transcription failures must be visible and require explicit retry, rather than silently consuming repeated inference attempts.
 
-G2 is resolved for T30 on Linux x86_64 only. Other targets remain unverified until their engine artifacts, checksums, extraction rules, and runtime behavior are accepted separately.
+## Pinned artifacts
 
-## Why multilingual base
+Rust owns the fixed artifact allowlist; IPC accepts only `parakeet-tdt-0.6b-v3-q8-v1`, never paths, URLs, digests, runtime flags or model names chosen by the caller.
 
-The OpenAI model card identifies `base` as a 74-million-parameter model and distinguishes multilingual models from `.en` English-only variants. Lyn is used in French and English, so `base.en` is unsuitable as the sole v1 model. whisper.cpp reports approximately 142 MiB of disk and 388 MB of memory for `base`, compared with approximately 466 MiB/852 MB for `small`; `base` is the better first-release balance for a lightweight capture utility.
+| Component | Pinned identity | Bytes | SHA-256 |
+|---|---|---:|---|
+| Engine | `mudler/parakeet.cpp` v0.6.1, `parakeet-v0.6.1-lib-linux-cpu-x64.tar.gz`, C API ABI 10 | 1,490,872 | `5a2b439e83d1b6ab66c55bcfc48751ee48e53727d5b3ea33a6bc0e8626f1397c` |
+| Model | `mudler/parakeet-cpp-gguf`, revision `07a08a3a405d20c5434b9a1442f6e6cf571f57ad`, `tdt-0.6b-v3-q8_0.gguf` | 940,663,680 | `4d69a4a6683f4f2d952bad794c1357ca6eb628027695b4699c5a9ad4cd07d757` |
 
-Whisper output remains advisory metadata. OpenAI documents uneven performance across languages and accents, possible hallucinated text, and repetitive output. Lyn therefore keeps user-caption precedence and revision checks, labels generated text as a transcript, and never uses it for decisions or silently replaces user-authored metadata.
+Exact origins:
 
-## Immutable artifact manifest
+- `https://github.com/mudler/parakeet.cpp/releases/download/v0.6.1/parakeet-v0.6.1-lib-linux-cpu-x64.tar.gz`
+- `https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/07a08a3a405d20c5434b9a1442f6e6cf571f57ad/tdt-0.6b-v3-q8_0.gguf`
 
-### Engine
+Q8 prioritizes recognition quality over the smaller Q4 alternatives. This is about **942 MB total download**, not the earlier roughly 670 MB ONNX estimate: this native GGUF package is a different representation. Peak memory, cold/warm inference time and French/English accuracy are unmeasured. A planning allowance of 1–3 GB RAM for short notes is not a guarantee or enforced cap. The CPU library requires the system C++/OpenMP runtime; a bounded ABI probe refuses incompatible systems during installation. Its flat concurrency API ignores the thread count for one backend. The exact pinned Linux artifact additionally exports `pk::set_num_threads(int)` and `pk::effective_threads()`; the private adapter resolves their exact Itanium symbols, sets the global budget before model loading, and requires the effective value to match `min(4, available_parallelism)`. Missing symbols or a different effective budget refuse; replacing the artifact requires re-auditing this dependency.
 
-- Version/commit: `v1.9.2` / `306c88f`
-- URL: `https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-ubuntu-x64.tar.gz`
-- Exact size: `9,497,583` bytes
-- SHA-256: `46811a3ecf584307480a220b9ef5ff81b7b22dc41577cbc274ce3afc61f753b1`
-- Accepted content: `whisper-cli`, required shared libraries, and upstream `LICENSE`
-- License: MIT
+## Licenses and provenance
 
-### Model
+parakeet.cpp is MIT; its exact engine archive includes LICENSE. NVIDIA's Parakeet v3 model is CC BY 4.0, including the converted/quantized derivative. Retain the CC BY 4.0 text and attribution naming NVIDIA, the original model URL, conversion/quantization by mudler/parakeet.cpp, changes made (GGUF Q8 conversion), and the license URL. These notices are included with the installed optional package. No license fee or per-minute inference fee applies to local execution. Release documentation must distinguish the MIT app/runtime from the CC BY model.
 
-- Repository revision: `5359861c739e955e79d9a303bcbc70fb988958b1`
-- URL: `https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin`
-- Exact size: `147,951,465` bytes
-- SHA-256: `60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe`
-- License metadata: MIT
+The engine's exact bytes and ABI were inspected on 2026-10-31; the model size/digest were read from the pinned repository's LFS metadata. This does not establish that the model has been downloaded, loaded or transcribed successfully in Lyn.
 
-The 40-character `SHA` values in the upstream model table are repository object identifiers, not Lyn's artifact-integrity field. Lyn uses the independently verified 64-character SHA-256 above.
+## Download and storage boundary
 
-Both OpenAI Whisper and whisper.cpp publish MIT licenses, and the Hugging Face model repository declares MIT metadata. T30 retains the engine license with the installed component. G3 must include engine/model attribution in release notices. Neither artifact is committed to this repository or bundled with core Lyn.
+Keep the existing bounded HTTPS redirect-host allowlist, exact length/SHA-256 checks, private staging, cancellation, extraction rejection and atomic activation. Increase the installation deadline to **20 minutes** for the larger optional download; retain the 15-second connect timeout. Never read remote `latest` at runtime. The engine archive admits only its exact regular library/license/header/document members; no links, path traversal, duplicate members or arbitrary extraction. Retain the verified archive and compare the installed library/license with it when reconciling installation.
 
-## Download and supply-chain requirements
-
-The frontend submits only the product model ID. It cannot submit a URL, checksum, filename, destination, engine argument, or filesystem path.
-
-Rust must:
-
-1. Accept only the build-time manifest entry above.
-2. Start from the exact HTTPS origins and allow only bounded HTTPS redirects through an explicit GitHub/Hugging Face delivery-host allowlist.
-3. Reject downgrade, credentials, fragments, redirect loops, unknown hosts, oversized content, and mismatched lengths.
-4. Use a 15-second connect timeout and five-minute total installation deadline.
-5. Stream into a newly created Lyn-owned staging directory with restrictive permissions while computing SHA-256.
-6. Require the exact final byte count and digest before activation.
-7. From the exact digest-verified archive, extract only explicitly selected engine members; ignore other regular members and reject absolute paths, parent traversal, devices, and every link except the archive's exact allowlisted shared-library aliases. Lyn never extracts those aliases as links: it recreates only the required loader aliases as private regular-file copies of their verified versioned libraries.
-8. Validate the engine with a bounded version probe and the model by its exact size and digest, then atomically rename the complete package into the active location.
-9. On cancellation, interruption, mismatch, or validation failure, remove only incomplete staging and retain any previous valid package.
-
-The manifest ships with an application release. Lyn never reads remote `latest`, accepts remote manifest updates, or auto-upgrades an installation. Changing engine, model, URL, size, or digest requires a reviewed source change, automated fixtures, owner validation, and a new product model ID when compatibility or output may change.
-
-## Storage and lifecycle
-
-All paths derive beneath Tauri's application-data directory and remain private to Rust:
+Package data remains beneath Rust's application-data directory:
 
 ```text
 speech/
-├── active/whisper-base-multilingual-v1/
+├── active/parakeet-tdt-0.6b-v3-q8-v1/
 │   ├── manifest.json
 │   ├── artifacts/engine.tar.gz
-│   ├── engine/
-│   ├── model/ggml-base.bin
+│   ├── engine/libparakeet.so
+│   ├── model/tdt-0.6b-v3-q8_0.gguf
 │   └── notices/
 └── staging/<random installation id>/
 ```
 
-IPC exposes only safe state, model ID, byte progress, and total bytes. It never exposes paths, redirect destinations, process output, raw OS errors, or transcript content.
+Preserve any previous valid package if installation fails. Existing Whisper package directories remain untouched and are never executed or adopted as Parakeet. A saved speech preference cannot start inference until the Parakeet package is valid. No automatic model migration, download, deletion of old artifacts or cloud fallback occurs.
 
-Only one install/remove mutation runs at a time. Removal refuses while transcription uses the package, then removes it by product ID without altering captures, captions, audio, or enrichment history. Installation does not automatically enable transcription; enabling Local speech remains a separate explicit choice.
+## Runtime and IPC boundary
 
-## Runtime limits
+Keep the existing safe model states (`not_installed`, `downloading`, `installed`, `invalid`), byte progress and typed errors. Installed means the pinned files and native ABI probe passed, not that a model is currently resident or transcription quality is accepted. Settings identifies Parakeet v3 Q8 and its approximate 942 MB download.
 
-- Opt-in remains off by default; disabled speech schedules and starts no new work.
-- At most one transcription runs at a time.
-- The adapter accepts only a database-resolved Lyn-owned WAV record and the active manifest entry.
-- Input remains 16 kHz, mono, 16-bit PCM WAV, the format documented by whisper.cpp's CLI.
-- Recordings longer than ten minutes are skipped.
-- Threads are limited to `min(4, available_parallelism)`.
-- Each transcription has a five-minute deadline and cancellation terminates only Lyn's child process.
-- Stdout is bounded to 512 KiB and parsed as UTF-8 transcript data; stderr is never forwarded or persisted.
-- Generated captions still pass Lyn's nonblank, 500-character, source, and revision checks. Longer raw transcripts do not enter the v1 caption/search contract.
-- Missing, invalid, disabled, timed-out, or failed speech marks enrichment skipped/failed without changing the capture.
+Only database-resolved Lyn-owned 16 kHz mono PCM16 WAV files enter inference. Refuse recordings over ten minutes. Each job, including cold load, has a five-minute absolute deadline; disablement cancels active work. Bound worker requests and replies, never forward native stdout/stderr or log audio/transcript contents. Every generated caption still passes source/revision/manual-caption checks before an enrichment event refreshes Library.
 
-The upstream 388 MB estimate is an expected floor, not a hard allocation guarantee. T33 must measure peak RSS and latency on the reference machine before release; budget changes require evidence and a policy update.
+## Acceptance
 
-## Required Settings behavior
+Automated checks must cover artifact identity, archive traversal/link/duplicate rejection, integrity mismatch, safe old-Whisper handling, worker response bounds, reuse, idle retirement, cancellation, timeout, crash cleanup, one-at-a-time inference, no automatic failed-job replay, manual-caption/revision precedence and the typed Settings/Library consumers. Fixtures establish lifecycle and persistence behavior, not model quality.
 
-Settings shows `Not installed`, `Downloading`, `Installed`, `Invalid`, or a safe failure; the `Multilingual base` label; an approximate 150 MB model download; byte/percentage progress; and valid Install, Cancel, Retry, and Remove actions. The Local speech toggle is disabled until the package is valid. The UI states that capture continues when installation or transcription fails. No model prompt appears in quick capture.
+Owner testing follows implementation: install through Settings, restart Lyn, record representative French/English notes (accents, technical terms, numbers, noise and silence), inspect editable generated captions and preserved audio, compare cold/warm timing and peak RSS, wait for idle retirement, disable during a job, retry a failed job, remove/reinstall and confirm offline capture. Record installed acceptance separately from local automated checks. No previous Whisper or HEX result establishes Parakeet acceptance.
 
-## T30 verification and owner gate
+## Decision history and sources
 
-Automated acceptance must cover unknown IDs/fields; origin and redirect rejection; declared/streamed overflow; byte-count and digest mismatch; cancellation and interrupted cleanup; archive traversal/link/device rejection; atomic replacement; invalid startup state; offline failure; removal in use; disablement; engine timeout/cancellation/output bounds; user-caption precedence; and absence of cloud fallback, raw paths, process-output leakage, or save dependency.
+The original 2026-09-01 choice was whisper.cpp v1.9.2 with multilingual Whisper base, model ID `whisper-base-multilingual-v1`. It was selected for size and CPU compatibility, not measured recognition quality. The 2026-09-29 research recommended target-machine evaluation; the owner now authorizes the replacement before the later joint quality test.
 
-After automation passes, the owner must install through Settings, restart Lyn, record short French and English notes, confirm playback/transcripts, disable/re-enable speech, remove/reinstall the package, and confirm capture remains operational offline and during failed installation. That manual result is the final T30 gate before Phase 6.
-
-## Sources and verification
-
-- [whisper.cpp v1.9.2 release](https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.2)
-- [whisper.cpp quick start, WAV requirement, memory usage, and quantization](https://github.com/ggml-org/whisper.cpp/blob/master/README.md)
-- [whisper.cpp model download documentation and matrix](https://github.com/ggml-org/whisper.cpp/blob/master/models/README.md)
-- [Pinned Hugging Face model repository revision](https://huggingface.co/ggerganov/whisper.cpp/tree/5359861c739e955e79d9a303bcbc70fb988958b1)
-- [OpenAI Whisper model card and limitations](https://github.com/openai/whisper/blob/main/model-card.md)
-- [whisper.cpp MIT license](https://github.com/ggml-org/whisper.cpp/blob/v1.9.2/LICENSE)
-- [OpenAI Whisper MIT license](https://github.com/openai/whisper/blob/main/LICENSE)
-
-On 2026-09-01, both exact URLs were downloaded to temporary files. Their byte counts and SHA-256 digests matched this manifest. No artifact was copied into the repository.
+- [NVIDIA Parakeet v3 model card and license](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
+- [Pinned native runtime release](https://github.com/mudler/parakeet.cpp/releases/tag/v0.6.1)
+- [Pinned C API and ownership contract](https://github.com/mudler/parakeet.cpp/blob/v0.6.1/include/parakeet_capi.h)
+- [Pinned converted model files](https://huggingface.co/mudler/parakeet-cpp-gguf/tree/07a08a3a405d20c5434b9a1442f6e6cf571f57ad)
+- [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)

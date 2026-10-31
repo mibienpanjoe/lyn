@@ -211,7 +211,7 @@ Microservices, cloud services, frontend-owned SQL, and a generic plugin runtime 
 
 ### Local Speech Adapter
 
-**Responsibility:** Wrap optional whisper.cpp execution and local model lifecycle.
+**Responsibility:** Wrap optional Parakeet execution and local model lifecycle.
 
 **Owned invariants:** None; Enrichment Service owns the behavioral guarantees.
 
@@ -340,7 +340,7 @@ Constraints:
 | `kind` | enum | `context_caption` or `speech_caption`. |
 | `status` | enum | `pending`, `running`, `completed`, `skipped`, or `failed`. |
 | `input_revision` | integer | Caption revision observed when scheduled. |
-| `attempt_count` | integer | Bounded retry counter. |
+| `attempt_count` | integer | Attempts since the last explicit retry; failures are never automatically reclaimed. |
 | `last_error_code` | text nullable | Non-sensitive typed failure. |
 | `created_at` / `updated_at` | UTC timestamp | Queue lifecycle. |
 
@@ -472,7 +472,7 @@ Enter
   → Capture Service finalizes media and commits audio capture
   → popup closes
   → [optional, post-commit] Enrichment Service
-       → Local Speech Adapter/whisper.cpp
+       → Local Speech Adapter/Parakeet
        → compare caption revision/source
        → apply derived caption or discard stale result
 ```
@@ -520,7 +520,7 @@ Search input
 | Local filesystem | Media Service screenshots/audio and Local Speech Adapter models. |
 | CPAL | Platform Service microphone/device stream adapter. |
 | Rodio | Platform Service audio playback adapter where suitable. |
-| whisper.cpp | Optional Local Speech Adapter implementation. |
+| parakeet.cpp | Optional CPU native inference in a private Lyn-owned child. |
 
 No technology in the table authorizes cloud storage, cloud AI, or direct frontend access to local resources.
 
@@ -677,7 +677,7 @@ Shell, VS Code, foreground-window, and manual sources implement a common provide
 
 **Status:** Accepted.
 
-Screenshot metadata and voice transcription run only after durable save. whisper.cpp is optional and locally installed. A cloud fallback is prohibited by the v1 privacy boundary.
+Screenshot metadata and voice transcription run only after durable save. Parakeet is optional and locally installed; one on-demand worker reuses its model and retires after 60 seconds idle. A cloud fallback is prohibited by the v1 privacy boundary.
 
 ### ADR-007 — Typed Tauri IPC is the public application interface
 
@@ -703,7 +703,7 @@ The Linux browser companion uses Native Messaging to the same running Lyn binary
 
 ### ADR-010 — Pinned optional local speech package
 
-**Status:** Accepted, 2026-09-01, for Linux x86_64 T30 implementation.
+**Status:** Superseded by ADR-014, 2026-10-31. Originally accepted, 2026-09-01, for Linux x86_64 T30 implementation.
 
 Lyn installs a CPU-only whisper.cpp v1.9.2 engine and multilingual Whisper `base` model only after an explicit Settings action. Rust owns immutable URLs, exact sizes, SHA-256 digests, staging, verification, atomic activation, runtime limits, and removal. The frontend supplies only an allowlisted product model ID. Moving release URLs, client-selected artifacts, automatic updates, English-only defaults, cloud fallback, and bundling the 142 MiB model with core Lyn are rejected. The complete distribution, licensing, threat, resource, update, and owner-validation policy is recorded in [`09_local_speech_distribution_decision.md`](09_local_speech_distribution_decision.md).
 
@@ -766,3 +766,10 @@ user-reported installed shortcut acceptance, not a completed automated desktop
 series or proof of a new login session. The desktop controller stopped on
 minimized-window reopening/focus before testing Alt+L. Actual logout/login
 execution and automated installed reopening remain unconfirmed.
+
+
+### ADR-014 — Optional Parakeet with bounded warm reuse
+
+**Status:** Accepted for implementation, 2026-10-31; replaces ADR-010. Installed quality/resource acceptance is pending.
+
+Replace Whisper base with Parakeet TDT 0.6B v3 Q8 through parakeet.cpp v0.6.1 on Linux x86_64. The owner's unsatisfactory recognition experience motivates the replacement; no benchmark is claimed. Keep capture acceptance independent, opt-in download/enablement, immutable artifact checks and no cloud fallback. A native context runs in a single Rust-owned child using bounded private pipes, loads on demand, reuses its model between nearby notes and retires after 60 seconds idle. Disablement cancels active work. Library permits explicit failed-job retry and revision-checked caption correction; late generated output cannot replace corrections. The existing 500-character caption/search boundary remains, rather than adding full-transcript storage. The [owning speech decision](09_local_speech_distribution_decision.md) records exact artifacts, licenses, migration and acceptance. The runtime is MIT; the model is CC BY 4.0. CPU compatibility, model load and French/English quality need separate installed testing.

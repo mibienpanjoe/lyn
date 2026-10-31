@@ -52,6 +52,7 @@ const sampleCaptures: CaptureDetail[] = [
     sourceApp: 'Cursor',
     sourceWindowTitle: 'Lyn — Visual Polish',
     enrichmentStatus: 'not_requested',
+    captionRevision: 0,
   },
   {
     id: 'cap-2',
@@ -78,6 +79,7 @@ const sampleCaptures: CaptureDetail[] = [
     sourceApp: 'Firefox',
     sourceWindowTitle: 'Lyn Design Reference',
     enrichmentStatus: 'not_requested',
+    captionRevision: 0,
   },
   {
     id: 'cap-3',
@@ -103,6 +105,7 @@ const sampleCaptures: CaptureDetail[] = [
     sourceApp: null,
     sourceWindowTitle: null,
     enrichmentStatus: 'completed',
+    captionRevision: 1,
   },
   {
     id: 'cap-4',
@@ -121,6 +124,7 @@ const sampleCaptures: CaptureDetail[] = [
     sourceApp: 'Terminal',
     sourceWindowTitle: 'zsh',
     enrichmentStatus: 'not_requested',
+    captionRevision: 0,
   },
 ];
 
@@ -140,8 +144,8 @@ let devSettingsStore: AppSettings = {
 
 let devSpeechStatus: SpeechModelStatus = {
   state: 'installed',
-  modelId: 'whisper-base-multilingual-v1',
-  label: 'Multilingual base (74 MB)',
+  modelId: 'parakeet-tdt-0.6b-v3-q8-v1',
+  label: 'Parakeet v3 · Q8',
   downloadedBytes: 77594624,
   totalBytes: 77594624,
   errorCode: null,
@@ -165,6 +169,28 @@ let devSession: CaptureSession = {
 };
 
 export const devLibraryClient: LibraryClient = {
+  async retryVoiceTranscription(captureId, revision) {
+    const item = sampleCaptures.find((c) => c.id === captureId);
+    if (
+      !item ||
+      item.captionRevision !== revision ||
+      item.caption ||
+      !['failed', 'skipped'].includes(item.enrichmentStatus)
+    )
+      throw new Error('Voice note is no longer eligible.');
+    item.enrichmentStatus = 'pending';
+    return { accepted: true };
+  },
+  async updateVoiceCaption(captureId, revision, caption) {
+    const item = sampleCaptures.find((c) => c.id === captureId);
+    if (!item || item.kind !== 'audio' || item.captionRevision !== revision)
+      throw new Error('Voice note changed.');
+    item.caption = caption.trim() || null;
+    item.captionSource = item.caption ? 'user' : null;
+    item.captionRevision += 1;
+    item.enrichmentStatus = 'skipped';
+    return { accepted: true };
+  },
   async listContexts(): Promise<ContextRef[]> {
     return sampleContexts;
   },
@@ -303,13 +329,13 @@ export const devSpeechModelClient: SpeechModelClient = {
   async install() {
     devSpeechStatus = {
       state: 'installed',
-      modelId: 'whisper-base-multilingual-v1',
-      label: 'Multilingual base (74 MB)',
+      modelId: 'parakeet-tdt-0.6b-v3-q8-v1',
+      label: 'Parakeet v3 · Q8',
       downloadedBytes: 77594624,
       totalBytes: 77594624,
       errorCode: null,
     };
-    return { accepted: true, modelId: 'whisper-base-multilingual-v1' };
+    return { accepted: true, modelId: 'parakeet-tdt-0.6b-v3-q8-v1' };
   },
   async cancel() {
     return { cancelled: true };
@@ -318,7 +344,7 @@ export const devSpeechModelClient: SpeechModelClient = {
     devSpeechStatus = {
       state: 'not_installed',
       modelId: null,
-      label: 'Multilingual base',
+      label: 'Parakeet v3 · Q8',
       downloadedBytes: null,
       totalBytes: null,
       errorCode: null,

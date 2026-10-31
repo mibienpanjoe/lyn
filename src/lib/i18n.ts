@@ -76,6 +76,16 @@ export interface Translations {
   speechTitle: string;
   speechSubtitle: string;
   modelApproxSize: string;
+  voiceCaption: string;
+  voiceCaptionLimit: string;
+  voiceCaptionSaving: string;
+  voiceCaptionSave: string;
+  voiceCaptionCancel: string;
+  voiceCaptionGenerated: string;
+  voiceCaptionEdit: string;
+  voiceTranscribing: string;
+  voiceTranscriptionFailed: string;
+  voiceTranscriptionRetry: string;
   modelLoading: string;
   modelDownloading: (percent: number) => string;
   modelInstalled: string;
@@ -261,7 +271,18 @@ const en: Translations = {
   speechTitle: 'Local speech',
   speechSubtitle:
     'Generate searchable captions for voice captures entirely on this device.',
-  modelApproxSize: 'Approximately 150 MB',
+  modelApproxSize: 'Approximately 942 MB',
+  voiceCaption: 'Voice caption',
+  voiceCaptionLimit:
+    'Up to 500 characters. Your correction takes precedence over transcription.',
+  voiceCaptionSaving: 'Saving…',
+  voiceCaptionSave: 'Save caption',
+  voiceCaptionCancel: 'Cancel',
+  voiceCaptionGenerated: 'Generated caption',
+  voiceCaptionEdit: 'Edit caption',
+  voiceTranscribing: 'Transcribing on this device…',
+  voiceTranscriptionFailed: 'Transcription failed. Your recording is saved.',
+  voiceTranscriptionRetry: 'Retry transcription',
   modelLoading: 'Loading model…',
   modelDownloading: (percent: number) => `Downloading ${percent}%`,
   modelInstalled: 'Installed',
@@ -456,7 +477,19 @@ const fr: Translations = {
   speechTitle: 'Reconnaissance vocale locale',
   speechSubtitle:
     'Générez des sous-titres indexables pour vos captures vocales directement sur cet appareil.',
-  modelApproxSize: 'Environ 150 Mo',
+  modelApproxSize: 'Environ 942 Mo',
+  voiceCaption: 'Légende vocale',
+  voiceCaptionLimit:
+    '500 caractères maximum. Votre correction est prioritaire sur la transcription.',
+  voiceCaptionSaving: 'Enregistrement…',
+  voiceCaptionSave: 'Enregistrer la légende',
+  voiceCaptionCancel: 'Annuler',
+  voiceCaptionGenerated: 'Légende générée',
+  voiceCaptionEdit: 'Modifier la légende',
+  voiceTranscribing: 'Transcription sur cet appareil…',
+  voiceTranscriptionFailed:
+    'La transcription a échoué. Votre enregistrement est sauvegardé.',
+  voiceTranscriptionRetry: 'Réessayer la transcription',
   modelLoading: 'Chargement du modèle…',
   modelDownloading: (percent: number) => `Téléchargement ${percent}%`,
   modelInstalled: 'Installé',

@@ -24,4 +24,6 @@ permissions = [
   "allow-install-speech-model",
   "allow-cancel-speech-model-install",
   "allow-remove-speech-model",
+  "allow-retry-voice-transcription",
+  "allow-update-voice-caption",
 ]
