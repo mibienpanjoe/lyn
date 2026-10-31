@@ -191,7 +191,7 @@ pub(crate) fn helper_mode() -> Option<std::process::ExitCode> {
     if mode != "--lyn-speech-worker" && mode != "--lyn-speech-probe" {
         return None;
     }
-    let result = (|| {
+    let result: Result<(), ()> = (|| {
         let directory = args.next().ok_or(())?;
         if args.next().is_some() {
             return Err(());

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.0
+## 0.9.1
 
 ### Changed
 
@@ -19,6 +19,11 @@
   characters; full transcripts are not stored separately.
 - Explicit retry for failed or interrupted transcription. Failures preserve the
   recording and are never replayed automatically.
+
+### Fixed
+
+- Keep the experimental Windows installer buildable while local Parakeet remains
+  Linux-only. The initial 0.9.0 tag failed compilation and was not published.
 
 ### Distribution and validation limits
 
