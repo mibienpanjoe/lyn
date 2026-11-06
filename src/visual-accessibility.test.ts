@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 import { render, screen, waitFor } from '@testing-library/svelte';
 import axe from 'axe-core';
@@ -10,6 +10,19 @@ import type { LibraryClient } from './library/library-client';
 import type { SettingsClient } from './settings/settings-client';
 
 const styles = readFileSync(resolve(import.meta.dirname, 'styles.css'), 'utf8');
+
+function sourceFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return sourceFiles(path);
+    return /\.(svelte|css)$/.test(entry.name) ? [path] : [];
+  });
+}
+
+const sources = sourceFiles(import.meta.dirname).map((path) => ({
+  path,
+  text: readFileSync(path, 'utf8'),
+}));
 
 function channel(hex: string): [number, number, number] {
   const value = Number.parseInt(hex.slice(1), 16);
@@ -98,6 +111,41 @@ describe('visual accessibility verification', () => {
     expect(styles).toMatch(/:focus-visible/);
     expect(styles).toMatch(/min-width:\s*320px/);
     expect(styles).toMatch(/width:\s*min\(100%,\s*620px\)/);
+  });
+
+  it('defines every design token referenced by component styles', () => {
+    const defined = new Set(
+      sources.flatMap(({ text }) =>
+        Array.from(text.matchAll(/(--[a-z0-9-]+)\s*:/g), (match) => match[1]),
+      ),
+    );
+    const missing = sources.flatMap(({ path, text }) =>
+      Array.from(text.matchAll(/var\((--[a-z0-9-]+)\s*\)/g))
+        .map((match) => match[1])
+        .filter((token) => !defined.has(token))
+        .map((token) => `${token} in ${path}`),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it('styles the classes used by provider reordering controls', () => {
+    const markup = readFileSync(
+      resolve(import.meta.dirname, 'settings/SettingsPanel.svelte'),
+      'utf8',
+    );
+    const actionClass = markup.match(/<div class="(provider-[a-z-]+)">/)?.[1];
+    expect(actionClass).toBeDefined();
+    expect(styles).toContain(`.${actionClass} button`);
+  });
+
+  it('sets an explicit base text size and per-theme native control scheme', () => {
+    expect(styles).toMatch(/body\s*{[^}]*font-size:\s*13px/);
+    expect(styles).toMatch(
+      /:root\[data-theme='dark'\]\s*{\s*color-scheme:\s*dark;/,
+    );
+    expect(styles).toMatch(
+      /:root\[data-theme='light'\]\s*{\s*color-scheme:\s*light;/,
+    );
   });
 
   it('treats the Library brand mark as decorative beside the visible Lyn name', async () => {
