@@ -64,3 +64,13 @@ it('reports a silent failed write instead of displaying the requested state', as
   await screen.findByRole('alert');
   expect(screen.getByRole('switch')).not.toBeChecked();
 });
+
+it('names the switch independently of its visible on/off state', async () => {
+  const call = vi.fn().mockResolvedValueOnce(true);
+  const { container } = render(StartupSetting, { call });
+  const control = await screen.findByRole('switch', {
+    name: 'Start Lyn when I log in',
+  });
+  await waitFor(() => expect(control).toBeChecked());
+  expect(container.querySelector('.startup-state')).toHaveTextContent('On');
+});

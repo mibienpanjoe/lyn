@@ -3,6 +3,7 @@
   import CheckIcon from '@lucide/svelte/icons/check';
   import CopyIcon from '@lucide/svelte/icons/copy';
   import FileTextIcon from '@lucide/svelte/icons/file-text';
+  import GitBranchIcon from '@lucide/svelte/icons/git-branch';
   import ImageIcon from '@lucide/svelte/icons/image';
   import MicIcon from '@lucide/svelte/icons/mic';
   import Trash2Icon from '@lucide/svelte/icons/trash-2';
@@ -16,6 +17,7 @@
     snippets?: Record<string, string>;
     query?: string;
     language?: LanguageSetting;
+    showContext?: boolean;
     copyFeedback?: { id: string; state: 'copied' | 'failed' } | null;
     pendingDeleteId?: string | null;
     deleteBusy?: boolean;
@@ -32,6 +34,7 @@
     snippets = {},
     query = '',
     language = 'english',
+    showContext = true,
     copyFeedback = null,
     pendingDeleteId = null,
     deleteBusy = false,
@@ -72,12 +75,25 @@
     node.focus();
   }
 
+  function localDayKey(value: Date) {
+    return `${value.getFullYear()}-${value.getMonth()}-${value.getDate()}`;
+  }
+
+  function dayLabel(value: Date) {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    if (localDayKey(value) === localDayKey(today)) return t.dayToday;
+    if (localDayKey(value) === localDayKey(yesterday)) return t.dayYesterday;
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(
+      value,
+    );
+  }
+
   function groupByLocalDay(items: CaptureSummary[]) {
     const groups: Array<{ label: string; items: CaptureSummary[] }> = [];
     for (const capture of items) {
-      const label = new Intl.DateTimeFormat(undefined, {
-        dateStyle: 'medium',
-      }).format(new Date(capture.capturedAt));
+      const label = dayLabel(new Date(capture.capturedAt));
       const current = groups.at(-1);
       if (current?.label === label) current.items.push(capture);
       else groups.push({ label, items: [capture] });
@@ -160,10 +176,16 @@
                   <time datetime={capture.capturedAt}
                     >{time(capture.capturedAt)}</time
                   >
-                  <span>{capture.context.name}</span>
+                  {#if showContext}
+                    <span class="capture-row-context"
+                      >{capture.context.name}</span
+                    >
+                  {/if}
                   {#if capture.branchName}
                     <span class="branch-label" title={capture.branchName}
-                      >{capture.branchName}</span
+                      ><GitBranchIcon aria-hidden="true" /><span
+                        >{capture.branchName}</span
+                      ></span
                     >
                   {/if}
                 </span>

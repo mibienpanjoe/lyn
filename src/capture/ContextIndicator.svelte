@@ -1,5 +1,14 @@
 <script lang="ts">
-  import type { ContextResolution } from '../lib/ipc-types';
+  import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
+  import FolderIcon from '@lucide/svelte/icons/folder-code';
+  import GitBranchIcon from '@lucide/svelte/icons/git-branch';
+  import NotebookIcon from '@lucide/svelte/icons/notebook-tabs';
+  import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
+
+  import type {
+    ContextProviderKind,
+    ContextResolution,
+  } from '../lib/ipc-types';
 
   interface Props {
     resolution: ContextResolution | null;
@@ -16,6 +25,16 @@
     button = $bindable(),
     onclick,
   }: Props = $props();
+
+  // Only providers that identify a concrete application are shown; generic
+  // window and manual selections carry no extra meaning for the user.
+  const providerLabels: Partial<Record<ContextProviderKind, string>> = {
+    vscode: 'VS Code',
+    cursor: 'Cursor',
+    browser: 'Browser',
+    shell: 'Terminal',
+  };
+
   const resolved = $derived(
     resolution?.state === 'resolved' ? resolution.candidate : null,
   );
@@ -28,6 +47,16 @@
         : resolved
           ? `${resolved.context.name}${resolved.branchName ? `, branch ${resolved.branchName}` : ''}`
           : 'Choose context',
+  );
+  const visiblePrompt = $derived(
+    stale
+      ? 'Source changed — choose another context'
+      : resolution?.state === 'ambiguous'
+        ? 'Several contexts match — choose one'
+        : 'Choose a context',
+  );
+  const providerLabel = $derived(
+    resolved ? providerLabels[resolved.provider] : undefined,
   );
 </script>
 
@@ -44,15 +73,33 @@
   {#if needsAttention}
     <span class="context-status-dot" aria-hidden="true"></span>
   {/if}
-  <svg class="context-icon" viewBox="0 0 16 16" aria-hidden="true">
-    {#if stale || resolution?.state === 'ambiguous'}
-      <path d="M8 2.2 14 13H2L8 2.2Z M8 6v3.2 M8 11.5v.2" />
-    {:else}
-      <rect x="3" y="3" width="10" height="10" rx="2" />
+  {#if resolved && !stale}
+    <span class="context-chip" aria-hidden="true">
+      {#if resolved.context.kind === 'project'}
+        <FolderIcon class="context-icon" />
+      {:else}
+        <NotebookIcon class="context-icon" />
+      {/if}
+      <span class="context-label">{resolved.context.name}</span>
+    </span>
+    {#if resolved.branchName}
+      <span
+        class="context-chip context-branch"
+        title={resolved.branchName}
+        aria-hidden="true"
+      >
+        <GitBranchIcon class="context-icon" />
+        <span class="context-branch-name">{resolved.branchName}</span>
+      </span>
     {/if}
-  </svg>
-  <span class="context-label">{label}</span>
-  <svg class="context-chevron" viewBox="0 0 16 16" aria-hidden="true">
-    <path d="m4 6 4 4 4-4" />
-  </svg>
+    {#if providerLabel}
+      <span class="context-provider" aria-hidden="true">{providerLabel}</span>
+    {/if}
+  {:else}
+    {#if stale || resolution?.state === 'ambiguous'}
+      <TriangleAlertIcon class="context-icon" aria-hidden="true" />
+    {/if}
+    <span class="context-label" aria-hidden="true">{visiblePrompt}</span>
+  {/if}
+  <ChevronDownIcon class="context-chevron" aria-hidden="true" />
 </button>

@@ -126,6 +126,8 @@ export interface Translations {
   cancelDelete: string;
   deleting: string;
   loadEarlier: string;
+  dayToday: string;
+  dayYesterday: string;
   kindText: string;
   kindImage: string;
   kindAudio: string;
@@ -167,9 +169,9 @@ const en: Translations = {
     foreground_window: 'Foreground window',
   },
 
-  integrationsTitle: 'Integrations & Context Providers',
+  integrationsTitle: 'Integrations',
   integrationsSubtitle:
-    'Connect your editors, browsers, and terminals with 1-click so Lyn automatically associates captures with your active workspace.',
+    'Connect editors, browsers and terminals so captures are filed under the project you are working in.',
   scanningIntegrations: 'Scanning local environment…',
   refreshIntegrations: 'Refresh integration statuses',
   integrationDiscoveryFailed: 'Integration discovery failed.',
@@ -177,10 +179,10 @@ const en: Translations = {
   badgeDetected: 'Detected',
   badgeReady: 'Ready',
   btnReinstall: 'Reinstall',
-  btnEnableWatcher: 'Enable Watcher',
-  btnRegisterHost: 'Register Host',
-  btnAddShell: 'Add to Shell',
-  btnInstallExtension: 'Install Extension',
+  btnEnableWatcher: 'Enable watcher',
+  btnRegisterHost: 'Register host',
+  btnAddShell: 'Add to shell',
+  btnInstallExtension: 'Install extension',
   btnInstalling: 'Installing…',
   btnInstallNative: 'Install',
   gnomeConnectionStatus: {
@@ -250,15 +252,14 @@ const en: Translations = {
     cursor: 'Reports the focused Cursor workspace folder to Lyn on capture.',
     vscode: 'Reports the focused VS Code workspace folder to Lyn on capture.',
     browser:
-      'Captures from the focused tab; localhost maps to a project only when one local process directory is proven.',
-    kitty:
-      'Monitors exact focused terminal pane without inspecting commands or output.',
+      'Uses the focused tab. Local dev servers map to their project folder.',
+    kitty: 'Follows the focused pane. Commands and output are never read.',
     shell:
-      'Associates GNOME Terminal and external shells with current git repository.',
+      'Links shells, including GNOME Terminal, to their current Git repository.',
   },
 
   appearanceTitle: 'Appearance',
-  appearanceSubtitle: 'Follow the system or choose a deterministic Lyn theme.',
+  appearanceSubtitle: 'Follow the system or pick light or dark.',
   themeSystem: 'System',
   themeLight: 'Light',
   themeDark: 'Dark',
@@ -324,6 +325,8 @@ const en: Translations = {
   cancelDelete: 'Cancel',
   deleting: 'Deleting…',
   loadEarlier: 'Load earlier captures',
+  dayToday: 'Today',
+  dayYesterday: 'Yesterday',
   kindText: 'Text',
   kindImage: 'Screenshot',
   kindAudio: 'Voice note',
@@ -366,9 +369,9 @@ const fr: Translations = {
     foreground_window: 'Fenêtre active',
   },
 
-  integrationsTitle: 'Intégrations & Fournisseurs de contexte',
+  integrationsTitle: 'Intégrations',
   integrationsSubtitle:
-    'Connectez vos éditeurs, navigateurs et terminaux en 1 clic pour que Lyn associe automatiquement vos captures à votre espace de travail.',
+    'Connectez éditeurs, navigateurs et terminaux pour classer les captures dans le projet en cours.',
   scanningIntegrations: 'Analyse de l’environnement local…',
   refreshIntegrations: 'Actualiser l’état des intégrations',
   integrationDiscoveryFailed: 'Échec de la détection des intégrations.',
@@ -455,15 +458,13 @@ const fr: Translations = {
     vscode:
       'Transmet le dossier de travail VS Code actif à Lyn lors de la capture.',
     browser:
-      'Capture depuis l’onglet focalisé ; localhost n’est lié à un projet que si un seul répertoire de processus est prouvé.',
-    kitty:
-      'Surveille le volet de terminal actif sans inspecter les commandes ni les sorties.',
+      'Utilise l’onglet actif. Les serveurs locaux sont reliés à leur dossier de projet.',
+    kitty: 'Suit le volet actif. Les commandes et sorties ne sont jamais lues.',
     shell: 'Associe GNOME Terminal et les shells externes au dépôt Git actuel.',
   },
 
   appearanceTitle: 'Apparence',
-  appearanceSubtitle:
-    'Suivre le système ou choisir un thème déterministe pour Lyn.',
+  appearanceSubtitle: 'Suivre le système ou choisir clair ou sombre.',
   themeSystem: 'Système',
   themeLight: 'Clair',
   themeDark: 'Sombre',
@@ -533,6 +534,8 @@ const fr: Translations = {
   cancelDelete: 'Annuler',
   deleting: 'Suppression…',
   loadEarlier: 'Charger les captures précédentes',
+  dayToday: 'Aujourd’hui',
+  dayYesterday: 'Hier',
   kindText: 'Texte',
   kindImage: 'Capture d’écran',
   kindAudio: 'Note vocale',

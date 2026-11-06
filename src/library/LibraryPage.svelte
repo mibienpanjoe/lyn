@@ -249,6 +249,23 @@
     await initialise();
   }
 
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.key.toLowerCase() === 'k'
+    ) {
+      event.preventDefault();
+      if (searchMode) {
+        searchInput?.focus();
+        searchInput?.select();
+      } else {
+        void chooseSearch();
+      }
+    }
+  }
+
   async function chooseSearch() {
     searchMode = true;
     settingsMode = false;
@@ -570,6 +587,8 @@
   }
 </script>
 
+<svelte:window onkeydown={handleGlobalKeydown} />
+
 <main class="library-shell" class:detail-open={selected || detailLoading}>
   <aside
     class:open={navigationOpen}
@@ -594,9 +613,6 @@
       >
       <button class:active={searchMode} type="button" onclick={chooseSearch}
         ><SearchIcon aria-hidden="true" />{t.navSearch}</button
-      >
-      <button class:active={settingsMode} type="button" onclick={chooseSettings}
-        ><SettingsIcon aria-hidden="true" />{t.navSettings}</button
       >
 
       {#if projects.length}
@@ -626,6 +642,14 @@
           >
         {/each}
       {/if}
+
+      <button
+        class="nav-settings"
+        class:active={settingsMode}
+        type="button"
+        onclick={chooseSettings}
+        ><SettingsIcon aria-hidden="true" />{t.navSettings}</button
+      >
     </nav>
   </aside>
 
@@ -693,6 +717,9 @@
               placeholder={t.searchCapturesPlaceholder}
               oninput={scheduleSearch}
             />
+            <span class="search-shortcut" aria-hidden="true"
+              ><kbd>Ctrl</kbd><kbd>K</kbd></span
+            >
           </label>
           <SearchFilters
             {contexts}
@@ -710,9 +737,6 @@
             ondate={changeSearchDate}
             onclear={clearSearchFilters}
           />
-          <p class="search-scope-note">
-            Literal local search across note text and media captions.
-          </p>
         </div>
       {/if}
 
@@ -752,6 +776,7 @@
             {captures}
             selectedId={selectedSummaryId}
             {snippets}
+            showContext={!activeContext}
             query={searchMode ? query.trim() : ''}
             language={currentLanguage}
             {copyFeedback}

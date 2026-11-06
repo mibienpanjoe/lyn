@@ -406,13 +406,13 @@ describe('Settings', () => {
     });
 
     await screen.findByRole('heading', {
-      name: 'Integrations & Context Providers',
+      name: 'Integrations',
     });
     expect(screen.getByText('Cursor IDE')).toBeVisible();
     expect(screen.getByText('Visual Studio Code')).toBeVisible();
 
     const installButtons = screen.getAllByRole('button', {
-      name: 'Install Extension',
+      name: 'Install extension',
     });
     expect(installButtons.length).toBeGreaterThan(0);
 
@@ -973,7 +973,7 @@ describe('Settings', () => {
     await screen.findByRole('heading', { name: 'Appearance' });
     expect(
       screen.queryByRole('heading', {
-        name: 'Integrations & Context Providers',
+        name: 'Integrations',
       }),
     ).toBeNull();
     expect(listMock).not.toHaveBeenCalled();
@@ -1009,7 +1009,7 @@ describe('Settings', () => {
     });
 
     await screen.findByRole('heading', {
-      name: 'Integrations & Context Providers',
+      name: 'Integrations',
     });
 
     const alert = await screen.findByRole('alert');
@@ -1049,7 +1049,7 @@ describe('Settings', () => {
     });
 
     await screen.findByRole('heading', {
-      name: 'Integrations & Context Providers',
+      name: 'Integrations',
     });
 
     const alert = await screen.findByRole('alert');
@@ -1141,7 +1141,7 @@ describe('Settings', () => {
     });
 
     await screen.findByRole('heading', {
-      name: 'Integrations & Context Providers',
+      name: 'Integrations',
     });
 
     // Verify parsed title and subtitle pill

@@ -135,6 +135,7 @@
         id="context-name"
         name="context-name"
         aria-label="New context name"
+        placeholder="Name a context for this capture"
         maxlength="100"
         autocomplete="off"
       />

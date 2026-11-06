@@ -43,56 +43,103 @@ function contrast(foreground: string, background: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-const light = {
-  canvas: '#f6f7f3',
-  surface: '#ffffff',
-  subtle: '#eef1eb',
-  text: '#171a17',
-  muted: '#5f675f',
-  faint: '#6b746a',
-  accent: '#286b59',
-  onAccent: '#ffffff',
-  soft: '#e3f0ea',
-  error: '#b4232c',
-  errorSoft: '#fbe7e8',
-  warning: '#9a5b13',
-} as const;
+type Tokens = Record<string, string>;
 
-const dark = {
-  canvas: '#101310',
-  surface: '#171b17',
-  subtle: '#202620',
-  text: '#f1f4ef',
-  muted: '#a7b0a5',
-  faint: '#8e988c',
-  accent: '#79c4a9',
-  onAccent: '#102018',
-  soft: '#18372d',
-  error: '#ff858b',
-  errorSoft: '#3c191c',
-  warning: '#e5a44f',
-} as const;
+// Read the palette from the shipped stylesheet so the checks below cover the
+// colors users actually see, not a hand-maintained copy.
+function block(source: string, selector: string): string {
+  const start = source.indexOf(`${selector} {`);
+  if (start < 0) throw new Error(`missing theme block ${selector}`);
+  const open = source.indexOf('{', start);
+  return source.slice(open + 1, source.indexOf('}', open));
+}
+
+function tokens(body: string): Tokens {
+  return Object.fromEntries(
+    Array.from(body.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g), (match) => [
+      match[1],
+      match[2].replace(/\s+/g, ' ').trim(),
+    ]),
+  );
+}
+
+function mediaBlock(source: string, query: string): string {
+  const start = source.indexOf(`@media ${query} {`);
+  if (start < 0) throw new Error(`missing media block ${query}`);
+  let depth = 0;
+  for (let index = source.indexOf('{', start); index < source.length; index++) {
+    if (source[index] === '{') depth++;
+    if (source[index] === '}' && --depth === 0)
+      return source.slice(source.indexOf('{', start) + 1, index);
+  }
+  throw new Error(`unterminated media block ${query}`);
+}
+
+const systemDarkMedia = mediaBlock(styles, '(prefers-color-scheme: dark)');
+const light = tokens(block(styles, ':root'));
+const explicitDark = tokens(block(styles, ":root[data-theme='dark']"));
+const systemDark = tokens(
+  block(systemDarkMedia, ":root:not([data-theme='light'])"),
+);
+
+// Tokens whose value must differ per theme; layout tokens stay shared.
+const themedTokens = Object.keys(light).filter((name) =>
+  /^--(color-|shadow-|media-)/.test(name),
+);
 
 describe('visual accessibility verification', () => {
+  it('keeps the explicit and system dark palettes identical and complete', () => {
+    expect(themedTokens.length).toBeGreaterThan(10);
+    expect(explicitDark).toEqual(systemDark);
+    expect(
+      themedTokens.filter((name) => !(name in explicitDark)),
+      'light tokens without a dark value',
+    ).toEqual([]);
+    expect(
+      Object.keys(explicitDark).filter((name) => !(name in light)),
+      'dark tokens without a light default',
+    ).toEqual([]);
+  });
+
+  it('keeps theme-specific styling in tokens, not system-only rules', () => {
+    // A rule here would apply for the OS preference but not for an explicit
+    // Settings choice; express it as a token in all three theme blocks.
+    const rest = systemDarkMedia
+      .replace(/:root:not\(\[data-theme='light'\]\)\s*{[^}]*}/, '')
+      .trim();
+    expect(rest).toBe('');
+  });
+
   it('keeps semantic text and status token pairs above WCAG AA contrast', () => {
-    for (const [theme, tokens] of [
+    for (const [theme, palette] of [
       ['light', light],
-      ['dark', dark],
+      ['dark', explicitDark],
     ] as const) {
+      const color = (name: string) => {
+        const value = palette[`--color-${name}`];
+        expect(value, `${theme} --color-${name}`).toMatch(/^#[0-9a-f]{6}$/i);
+        return value;
+      };
       const pairs: Array<[string, string, string, number]> = [
-        ['text/canvas', tokens.text, tokens.canvas, 4.5],
-        ['text/surface', tokens.text, tokens.surface, 4.5],
-        ['muted/canvas', tokens.muted, tokens.canvas, 4.5],
-        ['muted/surface', tokens.muted, tokens.surface, 4.5],
-        ['faint/canvas', tokens.faint, tokens.canvas, 4.5],
-        ['faint/surface', tokens.faint, tokens.surface, 4.5],
-        ['on-accent/accent', tokens.onAccent, tokens.accent, 4.5],
-        ['error/surface', tokens.error, tokens.surface, 4.5],
-        ['warning/surface', tokens.warning, tokens.surface, 4.5],
-        ['text/accent-soft', tokens.text, tokens.soft, 4.5],
-        ['text/error-soft', tokens.text, tokens.errorSoft, 4.5],
-        ['accent/subtle', tokens.accent, tokens.subtle, 3],
-      ];
+        ['text', 'canvas', 'text/canvas', 4.5],
+        ['text', 'surface', 'text/surface', 4.5],
+        ['text-muted', 'canvas', 'muted/canvas', 4.5],
+        ['text-muted', 'surface', 'muted/surface', 4.5],
+        ['text-faint', 'canvas', 'faint/canvas', 4.5],
+        ['text-faint', 'surface', 'faint/surface', 4.5],
+        ['on-accent', 'accent', 'on-accent/accent', 4.5],
+        ['error', 'surface', 'error/surface', 4.5],
+        ['warning', 'surface', 'warning/surface', 4.5],
+        ['text', 'accent-soft', 'text/accent-soft', 4.5],
+        ['text', 'error-soft', 'text/error-soft', 4.5],
+        ['accent', 'surface-subtle', 'accent/subtle', 3],
+        ['info', 'surface', 'info/surface', 3],
+      ].map(([fg, bg, label, minimum]) => [
+        label as string,
+        color(fg as string),
+        color(bg as string),
+        minimum as number,
+      ]);
       for (const [label, foreground, background, minimum] of pairs) {
         expect(
           contrast(foreground, background),
@@ -128,6 +175,21 @@ describe('visual accessibility verification', () => {
     expect(missing).toEqual([]);
   });
 
+  it('keeps no stylesheet class that markup no longer uses', () => {
+    const markup = sources
+      .filter(({ path }) => path.endsWith('.svelte'))
+      .map(({ text }) => text)
+      .join('\n');
+    const css = styles.replace(/\/\*[\s\S]*?\*\//g, '');
+    const classes = new Set(
+      Array.from(css.matchAll(/\.([a-z][\w-]*)/gi), (match) => match[1]),
+    );
+    const unused = Array.from(classes).filter(
+      (name) => !new RegExp(`(?<![\\w-])${name}(?![\\w-])`).test(markup),
+    );
+    expect(unused).toEqual([]);
+  });
+
   it('styles the classes used by provider reordering controls', () => {
     const markup = readFileSync(
       resolve(import.meta.dirname, 'settings/SettingsPanel.svelte'),
@@ -146,6 +208,18 @@ describe('visual accessibility verification', () => {
     expect(styles).toMatch(
       /:root\[data-theme='light'\]\s*{\s*color-scheme:\s*light;/,
     );
+  });
+
+  it('uses the bundled Inter face and type-scale tokens for every text size', () => {
+    const entry = readFileSync(resolve(import.meta.dirname, 'main.ts'), 'utf8');
+    expect(entry).toContain("import '@fontsource-variable/inter/wght.css';");
+    expect(styles).toMatch(/font-family:\s*'Inter Variable'/);
+    const rawSizes = Array.from(
+      styles.matchAll(/font-size:\s*(\d+(?:\.\d+)?px)/g),
+      (match) => match[1],
+    );
+    // Only the body root size is literal; everything else uses --text-*.
+    expect(rawSizes).toEqual(['13px']);
   });
 
   it('treats the Library brand mark as decorative beside the visible Lyn name', async () => {
