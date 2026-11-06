@@ -72,7 +72,7 @@ pnpm install
 pnpm tauri dev
 ```
 
-Default shortcut: `Ctrl+Shift+Space` opens quick capture. The editor, Kitty and browser integrations suggest `Alt+L`; their existing user bindings can take precedence. Keep the global shortcut different. The Library window is the main shell.
+Default shortcut: `Ctrl+Shift+Space` opens quick capture. The editor, Kitty and browser integrations suggest `Alt+L`; their existing user bindings can take precedence. Keep the global shortcut different. The Library window is the main shell; inside it, `Ctrl+K` opens or refocuses search.
 
 ### Build release packages
 
@@ -113,12 +113,12 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 | Area | What you get |
 |---|---|
-| Quick capture | Text, screenshot paste, voice note; Enter saves and dismisses |
+| Quick capture | Text, screenshot paste, voice note; the detected project, branch and source app show above the draft; Enter saves and dismisses |
 | Context | Live sessions + saved contexts; ambiguity never guesses |
-| Library | Newest captures first, project timelines, detail inspection, media playback and capture deletion |
+| Library | Newest captures first, grouped by day (Today, Yesterday, then dates), project timelines with a branch filter, detail inspection with copy/open/delete, media playback |
 | Projects | Remove an empty project from the Library without deleting its folder |
-| Search | Bounded local FTS over note bodies and user-visible captions |
-| Settings | Shortcut, theme, provider tie-break order, 1-click integrations installer, optional local speech model, installed app version |
+| Search | Bounded local FTS over note bodies and user-visible captions, with context, branch, date and type filters; `Ctrl+K` from anywhere in the Library |
+| Settings | Shortcut, start at login, provider tie-break order, 1-click integrations installer, light/dark/system theme, English/French, optional local speech model, installed app version |
 
 ## Optional local speech
 
@@ -126,7 +126,7 @@ Settings can install a **CPU-only Parakeet v3 Q8** package (approximately 942 MB
 
 ## Context providers (Linux X11)
 
-Providers are optional. Configure them in **Settings → Integrations & Context Providers**, or follow the manual guides below. Browser setup also requires loading the companion extension in your browser.
+Providers are optional. Configure them in **Settings → Integrations**, or follow the manual guides below. Browser setup also requires loading the companion extension in your browser.
 
 - **VS Code & Cursor:** [`integrations/vscode/`](integrations/vscode/README.md) — 1-click install in Lyn Settings, or `pnpm provider:vscode:package` → install `/tmp/lyn-context-provider.vsix` via `code` or `cursor`
 - **Browser (Chrome, Chromium, Brave, Edge, Firefox):** [`integrations/browser/`](integrations/browser/README.md) — 1-click register in Lyn Settings, or `pnpm provider:browser:install` → load unpacked extension in browser
@@ -142,12 +142,14 @@ Providers never send terminal output, editor buffers, or agent chat into Lyn.
 - [Project overview](docs/project_overview.md)
 - [Requirements](docs/01_requirements_prd.md) · [SRS](docs/02_requirements_srs.md)
 - [Architecture](docs/05_architecture.md) · [IPC](docs/06_api_specification.md)
-- [Visual identity](docs/07_visual_identity.md)
+- [Visual identity](docs/07_visual_identity.md) (the shipped palette and type tokens live in `src/styles.css`; `src/visual-accessibility.test.ts` checks their contrast)
 - [HEX (Anomaly) research note](docs/research_hex_anomaly.md)
 - [Contributor guidelines](AGENTS.md)
 
 ## License
 
 SPDX: [MIT](LICENSE)
+
+The interface bundles the Inter typeface (SIL Open Font License 1.1) through `@fontsource-variable/inter`; it is served locally and never fetched from the network.
 
 The optional parakeet.cpp runtime is MIT-licensed. The Parakeet v3 model is CC BY 4.0; its installed package retains NVIDIA/conversion attribution and the license text.
