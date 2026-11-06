@@ -54,7 +54,10 @@
   });
 </script>
 
-<section class="settings-section" aria-labelledby="startup-title">
+<section
+  class="settings-section startup-section"
+  aria-labelledby="startup-title"
+>
   <div>
     <h2 id="startup-title">{french ? 'Démarrage' : 'Startup'}</h2>
     <p>
@@ -63,38 +66,48 @@
         : 'Start Lyn in the background when you log in so capture shortcuts are available.'}
     </p>
   </div>
-  <button
-    type="button"
-    class="secondary-action"
-    role="switch"
-    aria-checked={enabled === true}
-    disabled={busy || enabled === null}
-    onclick={toggle}
-  >
-    {french ? 'Démarrer Lyn à la connexion' : 'Start Lyn when I log in'}
-    — {enabled === null
-      ? french
-        ? 'Indisponible'
-        : 'Unavailable'
-      : enabled
+  <div class="startup-control">
+    <span class="startup-state" aria-hidden="true"
+      >{enabled === null
         ? french
-          ? 'Activé'
-          : 'On'
-        : french
-          ? 'Désactivé'
-          : 'Off'}
-  </button>
-  {#if failed}
-    <p role="alert">
-      {french
-        ? 'Impossible de confirmer le démarrage automatique.'
-        : 'Could not confirm automatic startup.'}
-    </p>
-    <button
-      class="secondary-action"
-      type="button"
-      disabled={busy}
-      onclick={refresh}>{french ? 'Vérifier à nouveau' : 'Check again'}</button
+          ? 'Indisponible'
+          : 'Unavailable'
+        : enabled
+          ? french
+            ? 'Activé'
+            : 'On'
+          : french
+            ? 'Désactivé'
+            : 'Off'}</span
     >
+    <button
+      type="button"
+      class="switch"
+      role="switch"
+      aria-checked={enabled === true}
+      aria-label={french
+        ? 'Démarrer Lyn à la connexion'
+        : 'Start Lyn when I log in'}
+      disabled={busy || enabled === null}
+      onclick={toggle}
+    >
+      <span class="switch-thumb" aria-hidden="true"></span>
+    </button>
+  </div>
+  {#if failed}
+    <div class="startup-failure">
+      <p role="alert">
+        {french
+          ? 'Impossible de confirmer le démarrage automatique.'
+          : 'Could not confirm automatic startup.'}
+      </p>
+      <button
+        class="secondary-action"
+        type="button"
+        disabled={busy}
+        onclick={refresh}
+        >{french ? 'Vérifier à nouveau' : 'Check again'}</button
+      >
+    </div>
   {/if}
 </section>
