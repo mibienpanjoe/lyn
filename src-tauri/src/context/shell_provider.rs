@@ -98,6 +98,145 @@ struct KittyPaneBinding {
     window_id: u32,
 }
 
+const KITTY_OWNER_TTL: Duration = Duration::from_secs(30);
+const MAX_KITTY_OWNERS: usize = 64;
+
+/// Bounded cache of X11 Kitty window -> owning client PID (XRes). An entry is
+/// re-queried after its TTL so a reused window id cannot keep a stale owner.
+#[derive(Default)]
+struct KittyWindowOwners {
+    entries: HashMap<u32, (Option<u32>, Instant)>,
+}
+
+impl KittyWindowOwners {
+    fn owner(
+        &mut self,
+        window: u32,
+        now: Instant,
+        lookup: impl FnOnce(u32) -> Option<u32>,
+    ) -> Option<u32> {
+        if let Some((owner, checked)) = self.entries.get(&window)
+            && now.duration_since(*checked) < KITTY_OWNER_TTL
+        {
+            return *owner;
+        }
+        if self.entries.len() >= MAX_KITTY_OWNERS {
+            self.entries.clear();
+        }
+        let owner = lookup(window);
+        self.entries.insert(window, (owner, now));
+        owner
+    }
+}
+
+/// Every Kitty process runs its own watcher and keeps reporting its last
+/// focused pane, even while another Kitty process owns the foreground. A pane
+/// may bind only to a Kitty window owned by its own Kitty process (the pane's
+/// direct parent); otherwise two processes alternately replace each other's
+/// source and an open draft's selection goes stale within one heartbeat.
+/// Without XRes the previous single-process behaviour is kept.
+fn attest_kitty_window(
+    active: Option<(u32, ContextWindowKind)>,
+    process_id: u32,
+    parent_of: impl FnOnce(u32) -> Option<u32>,
+    owners: &mut KittyWindowOwners,
+    owner_of: impl FnOnce(u32) -> Option<u32>,
+    now: Instant,
+) -> Option<(u32, ContextWindowKind)> {
+    let (window, kind) = active?;
+    if kind != ContextWindowKind::Kitty {
+        return Some((window, kind));
+    }
+    match owners.owner(window, now, owner_of) {
+        None => Some((window, kind)),
+        Some(owner) => (parent_of(process_id) == Some(owner)).then_some((window, kind)),
+    }
+}
+
+/// Kitty numbers panes per process, so two Kitty processes both report pane 1.
+/// Pane bindings are keyed by (Kitty process, pane id); the key is opaque.
+fn process_pane_key(kitty_process: Option<u32>, terminal_session_id: u64) -> u64 {
+    match (kitty_process, u32::try_from(terminal_session_id)) {
+        (Some(process), Ok(pane)) => (u64::from(process) << 32) | u64::from(pane),
+        _ => terminal_session_id,
+    }
+}
+
+fn kitty_pane_key(
+    panes: &HashMap<u64, KittyPaneBinding>,
+    message: &KittyObservationMessage,
+    parent_of: impl FnOnce(u32) -> Option<u32>,
+) -> u64 {
+    if message.state == KittyState::Ended {
+        // The closing pane's process may already be gone; find its binding.
+        if let Some(key) = panes.iter().find_map(|(key, binding)| {
+            (binding.process_id == message.process_id
+                && (*key == message.terminal_session_id
+                    || *key & u64::from(u32::MAX) == message.terminal_session_id))
+                .then_some(*key)
+        }) {
+            return key;
+        }
+    }
+    process_pane_key(parent_of(message.process_id), message.terminal_session_id)
+}
+
+/// A new binding needs the active (or remembered) Kitty window to belong to
+/// the pane's Kitty process. An existing binding keeps refreshing its own
+/// window while another window has focus, so clicking a second Kitty window
+/// with a draft open does not expire the invoked pane.
+fn kitty_heartbeat_window(
+    active: Option<(u32, ContextWindowKind)>,
+    panes: &HashMap<u64, KittyPaneBinding>,
+    message: &KittyObservationMessage,
+    parent_of: impl Fn(u32) -> Option<u32>,
+    owners: &mut KittyWindowOwners,
+    owner_of: impl Fn(u32) -> Option<u32>,
+    now: Instant,
+) -> Option<(u32, ContextWindowKind)> {
+    if let Some(window) = attest_kitty_window(
+        active,
+        message.process_id,
+        &parent_of,
+        owners,
+        &owner_of,
+        now,
+    ) {
+        return Some(window);
+    }
+    let binding = panes
+        .get(&message.terminal_session_id)
+        .filter(|binding| binding.process_id == message.process_id)?;
+    attest_kitty_window(
+        Some((binding.window_id, ContextWindowKind::Kitty)),
+        message.process_id,
+        &parent_of,
+        owners,
+        &owner_of,
+        now,
+    )
+}
+
+fn parent_process(process_id: u32) -> Option<u32> {
+    let mut text = String::new();
+    fs::File::open(format!("/proc/{process_id}/stat"))
+        .ok()?
+        .take(4097)
+        .read_to_string(&mut text)
+        .ok()?;
+    if text.len() > 4096 {
+        return None;
+    }
+    // comm (field 2) may contain spaces or parentheses; fields follow the last ')'.
+    let (_, fields) = text.rsplit_once(')')?;
+    fields
+        .split_whitespace()
+        .nth(1)?
+        .parse::<u32>()
+        .ok()
+        .filter(|parent| *parent > 1)
+}
+
 pub(crate) fn start(app: AppHandle) -> io::Result<()> {
     let (path, runtime_uid) = socket_path()?;
     prepare_socket_path(&path)?;
@@ -114,6 +253,7 @@ fn run(listener: UnixListener, app: AppHandle, runtime_uid: u32) {
     let mut sessions = HashMap::new();
     let mut kitty_panes = HashMap::new();
     let mut active_kitty_panes = HashMap::new();
+    let mut kitty_owners = KittyWindowOwners::default();
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
@@ -130,6 +270,48 @@ fn run(listener: UnixListener, app: AppHandle, runtime_uid: u32) {
                 else {
                     continue;
                 };
+                // X11/XRes and procfs lookups run before the registry lock.
+                let message = match message {
+                    TerminalObservationMessage::Kitty(message) => {
+                        TerminalObservationMessage::Kitty(KittyObservationMessage {
+                            terminal_session_id: kitty_pane_key(
+                                &kitty_panes,
+                                &message,
+                                parent_process,
+                            ),
+                            ..message
+                        })
+                    }
+                    other => other,
+                };
+                let kitty_window = match &message {
+                    TerminalObservationMessage::KittyInvoke(message)
+                        if message.version == 2 && message.kind == "invoke" =>
+                    {
+                        attest_kitty_window(
+                            crate::platform::x11::active_context_window().ok(),
+                            message.process_id,
+                            parent_process,
+                            &mut kitty_owners,
+                            crate::platform::x11_owner::local_owner,
+                            Instant::now(),
+                        )
+                    }
+                    TerminalObservationMessage::Kitty(message)
+                        if message.state == KittyState::Focused =>
+                    {
+                        kitty_heartbeat_window(
+                            crate::platform::x11::active_context_window().ok(),
+                            &kitty_panes,
+                            message,
+                            parent_process,
+                            &mut kitty_owners,
+                            crate::platform::x11_owner::local_owner,
+                            Instant::now(),
+                        )
+                    }
+                    _ => None,
+                };
                 let registry_state = app.state::<std::sync::Mutex<ContextSourceRegistry>>();
                 let Ok(mut registry) = registry_state.lock() else {
                     continue;
@@ -139,11 +321,14 @@ fn run(listener: UnixListener, app: AppHandle, runtime_uid: u32) {
                         if message.version != 2 || message.kind != "invoke" {
                             false
                         } else {
-                            let active_window = crate::platform::x11::active_context_window().ok();
+                            let active_window = kitty_window;
                             let directory = process_directory(message.process_id, runtime_uid).ok();
                             let focused = KittyObservationMessage {
                                 version: 1,
-                                terminal_session_id: message.terminal_session_id,
+                                terminal_session_id: process_pane_key(
+                                    parent_process(message.process_id),
+                                    message.terminal_session_id,
+                                ),
                                 process_id: message.process_id,
                                 state: KittyState::Focused,
                             };
@@ -209,9 +394,7 @@ fn run(listener: UnixListener, app: AppHandle, runtime_uid: u32) {
                         }
                     }
                     TerminalObservationMessage::Kitty(message) => {
-                        let active_window = (message.state == KittyState::Focused)
-                            .then(crate::platform::x11::active_context_window)
-                            .and_then(Result::ok);
+                        let active_window = kitty_window;
                         let directory = (message.state == KittyState::Focused)
                             .then(|| process_directory(message.process_id, runtime_uid))
                             .and_then(Result::ok);
@@ -658,10 +841,11 @@ mod tests {
     };
 
     use super::{
-        KittyObservationMessage, KittyState, ShellObservationMessage, ShellState,
-        TerminalObservationMessage, apply_kitty_message, apply_message, foreground_shell_window,
-        observation_window, process_directory_at, shell_observation_superseded_by_kitty,
-        watch_shell_session,
+        KITTY_OWNER_TTL, KittyObservationMessage, KittyPaneBinding, KittyState, KittyWindowOwners,
+        ShellObservationMessage, ShellState, TerminalObservationMessage, apply_kitty_message,
+        apply_message, attest_kitty_window, foreground_shell_window, kitty_heartbeat_window,
+        kitty_pane_key, observation_window, parent_process, process_directory_at,
+        shell_observation_superseded_by_kitty, watch_shell_session,
     };
 
     fn live_message(process_id: u32, window_id: u32) -> ShellObservationMessage {
@@ -997,6 +1181,235 @@ mod tests {
         let sources = registry.live_sources(now);
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].label(), second.path().file_name().unwrap());
+    }
+
+    /// Drives the production key + window path for two Kitty processes
+    /// (100: stipen, 200: lyn) that both number their single pane 1.
+    struct TwoKittys {
+        registry: ContextSourceRegistry,
+        panes: HashMap<u64, KittyPaneBinding>,
+        active_panes: HashMap<u32, u64>,
+        owners: KittyWindowOwners,
+        stipen: tempfile::TempDir,
+        lyn: tempfile::TempDir,
+    }
+
+    impl TwoKittys {
+        fn new() -> Self {
+            Self {
+                registry: ContextSourceRegistry::default(),
+                panes: HashMap::new(),
+                active_panes: HashMap::new(),
+                owners: KittyWindowOwners::default(),
+                stipen: tempdir().unwrap(),
+                lyn: tempdir().unwrap(),
+            }
+        }
+
+        /// Window 81 belongs to Kitty 100, window 82 to Kitty 200.
+        fn heartbeat(&mut self, process_id: u32, active_window: u32, at: Instant) {
+            let parent = |process_id: u32| match process_id {
+                1001 => Some(100),
+                2001 => Some(200),
+                _ => None,
+            };
+            let owner = |window: u32| match window {
+                81 => Some(100),
+                82 => Some(200),
+                _ => None,
+            };
+            let raw = KittyObservationMessage {
+                version: 1,
+                terminal_session_id: 1,
+                process_id,
+                state: KittyState::Focused,
+            };
+            let message = KittyObservationMessage {
+                terminal_session_id: kitty_pane_key(&self.panes, &raw, parent),
+                ..raw
+            };
+            let window = kitty_heartbeat_window(
+                Some((active_window, ContextWindowKind::Kitty)),
+                &self.panes,
+                &message,
+                parent,
+                &mut self.owners,
+                owner,
+                at,
+            );
+            let directory = if process_id == 1001 {
+                self.stipen.path().to_path_buf()
+            } else {
+                self.lyn.path().to_path_buf()
+            };
+            apply_kitty_message(
+                &mut self.registry,
+                &mut self.panes,
+                &mut self.active_panes,
+                message,
+                window,
+                Some(directory),
+                at,
+            );
+        }
+
+        fn source_for_window(&mut self, window: u64, at: Instant) -> Option<(String, String)> {
+            self.registry
+                .live_sources(at)
+                .into_iter()
+                .find(|source| source.window() == Some(WindowCorrelationToken::from_native(window)))
+                .map(|source| (source.source_id().to_string(), source.label().to_owned()))
+        }
+    }
+
+    #[test]
+    fn a_second_kitty_process_cannot_steal_the_remembered_window() {
+        // Popup open: window 81 (stipen) stays remembered while both watchers
+        // keep heartbeating their last pane every two seconds.
+        let now = Instant::now();
+        let mut kittys = TwoKittys::new();
+        kittys.heartbeat(1001, 81, now);
+        let invoked = kittys.source_for_window(81, now).unwrap();
+        for second in (2..=60).step_by(2) {
+            let at = now + Duration::from_secs(second);
+            kittys.heartbeat(2001, 81, at);
+            kittys.heartbeat(1001, 81, at);
+            assert_eq!(
+                kittys.source_for_window(81, at),
+                Some(invoked.clone()),
+                "the selected stipen source changed at {second}s"
+            );
+        }
+        let stipen = kittys
+            .stipen
+            .path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(invoked.1, stipen);
+    }
+
+    #[test]
+    fn clicking_the_other_kitty_window_keeps_the_invoked_pane_alive() {
+        let now = Instant::now();
+        let mut kittys = TwoKittys::new();
+        kittys.heartbeat(1001, 81, now);
+        let invoked = kittys.source_for_window(81, now).unwrap();
+        // The user clicks the lyn Kitty window (82) with the draft still open.
+        kittys.heartbeat(2001, 82, now + Duration::from_secs(1));
+        for second in (2..=60).step_by(2) {
+            let at = now + Duration::from_secs(second);
+            kittys.heartbeat(1001, 82, at);
+            kittys.heartbeat(2001, 82, at);
+            assert_eq!(kittys.source_for_window(81, at), Some(invoked.clone()));
+        }
+        let at = now + Duration::from_secs(60);
+        let other = kittys.source_for_window(82, at).unwrap();
+        let lyn = kittys
+            .lyn
+            .path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(other.1, lyn);
+        assert_ne!(other.0, invoked.0);
+    }
+
+    #[test]
+    fn kitty_pane_keys_separate_processes_and_find_ended_bindings() {
+        let parent = |process_id: u32| Some(process_id / 10);
+        let focused = |process_id| KittyObservationMessage {
+            version: 1,
+            terminal_session_id: 1,
+            process_id,
+            state: KittyState::Focused,
+        };
+        let panes = HashMap::new();
+        let first = kitty_pane_key(&panes, &focused(1001), parent);
+        let second = kitty_pane_key(&panes, &focused(2001), parent);
+        assert_ne!(first, second);
+        let panes = HashMap::from([(
+            first,
+            KittyPaneBinding {
+                process_id: 1001,
+                window_id: 81,
+            },
+        )]);
+        let ended = KittyObservationMessage {
+            state: KittyState::Ended,
+            ..focused(1001)
+        };
+        // An exited pane's parent is unreadable; its binding is still found.
+        assert_eq!(kitty_pane_key(&panes, &ended, |_| None), first);
+    }
+
+    #[test]
+    fn kitty_window_attestation_requires_the_owning_process() {
+        let now = Instant::now();
+        let kitty = Some((81, ContextWindowKind::Kitty));
+        let parent = |process_id: u32| Some(process_id / 10);
+        let mut owners = KittyWindowOwners::default();
+        assert_eq!(
+            attest_kitty_window(kitty, 1000, parent, &mut owners, |_| Some(100), now),
+            kitty
+        );
+        assert_eq!(
+            attest_kitty_window(kitty, 2000, parent, &mut owners, |_| Some(100), now),
+            None
+        );
+        assert_eq!(
+            attest_kitty_window(kitty, 1000, |_| None, &mut owners, |_| Some(100), now),
+            None,
+            "an unreadable parent cannot bind"
+        );
+        // Without XRes the single-process behaviour is unchanged.
+        let mut unknown = KittyWindowOwners::default();
+        assert_eq!(
+            attest_kitty_window(kitty, 2000, parent, &mut unknown, |_| None, now),
+            kitty
+        );
+        let editor = Some((82, ContextWindowKind::Vscode));
+        assert_eq!(
+            attest_kitty_window(editor, 2000, parent, &mut owners, |_| Some(1), now),
+            editor
+        );
+        assert_eq!(
+            attest_kitty_window(None, 1000, parent, &mut owners, |_| Some(100), now),
+            None
+        );
+    }
+
+    #[test]
+    fn kitty_window_owners_are_cached_then_requeried_after_the_ttl() {
+        let now = Instant::now();
+        let mut owners = KittyWindowOwners::default();
+        let mut lookups = 0;
+        let mut owner_at = |at, value| {
+            owners.owner(81, at, |_| {
+                lookups += 1;
+                Some(value)
+            })
+        };
+        assert_eq!(owner_at(now, 100), Some(100));
+        assert_eq!(owner_at(now + Duration::from_secs(29), 200), Some(100));
+        assert_eq!(owner_at(now + KITTY_OWNER_TTL, 200), Some(200));
+        assert_eq!(lookups, 2);
+    }
+
+    #[test]
+    fn parent_process_reads_the_real_parent_of_a_child() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        assert_eq!(parent_process(child.id()), Some(std::process::id()));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(parent_process(child.id()), None);
     }
 
     #[test]
