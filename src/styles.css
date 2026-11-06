@@ -979,18 +979,13 @@ kbd {
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--color-text-muted);
-  opacity: 0.58;
+  /* Enabled arrows stay fully opaque so idle icons keep at least 3:1
+     contrast; disabled ones still dim through button:disabled. */
+  color: var(--color-text-faint);
   transition:
     background-color 120ms ease-out,
     color 120ms ease-out,
-    opacity 120ms ease-out,
     scale 120ms ease-out;
-}
-
-.provider-order li:hover .provider-actions button,
-.provider-actions:focus-within button {
-  opacity: 1;
 }
 
 .provider-actions button:hover:not(:disabled) {

@@ -190,6 +190,25 @@ describe('visual accessibility verification', () => {
     expect(unused).toEqual([]);
   });
 
+  it('keeps enabled provider reorder icons at full strength when idle', () => {
+    const rule = block(styles, '.provider-actions button');
+    // Translucent idle icons fell to ~2.45:1 on the light surface.
+    expect(rule).not.toMatch(/opacity\s*:/);
+    const token = rule.match(/color:\s*var\((--color-[a-z-]+)\)/)?.[1];
+    expect(token).toBeDefined();
+    for (const [theme, palette] of [
+      ['light', light],
+      ['dark', explicitDark],
+    ] as const) {
+      expect(
+        contrast(palette[token!], palette['--color-surface']),
+        `${theme} idle reorder icon`,
+      ).toBeGreaterThanOrEqual(3);
+    }
+    const disabled = block(styles, 'button:disabled');
+    expect(disabled).toMatch(/opacity:\s*0\.48/);
+  });
+
   it('styles the classes used by provider reordering controls', () => {
     const markup = readFileSync(
       resolve(import.meta.dirname, 'settings/SettingsPanel.svelte'),
