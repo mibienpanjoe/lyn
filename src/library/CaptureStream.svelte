@@ -75,12 +75,25 @@
     node.focus();
   }
 
+  function localDayKey(value: Date) {
+    return `${value.getFullYear()}-${value.getMonth()}-${value.getDate()}`;
+  }
+
+  function dayLabel(value: Date) {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    if (localDayKey(value) === localDayKey(today)) return t.dayToday;
+    if (localDayKey(value) === localDayKey(yesterday)) return t.dayYesterday;
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(
+      value,
+    );
+  }
+
   function groupByLocalDay(items: CaptureSummary[]) {
     const groups: Array<{ label: string; items: CaptureSummary[] }> = [];
     for (const capture of items) {
-      const label = new Intl.DateTimeFormat(undefined, {
-        dateStyle: 'medium',
-      }).format(new Date(capture.capturedAt));
+      const label = dayLabel(new Date(capture.capturedAt));
       const current = groups.at(-1);
       if (current?.label === label) current.items.push(capture);
       else groups.push({ label, items: [capture] });

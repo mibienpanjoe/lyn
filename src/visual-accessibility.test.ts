@@ -128,6 +128,21 @@ describe('visual accessibility verification', () => {
     expect(missing).toEqual([]);
   });
 
+  it('keeps no stylesheet class that markup no longer uses', () => {
+    const markup = sources
+      .filter(({ path }) => path.endsWith('.svelte'))
+      .map(({ text }) => text)
+      .join('\n');
+    const css = styles.replace(/\/\*[\s\S]*?\*\//g, '');
+    const classes = new Set(
+      Array.from(css.matchAll(/\.([a-z][\w-]*)/gi), (match) => match[1]),
+    );
+    const unused = Array.from(classes).filter(
+      (name) => !new RegExp(`(?<![\\w-])${name}(?![\\w-])`).test(markup),
+    );
+    expect(unused).toEqual([]);
+  });
+
   it('styles the classes used by provider reordering controls', () => {
     const markup = readFileSync(
       resolve(import.meta.dirname, 'settings/SettingsPanel.svelte'),

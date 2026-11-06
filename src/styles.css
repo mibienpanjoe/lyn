@@ -542,6 +542,7 @@ kbd {
 }
 
 .voice-controls button {
+  white-space: nowrap;
   display: inline-flex;
   min-height: var(--control-sm);
   align-items: center;
@@ -602,6 +603,17 @@ kbd {
   color: var(--color-text-muted);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
+}
+
+/* The pulsing Stop button already shows recording; keep the live
+   announcement for assistive technology without crowding the footer. */
+.capture-popup:not(.media-mode) .recording-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .recording-status {
@@ -1548,13 +1560,11 @@ kbd {
   height: 20px;
   border-radius: 5px;
 }
-
 .library-brand svg,
 .library-navigation button svg,
 .navigation-toggle svg,
 .library-error svg,
-.icon-label-button svg,
-.open-media-button svg {
+.icon-label-button svg {
   width: 16px;
   height: 16px;
   flex: 0 0 auto;
@@ -1606,13 +1616,10 @@ kbd {
   background: color-mix(in srgb, var(--color-text) 5%, transparent);
   color: var(--color-text);
 }
-
 .library-navigation nav button:active,
 .capture-row:active,
 .icon-label-button:active,
-.load-more-button:active,
-.open-media-button:active,
-.copy-text-button:active {
+.load-more-button:active {
   opacity: 0.88;
 }
 
@@ -1706,11 +1713,8 @@ kbd {
   color: var(--color-error);
   font-size: var(--text-sm);
 }
-
 .library-error button,
 .icon-label-button,
-.open-media-button,
-.copy-text-button,
 .load-more-button {
   font-size: var(--text-sm);
   font-weight: 500;
@@ -2237,15 +2241,8 @@ kbd {
   color: var(--color-text-muted);
 }
 
-.load-older-button {
-  margin-top: 0;
-  margin-bottom: var(--space-3);
-}
-
 .load-more-button:hover:not(:disabled),
-.icon-label-button:hover:not(:disabled),
-.open-media-button:hover:not(:disabled),
-.copy-text-button:hover:not(:disabled) {
+.icon-label-button:hover:not(:disabled) {
   background: var(--color-surface-subtle);
 }
 
@@ -2377,69 +2374,6 @@ kbd {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
-}
-
-.open-media-button {
-  justify-self: start;
-  color: var(--color-text-muted);
-  border-color: transparent;
-  padding-inline: 0;
-}
-
-.copy-text-button {
-  justify-self: start;
-  margin-top: var(--space-3);
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
-}
-
-.copy-text-button svg {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  stroke-width: 1.5;
-}
-
-.detail-actions {
-  margin-top: var(--space-4);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--color-divider);
-}
-
-.delete-capture-button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    color 120ms ease-out,
-    background-color 120ms ease-out,
-    border-color 120ms ease-out;
-}
-
-.delete-capture-button svg {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  stroke-width: 1.5;
-}
-
-.delete-capture-button:hover:not(:disabled) {
-  color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 8%, transparent);
-  border-color: color-mix(in srgb, var(--color-error) 20%, transparent);
-}
-
-.delete-capture-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .delete-confirmation {
@@ -3346,10 +3280,8 @@ textarea:not(.capture-input):focus-visible {
   border-color: var(--color-accent);
   box-shadow: var(--focus-ring);
 }
-
 .secondary-action,
 .icon-label-button,
-.copy-text-button,
 .load-more-button,
 .chooser-close,
 .image-preview button,
@@ -3375,10 +3307,8 @@ textarea:not(.capture-input):focus-visible {
     border-color 120ms ease-out,
     color 120ms ease-out;
 }
-
 .secondary-action:hover:not(:disabled),
 .icon-label-button:hover:not(:disabled),
-.copy-text-button:hover:not(:disabled),
 .load-more-button:hover:not(:disabled),
 .chooser-close:hover:not(:disabled),
 .image-preview button:hover:not(:disabled),
@@ -3393,10 +3323,7 @@ textarea:not(.capture-input):focus-visible {
   color: inherit;
   box-shadow: none;
 }
-
 .cancel-button,
-.open-media-button,
-.delete-capture-button,
 .shortcut-display button,
 .shortcut-editor button {
   display: inline-flex;
@@ -3415,21 +3342,11 @@ textarea:not(.capture-input):focus-visible {
     background-color 120ms ease-out,
     color 120ms ease-out;
 }
-
 .cancel-button:hover:not(:disabled),
-.open-media-button:hover:not(:disabled),
 .shortcut-display button:hover:not(:disabled),
 .shortcut-editor button:hover:not(:disabled) {
   background: var(--color-surface-subtle);
   color: var(--color-text);
-}
-
-.open-media-button {
-  margin-inline-start: -10px;
-}
-
-.delete-capture-button {
-  margin-inline-start: -10px;
 }
 
 .save-button,

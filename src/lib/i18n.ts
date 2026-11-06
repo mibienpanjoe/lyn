@@ -126,6 +126,8 @@ export interface Translations {
   cancelDelete: string;
   deleting: string;
   loadEarlier: string;
+  dayToday: string;
+  dayYesterday: string;
   kindText: string;
   kindImage: string;
   kindAudio: string;
@@ -323,6 +325,8 @@ const en: Translations = {
   cancelDelete: 'Cancel',
   deleting: 'Deleting…',
   loadEarlier: 'Load earlier captures',
+  dayToday: 'Today',
+  dayYesterday: 'Yesterday',
   kindText: 'Text',
   kindImage: 'Screenshot',
   kindAudio: 'Voice note',
@@ -530,6 +534,8 @@ const fr: Translations = {
   cancelDelete: 'Annuler',
   deleting: 'Suppression…',
   loadEarlier: 'Charger les captures précédentes',
+  dayToday: 'Aujourd’hui',
+  dayYesterday: 'Hier',
   kindText: 'Texte',
   kindImage: 'Capture d’écran',
   kindAudio: 'Note vocale',
