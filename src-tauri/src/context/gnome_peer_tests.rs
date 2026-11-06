@@ -88,3 +88,64 @@ fn a_real_connecting_process_is_pinned_and_its_exit_revokes_admission() {
     assert!(child.0.wait().unwrap().success());
     assert!(peer.revalidate().is_err());
 }
+
+/// Opt-in: run the test binary inside a memory-limited scope so procfs dentries
+/// are reclaimed, e.g. `systemd-run --user --scope -p MemoryMax=48M
+/// -p MemorySwapMax=0 <test-binary> --ignored proc_dentry_reclaim`.
+/// It fails unless the live peer's `/proc/<pid>` inode really changed.
+#[test]
+#[ignore = "needs a memory-limited cgroup to force procfs dentry reclaim"]
+fn admitted_peer_survives_proc_dentry_reclaim() {
+    use std::{
+        os::fd::AsRawFd,
+        os::unix::fs::MetadataExt,
+        os::unix::net::UnixListener,
+        process::{Command, Stdio},
+    };
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("native-peer.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let child = Child(Command::new("/usr/bin/python3").args(["-I", "-c",
+        "import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); sys.stdin.buffer.read(1)"])
+        .arg(&path).stdin(Stdio::piped()).stdout(Stdio::null()).spawn().unwrap());
+    let mut incoming = libc::pollfd {
+        fd: listener.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    assert_eq!(unsafe { libc::poll(&mut incoming, 1, 2000) }, 1);
+    let (socket, _) = listener.accept().unwrap();
+    let peer = NativePeer::authenticate_executable(
+        &socket,
+        unsafe { libc::geteuid() },
+        Path::new("/usr/bin/python3"),
+    )
+    .unwrap();
+    let proc_path = format!("/proc/{}", child.0.id());
+    let before = fs::metadata(&proc_path).unwrap().ino();
+    let mut changed = false;
+    for round in 0..20 {
+        for index in 0..200_000 {
+            let _ = fs::metadata(directory.path().join(format!("missing-{round}-{index}")));
+        }
+        if fs::metadata(&proc_path).unwrap().ino() != before {
+            changed = true;
+            break;
+        }
+    }
+    assert!(
+        changed,
+        "no procfs reclaim happened; run inside a memory-limited scope"
+    );
+    assert!(
+        peer.revalidate().is_ok(),
+        "reclaim alone revoked a live peer"
+    );
+}

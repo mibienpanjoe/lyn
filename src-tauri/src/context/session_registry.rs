@@ -827,4 +827,61 @@ mod tests {
             "an exited process stays stale"
         );
     }
+
+    /// Opt-in companion to the GNOME peer reclaim test; see that test for how
+    /// to run it inside a memory-limited scope.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[ignore = "needs a memory-limited cgroup to force procfs dentry reclaim"]
+    fn live_process_source_survives_proc_dentry_reclaim() {
+        use std::os::unix::fs::MetadataExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .current_dir(directory.path())
+            .spawn()
+            .unwrap();
+        let now = Instant::now();
+        let mut registry = ContextSourceRegistry::default();
+        let source_id = registry
+            .register(
+                ProviderObservation::new(
+                    ContextProviderKind::Shell,
+                    ProviderSourceKind::ExternalTerminal,
+                    Some(WindowCorrelationToken::from_native(77)),
+                    Some(CorrelationToken::from_process_id(child.id())),
+                    Some(CorrelationToken::new()),
+                    directory.path().to_path_buf(),
+                    now,
+                    ObservationLiveness::Live,
+                ),
+                now,
+            )
+            .unwrap();
+        let proc_path = format!("/proc/{}", child.id());
+        let before = std::fs::metadata(&proc_path).unwrap().ino();
+        let mut changed = false;
+        for round in 0..20 {
+            for index in 0..200_000 {
+                let _ =
+                    std::fs::metadata(directory.path().join(format!("missing-{round}-{index}")));
+            }
+            if std::fs::metadata(&proc_path).unwrap().ino() != before {
+                changed = true;
+                break;
+            }
+        }
+        assert!(
+            changed,
+            "no procfs reclaim happened; run inside a memory-limited scope"
+        );
+        let source = registry.get(source_id, now).cloned().unwrap();
+        assert!(
+            source.revalidated().is_some(),
+            "reclaim alone made a live source stale"
+        );
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
 }
