@@ -17,11 +17,12 @@ const SERVER_PATHS: &[&str] = &[
     "/usr/lib/gnome-terminal/gnome-terminal-server",
 ];
 
+/// The `/proc/<pid>` directory inode is deliberately absent: procfs assigns a
+/// new one to a live process after dentry reclaim. Start time plus the pidfd
+/// identify the process lifetime.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct ProcessIdentity {
     uid: u32,
-    proc_dev: u64,
-    proc_ino: u64,
     exe_dev: u64,
     exe_ino: u64,
     started: u64,
@@ -125,13 +126,11 @@ fn process_identity(pid: u32) -> io::Result<ProcessIdentity> {
     }
     let started = start_time(&text).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))?;
     let after = fs::metadata(&root)?;
-    if (before.uid(), before.dev(), before.ino()) != (after.uid(), after.dev(), after.ino()) {
+    if before.uid() != after.uid() {
         return Err(io::Error::from(io::ErrorKind::NotConnected));
     }
     Ok(ProcessIdentity {
         uid: before.uid(),
-        proc_dev: before.dev(),
-        proc_ino: before.ino(),
         exe_dev: executable.dev(),
         exe_ino: executable.ino(),
         started,

@@ -58,11 +58,12 @@ struct Stat {
     started: u64,
 }
 
+/// Keyed by `stat` (which includes the kernel start time), never by the
+/// `/proc/<pid>` inode: procfs reassigns that after dentry reclaim, so it
+/// would refuse an unchanged live process between invocation and save.
 #[derive(Debug, PartialEq, Eq)]
 struct Process {
     stat: Stat,
-    proc_dev: u64,
-    proc_inode: u64,
     exe_dev: u64,
     exe_inode: u64,
     cwd: PathBuf,
@@ -75,7 +76,7 @@ struct Process {
 pub(super) struct ForegroundGroup {
     pub(super) directory: PathBuf,
     processes: BTreeMap<u32, Process>,
-    ancestors: BTreeMap<u32, (Stat, u64, u64)>,
+    ancestors: BTreeMap<u32, Stat>,
     pins: Vec<OwnedFd>,
 }
 
@@ -199,11 +200,7 @@ pub(super) fn inspect(
         let cwd = fs::canonicalize(path.join("cwd"))?;
         let directory = fs::metadata(&cwd)?;
         let after = fs::metadata(&path)?;
-        if !directory.is_dir()
-            || before.uid() != after.uid()
-            || (before.dev(), before.ino()) != (after.dev(), after.ino())
-            || read_stat(&path)? != Some(stat)
-        {
+        if !directory.is_dir() || before.uid() != after.uid() || read_stat(&path)? != Some(stat) {
             return Err(unavailable());
         }
         if !result.directory.as_os_str().is_empty() && result.directory != cwd {
@@ -214,8 +211,6 @@ pub(super) fn inspect(
             pid,
             Process {
                 stat,
-                proc_dev: before.dev(),
-                proc_inode: before.ino(),
                 exe_dev: exe.dev(),
                 exe_inode: exe.ino(),
                 cwd,
@@ -266,11 +261,10 @@ pub(super) fn inspect(
                 return Err(unavailable());
             }
             same_namespace_and_root(&root)?;
-            let identity = (stat, metadata.dev(), metadata.ino());
             if result
                 .ancestors
-                .insert(parent, identity)
-                .is_some_and(|old| old != identity)
+                .insert(parent, stat)
+                .is_some_and(|old| old != stat)
             {
                 return Err(unavailable());
             }
