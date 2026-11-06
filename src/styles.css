@@ -1887,6 +1887,7 @@ kbd {
 .filter-grid legend {
   float: left;
   width: 100%;
+  padding: 0;
   margin-bottom: var(--space-1);
   color: var(--color-text-muted);
   font-size: var(--text-xs);
@@ -1933,13 +1934,6 @@ kbd {
   background: transparent;
   color: var(--color-accent);
   font-size: var(--text-sm);
-}
-
-.search-scope-note {
-  grid-column: 1 / -1;
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: var(--text-xs);
 }
 
 .stream-groups,
@@ -2514,6 +2508,405 @@ kbd {
   cursor: not-allowed;
 }
 
+/* Library refresh: grouped lists, fixed-height toolbars and a compact
+   inspector. Placed before the responsive rules so they still apply. */
+.library-shell:not(.detail-open) {
+  grid-template-columns: 208px minmax(0, 1fr);
+}
+
+.library-shell:not(.detail-open) .detail-placeholder {
+  display: none;
+}
+
+.library-navigation {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 10px 10px;
+  background: color-mix(
+    in srgb,
+    var(--color-surface-subtle) 45%,
+    var(--color-surface)
+  );
+}
+
+.library-navigation nav {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.library-navigation nav button {
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.library-navigation nav h2 {
+  margin: 18px 10px 4px;
+  font-size: var(--text-2xs);
+  letter-spacing: 0.06em;
+}
+
+.library-navigation nav button.nav-settings {
+  margin-top: auto;
+}
+
+.library-brand {
+  padding: 0 10px 14px;
+  font-size: var(--text-md);
+}
+
+.library-toolbar,
+.detail-header {
+  min-height: 52px;
+}
+
+.library-toolbar {
+  flex-wrap: wrap;
+  padding: 8px var(--space-5);
+  background: var(--color-canvas);
+}
+
+.library-toolbar > div:has(h1) {
+  min-width: 0;
+}
+
+.library-toolbar h1 {
+  font-size: var(--text-xl);
+  line-height: 24px;
+}
+
+.branch-filter {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-1);
+}
+
+.branch-filter > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.library-toolbar .branch-filter select {
+  max-width: 220px;
+  min-height: var(--control-sm);
+  border-color: transparent;
+  background-color: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.branch-filter select:hover {
+  color: var(--color-text);
+}
+
+/* Search */
+.search-panel {
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.search-field {
+  position: relative;
+}
+
+.search-field input {
+  min-height: 36px;
+  padding-right: 76px;
+  border-color: var(--color-input-border);
+  background: var(--color-surface);
+}
+
+.search-shortcut {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  display: inline-flex;
+  gap: 2px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.stream-scroll-region > * {
+  max-width: 880px;
+}
+
+/* Day groups render as one grouped list each. */
+.stream-day + .stream-day {
+  margin-top: var(--space-5);
+}
+
+.stream-day > h2 {
+  margin: 0 0 6px 4px;
+  color: var(--color-text-faint);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.capture-list {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-divider) 75%, transparent);
+  border-radius: 10px;
+  background: var(--color-surface);
+  box-shadow: 0 1px 2px oklch(0 0 0 / 3%);
+}
+
+.capture-list li + li {
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-divider) 60%, transparent);
+}
+
+.capture-row-item {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.capture-row-item:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--color-surface-subtle) 55%, transparent);
+  box-shadow: none;
+}
+
+.capture-row-item:has(.capture-row.selected) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--color-accent-soft) 80%, transparent);
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+.capture-row {
+  min-height: 0;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 12px;
+  border-radius: 0;
+}
+
+.capture-row:focus-visible {
+  outline-offset: -2px;
+}
+
+.capture-kind-icon {
+  width: 28px;
+  height: 28px;
+  align-self: start;
+  margin-top: 0;
+  border-radius: 7px;
+}
+
+.capture-row-content {
+  gap: 3px;
+}
+
+.capture-row-meta {
+  gap: 6px;
+  color: var(--color-text-faint);
+}
+
+.capture-row-meta > span:not(.branch-label)::before {
+  margin-right: 6px;
+}
+
+.branch-label {
+  display: inline-flex;
+  max-width: 220px;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 17px;
+}
+
+.branch-label svg {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  stroke-width: 1.75;
+}
+
+.branch-label > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.capture-excerpt {
+  font-weight: 450;
+}
+
+.capture-thumbnail {
+  width: 72px;
+  height: 48px;
+  margin-left: 0;
+}
+
+.row-delete-confirm button {
+  min-height: var(--control-sm);
+}
+
+.library-empty h2 {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+/* Inspector */
+.library-detail {
+  border-left: 0;
+}
+
+.detail-header {
+  display: grid;
+  align-items: stretch;
+  justify-content: stretch;
+  align-content: center;
+  gap: 2px;
+  padding: 8px var(--space-3) 8px var(--space-5);
+}
+
+.detail-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.detail-back {
+  min-height: var(--control-sm);
+  margin-left: -8px;
+  padding: 0 8px;
+  border-radius: var(--radius-control);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.detail-back svg {
+  width: 14px;
+  height: 14px;
+}
+
+.detail-back:hover {
+  background: var(--color-surface-subtle);
+  color: var(--color-text);
+}
+
+.detail-back span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-tools {
+  display: flex;
+  margin-left: auto;
+  gap: 2px;
+}
+
+.detail-tool {
+  display: grid;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-muted);
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+.detail-tool svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.5;
+}
+
+.detail-tool:hover:not(:disabled) {
+  background: var(--color-surface-subtle);
+  color: var(--color-text);
+}
+
+.detail-tool.copied {
+  color: var(--color-accent);
+}
+
+.detail-tool.failed,
+.detail-tool-danger:hover:not(:disabled) {
+  color: var(--color-error);
+}
+
+.detail-tool-danger:hover:not(:disabled) {
+  background: var(--color-error-soft);
+}
+
+.detail-header .detail-eyebrow {
+  color: var(--color-text-faint);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.detail-content {
+  gap: var(--space-4);
+}
+
+.detail-image {
+  border-radius: var(--radius-md);
+}
+
+.audio-player {
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.capture-metadata {
+  gap: 6px;
+  margin: 0;
+  padding-top: var(--space-4);
+}
+
+.capture-metadata div {
+  grid-template-columns: 80px minmax(0, 1fr);
+}
+
+.capture-metadata dt {
+  color: var(--color-text-faint);
+}
+
+.metadata-branch {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.delete-confirmation {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cancel-delete-button,
+.confirm-delete-button {
+  min-height: var(--control-sm);
+  padding: 0 12px;
+  border-radius: var(--radius-control);
+}
+
 @media (max-width: 899px) {
   .library-shell {
     grid-template-columns: 208px minmax(0, 1fr);
@@ -2665,7 +3058,9 @@ kbd {
 
 /* Foundation: shared control families. Later component rules only adjust
    layout; size, type, radius and state come from here. */
-select {
+select,
+.branch-filter select,
+.filter-grid select {
   appearance: none;
   min-height: var(--control-md);
   padding: 4px 30px 4px 10px;

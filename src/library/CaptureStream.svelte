@@ -3,6 +3,7 @@
   import CheckIcon from '@lucide/svelte/icons/check';
   import CopyIcon from '@lucide/svelte/icons/copy';
   import FileTextIcon from '@lucide/svelte/icons/file-text';
+  import GitBranchIcon from '@lucide/svelte/icons/git-branch';
   import ImageIcon from '@lucide/svelte/icons/image';
   import MicIcon from '@lucide/svelte/icons/mic';
   import Trash2Icon from '@lucide/svelte/icons/trash-2';
@@ -16,6 +17,7 @@
     snippets?: Record<string, string>;
     query?: string;
     language?: LanguageSetting;
+    showContext?: boolean;
     copyFeedback?: { id: string; state: 'copied' | 'failed' } | null;
     pendingDeleteId?: string | null;
     deleteBusy?: boolean;
@@ -32,6 +34,7 @@
     snippets = {},
     query = '',
     language = 'english',
+    showContext = true,
     copyFeedback = null,
     pendingDeleteId = null,
     deleteBusy = false,
@@ -160,10 +163,16 @@
                   <time datetime={capture.capturedAt}
                     >{time(capture.capturedAt)}</time
                   >
-                  <span>{capture.context.name}</span>
+                  {#if showContext}
+                    <span class="capture-row-context"
+                      >{capture.context.name}</span
+                    >
+                  {/if}
                   {#if capture.branchName}
                     <span class="branch-label" title={capture.branchName}
-                      >{capture.branchName}</span
+                      ><GitBranchIcon aria-hidden="true" /><span
+                        >{capture.branchName}</span
+                      ></span
                     >
                   {/if}
                 </span>

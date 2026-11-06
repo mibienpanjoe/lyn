@@ -1141,4 +1141,44 @@ describe('responsive Library', () => {
     ).toBeVisible();
     expect(deleteCapture).not.toHaveBeenCalled();
   });
+
+  it('opens search from anywhere with Ctrl+K and keeps focus on the field', async () => {
+    const client = createClient();
+    render(LibraryPage, { client });
+    await screen.findByRole('heading', { name: 'Recent' });
+
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+
+    expect(
+      await screen.findByRole('heading', { name: 'Search' }),
+    ).toBeInTheDocument();
+    const field = screen.getByRole('searchbox', { name: 'Search captures' });
+    await waitFor(() => expect(field).toHaveFocus());
+
+    field.blur();
+    const searchLoads = vi.mocked(client.listCaptures).mock.calls.length;
+    await fireEvent.keyDown(window, { key: 'K', metaKey: true });
+    expect(field).toHaveFocus();
+    expect(client.listCaptures).toHaveBeenCalledTimes(searchLoads);
+  });
+
+  it('omits the repeated context name on rows inside a context scope', async () => {
+    const { container } = render(LibraryPage, { client: createClient() });
+    await screen.findByRole('button', { name: /text capture in Lyn/ });
+    expect(container.querySelector('.capture-row-context')).toHaveTextContent(
+      'Lyn',
+    );
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Lyn' }));
+    await screen.findByRole('heading', { name: 'Lyn' });
+    await screen.findByRole('button', { name: /text capture in Lyn/ });
+    expect(container.querySelector('.capture-row-context')).toBeNull();
+  });
+
+  it('pins Settings as the last navigation entry after contexts', async () => {
+    render(LibraryPage, { client: createClient() });
+    await screen.findByRole('button', { name: 'Inbox' });
+    const entries = screen.getByRole('navigation').querySelectorAll('button');
+    expect(entries[entries.length - 1]).toHaveTextContent('Settings');
+  });
 });

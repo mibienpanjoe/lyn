@@ -87,6 +87,7 @@
   {:else}
     <button
       bind:this={trigger}
+      class="trigger"
       type="button"
       aria-label={t.deleteProject}
       title={t.deleteProject}
@@ -125,6 +126,16 @@
   button:hover {
     background: var(--color-surface-subtle);
   }
+  .trigger {
+    min-height: 28px;
+    min-width: 28px;
+    padding: 0;
+    border-color: transparent;
+  }
+  .trigger:hover:not(:disabled) {
+    background: var(--color-error-soft);
+    color: var(--color-error);
+  }
   button:disabled {
     opacity: 0.6;
     cursor: default;
@@ -134,8 +145,9 @@
     outline-offset: 2px;
   }
   button :global(svg) {
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
+    stroke-width: 1.5;
   }
   [role='alertdialog'] {
     width: 100%;

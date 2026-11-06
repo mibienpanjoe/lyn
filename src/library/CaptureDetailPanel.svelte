@@ -107,17 +107,63 @@
 
 <article class="detail-panel" aria-labelledby="capture-detail-title">
   <header class="detail-header">
-    {#if compact}
-      <button
-        class="detail-back"
-        type="button"
-        aria-label={t.backToScope(backLabel)}
-        onclick={onback}
-      >
-        <ArrowLeftIcon aria-hidden="true" />
-        {backLabel}
-      </button>
-    {/if}
+    <div class="detail-toolbar">
+      {#if compact}
+        <button
+          class="detail-back"
+          type="button"
+          aria-label={t.backToScope(backLabel)}
+          onclick={onback}
+        >
+          <ArrowLeftIcon aria-hidden="true" />
+          <span>{backLabel}</span>
+        </button>
+      {/if}
+      <div class="detail-tools">
+        {#if copyableText}
+          <button
+            class="detail-tool"
+            class:copied={copyState === 'copied'}
+            class:failed={copyState === 'failed'}
+            type="button"
+            aria-label={t.copyText}
+            title={copyState === 'copied'
+              ? t.copyTextCopied
+              : copyState === 'failed'
+                ? t.copyTextFailed
+                : t.copyText}
+            onclick={copyCaptureText}
+          >
+            {#if copyState === 'copied'}<CheckIcon
+                aria-hidden="true"
+              />{:else}<CopyIcon aria-hidden="true" />{/if}
+          </button>
+        {/if}
+        {#if capture.media?.available}
+          <button
+            class="detail-tool"
+            type="button"
+            aria-label="Open in default app"
+            title="Open in default app"
+            disabled={busy || deleting}
+            onclick={onopen}
+          >
+            <ExternalLinkIcon aria-hidden="true" />
+          </button>
+        {/if}
+        <button
+          class="detail-tool detail-tool-danger"
+          type="button"
+          aria-label={t.deleteCapture}
+          title={t.deleteCapture}
+          aria-expanded={confirmingDelete}
+          disabled={busy || deleting}
+          onclick={() => (confirmingDelete = true)}
+        >
+          <Trash2Icon aria-hidden="true" />
+        </button>
+      </div>
+    </div>
     <div class="detail-header-identity">
       <h2 id="capture-detail-title" class="sr-only">{heading()}</h2>
       <p class="detail-eyebrow">
@@ -127,6 +173,31 @@
   </header>
 
   <div class="detail-content">
+    {#if confirmingDelete}
+      <div class="delete-confirmation" role="alert">
+        <span class="delete-warning-text">Delete this capture permanently?</span
+        >
+        <div class="delete-buttons">
+          <button
+            class="cancel-delete-button"
+            type="button"
+            disabled={deleting}
+            onclick={() => (confirmingDelete = false)}
+          >
+            Cancel
+          </button>
+          <button
+            class="confirm-delete-button"
+            type="button"
+            disabled={deleting}
+            onclick={ondelete}
+          >
+            {deleting ? 'Deleting…' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    {/if}
+
     {#if capture.kind === 'text'}
       <p class="detail-text">{capture.textBody}</p>
     {:else if capture.kind === 'image'}
@@ -175,21 +246,6 @@
     {/if}
 
     {#if copyableText}
-      <button
-        class="copy-text-button"
-        type="button"
-        aria-label={t.copyText}
-        onclick={copyCaptureText}
-      >
-        {#if copyState === 'copied'}<CheckIcon aria-hidden="true" />{:else}
-          <CopyIcon aria-hidden="true" />
-        {/if}
-        {copyState === 'copied'
-          ? t.copyTextCopied
-          : copyState === 'failed'
-            ? t.copyTextFailed
-            : t.copyText}
-      </button>
       <span class="sr-only" role="status">
         {copyState === 'copied'
           ? t.copyTextCopied
@@ -210,62 +266,14 @@
       </div>
       {#if capture.branchName}<div>
           <dt>Branch</dt>
-          <dd title={capture.branchName}>{capture.branchName}</dd>
+          <dd class="metadata-branch" title={capture.branchName}>
+            {capture.branchName}
+          </dd>
         </div>{/if}
       {#if capture.sourceApp}<div>
           <dt>Source</dt>
           <dd>{capture.sourceApp}</dd>
         </div>{/if}
     </dl>
-
-    {#if capture.media?.available}
-      <button
-        class="open-media-button"
-        type="button"
-        disabled={busy || deleting}
-        onclick={onopen}
-      >
-        <ExternalLinkIcon aria-hidden="true" />
-        Open in default app
-      </button>
-    {/if}
-
-    <div class="detail-actions">
-      {#if confirmingDelete}
-        <div class="delete-confirmation" role="alert">
-          <span class="delete-warning-text"
-            >Delete this capture permanently?</span
-          >
-          <div class="delete-buttons">
-            <button
-              class="cancel-delete-button"
-              type="button"
-              disabled={deleting}
-              onclick={() => (confirmingDelete = false)}
-            >
-              Cancel
-            </button>
-            <button
-              class="confirm-delete-button"
-              type="button"
-              disabled={deleting}
-              onclick={ondelete}
-            >
-              {deleting ? 'Deleting…' : 'Delete'}
-            </button>
-          </div>
-        </div>
-      {:else}
-        <button
-          class="delete-capture-button"
-          type="button"
-          disabled={busy || deleting}
-          onclick={() => (confirmingDelete = true)}
-        >
-          <Trash2Icon aria-hidden="true" />
-          Delete capture
-        </button>
-      {/if}
-    </div>
   </div>
 </article>
