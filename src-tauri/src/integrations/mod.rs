@@ -734,16 +734,27 @@ fn install_kitty(home: &Path) -> InstallIntegrationResult {
         ));
         changed = true;
     }
-    let old_mapping = format!("map ctrl+alt+shift+l kitten {}", capture_file.display());
+    // The previous default used Ctrl+Alt+Shift+L, either for the installed
+    // kitten or a development checkout path. Migrate only that exact key and
+    // keep the line's own kitten path.
+    const OLD_MAPPING_PREFIX: &str = "map ctrl+alt+shift+l kitten ";
+    let is_old_mapping = |line: &str| {
+        line.strip_prefix(OLD_MAPPING_PREFIX).is_some_and(|path| {
+            !path.is_empty()
+                && !path.contains(char::is_whitespace)
+                && path.ends_with("/lyn_capture.py")
+        })
+    };
     let new_mapping = format!("map alt+l kitten {}", capture_file.display());
-    let has_old = new_content.lines().any(|line| line == old_mapping);
+    let has_old = new_content.lines().any(is_old_mapping);
     let has_capture = new_content.contains("lyn_capture.py");
     if has_old || !has_capture {
         let conflicting = new_content.lines().any(|line| {
             let mut words = line.split_whitespace();
             words.next() == Some("map")
                 && words.any(|key| key.eq_ignore_ascii_case("alt+l"))
-                && line.trim() != new_mapping
+                && !(line.trim().starts_with("map alt+l kitten ")
+                    && line.trim().ends_with("/lyn_capture.py"))
         });
         if conflicting {
             return InstallIntegrationResult {
@@ -759,8 +770,9 @@ fn install_kitty(home: &Path) -> InstallIntegrationResult {
                 .split_inclusive('\n')
                 .map(|line| {
                     let body = line.trim_end_matches(['\r', '\n']);
-                    if body == old_mapping {
-                        format!("{}{}", new_mapping, &line[body.len()..])
+                    if is_old_mapping(body) {
+                        let path = &body[OLD_MAPPING_PREFIX.len()..];
+                        format!("map alt+l kitten {path}{}", &line[body.len()..])
                     } else {
                         line.to_owned()
                     }
@@ -1096,6 +1108,25 @@ mod tests {
         assert!(result.contains(&format!("map alt+l kitten {}", capture.display())));
         assert!(install_kitty(home).success);
         assert_eq!(fs::read_to_string(&conf).unwrap(), result);
+
+        // A development-checkout kitten path keeps its own path, gains Alt+L
+        // and is not duplicated by the installed path.
+        let dev = "/home/dev/lyn/integrations/kitty/lyn_capture.py";
+        fs::write(
+            &conf,
+            format!(
+                "watcher /home/dev/lyn/integrations/kitty/lyn_context_watcher.py\n\
+                 map ctrl+alt+shift+l kitten {dev}\n"
+            ),
+        )
+        .unwrap();
+        assert!(install_kitty(home).success);
+        let migrated = fs::read_to_string(&conf).unwrap();
+        assert!(migrated.contains(&format!("map alt+l kitten {dev}\n")));
+        assert!(!migrated.contains("ctrl+alt+shift+l"));
+        assert_eq!(migrated.matches("lyn_capture.py").count(), 1);
+        assert!(install_kitty(home).success);
+        assert_eq!(fs::read_to_string(&conf).unwrap(), migrated);
 
         let conflict = format!("map alt+l new_tab\n{old}");
         fs::write(&conf, &conflict).unwrap();
