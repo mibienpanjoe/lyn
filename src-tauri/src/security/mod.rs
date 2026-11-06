@@ -60,11 +60,16 @@ mod tests {
         let main = capability_permissions("main.json");
         let capture = capability_permissions("capture.json");
 
+        // The Library's startup switch needs exactly these three autostart
+        // calls; the plugin's broader default set is never granted.
         assert_eq!(
             main,
             BTreeSet::from([
                 "core:event:default".to_owned(),
-                "library-commands".to_owned()
+                "library-commands".to_owned(),
+                "autostart:allow-enable".to_owned(),
+                "autostart:allow-disable".to_owned(),
+                "autostart:allow-is-enabled".to_owned(),
             ])
         );
         assert_eq!(
@@ -78,6 +83,12 @@ mod tests {
         assert!(!capture.contains("core:default"));
         assert!(!main.contains("capture-commands"));
         assert!(!capture.contains("library-commands"));
+        assert!(!main.contains("autostart:default"));
+        assert!(
+            !capture
+                .iter()
+                .any(|permission| permission.starts_with("autostart:"))
+        );
     }
 
     #[test]
