@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.0.0
+
+### Changed
+
+- Refreshed interface. Inter is bundled locally, with one type scale and one
+  set of button, select, switch and segmented controls. Light and dark themes
+  now follow both the system setting and an explicit choice in Settings.
+- Quick capture shows the detected project, Git branch and source app as chips
+  above the draft. Screenshot, Voice, keyboard hints and Save share one footer,
+  and Save is the primary action.
+- Library groups captures by day (Today, Yesterday, then dates) in grouped
+  lists. Toolbars keep one height. Project pages filter by branch next to the
+  title. The capture inspector opens only when a capture is selected and offers
+  copy, open and delete as compact tools.
+- Settings uses aligned rows, a real "Start Lyn when I log in" switch, one
+  grouped integrations list with clear status, and plainer English and French
+  copy. The section is now called Integrations.
+
+### Added
+
+- `Ctrl+K` opens search from anywhere in the Library, or refocuses it.
+
+### Fixed
+
+- Saving no longer reports "Context source stale" for a terminal that is still
+  open in the same project. Lyn identified the reporting process by its
+  `/proc/<pid>` inode, which the kernel reassigns to a running process after
+  ordinary memory reclaim. Kitty, shell-helper and native GNOME Terminal sources
+  now use the process start time; closed terminals and real directory changes
+  are still refused.
+- Forced Dark or Light theme now draws image outlines in the right color, and
+  the context reorder arrows in Settings stay readable before hover.
+
+### Distribution and validation limits
+
+- Packages remain unsigned prereleases built by the release workflow.
+- Frontend, Rust and GNOME native/desktop fixtures passed locally. Reclaim
+  regressions run as opt-in tests inside a memory-limited user scope.
+- Native GNOME compatibility and installed acceptance limits are unchanged and
+  remain documented in `docs/gnome_native_protocol.md`. Local Parakeet speech
+  remains Linux x86_64 only.
+
 ## 0.9.1
 
 ### Changed
