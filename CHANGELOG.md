@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.1
+
+### Fixed
+
+- Quick capture keeps the Kitty context when more than one Kitty process is
+  open. Each Kitty process reports its own last pane, and Lyn attached every
+  report to whichever Kitty window was focused, so two Kitty windows replaced
+  each other's context every two seconds. Save then showed "Source changed —
+  choose another context" with the global shortcut and with Alt+L.
+- The context now stays with the Kitty window you invoked Lyn from, even if
+  you click another Kitty window or another application while the draft is
+  open. Lyn checks the window's owner through the X server (XRes); without
+  XRes it behaves as before.
+
+### Distribution and validation limits
+
+- Unsigned prerelease built by the release workflow. Two-Kitty behaviour is
+  covered by scenario tests and an XRes check on the reference desktop; it has
+  not yet been confirmed end to end with the installed package.
+
 ## 1.0.0
 
 ### Changed
