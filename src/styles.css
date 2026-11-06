@@ -1,6 +1,7 @@
 :root {
   color-scheme: light dark;
   font-family:
+    'Inter Variable',
     ui-sans-serif,
     -apple-system,
     BlinkMacSystemFont,
@@ -33,6 +34,20 @@
   --shadow-surface:
     0 0 0 1px oklch(0 0 0 / 7%), 0 2px 4px -1px oklch(0 0 0 / 5%),
     0 14px 32px -6px oklch(0 0 0 / 14%);
+  font-feature-settings: 'cv11', 'ss03';
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 15px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+  --control-sm: 28px;
+  --control-md: 32px;
+  --focus-ring: 0 0 0 3px
+    color-mix(in srgb, var(--color-accent) 28%, transparent);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -64,6 +79,7 @@ body {
   min-height: 100vh;
   overflow: hidden;
   font-size: 13px;
+  background: var(--color-canvas);
 }
 
 button,
@@ -165,7 +181,7 @@ kbd {
     color-mix(in srgb, var(--color-divider) 60%, transparent);
   background: color-mix(in srgb, var(--color-surface) 96%, transparent);
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   text-align: left;
   transition:
@@ -242,7 +258,7 @@ kbd {
   display: block;
   margin: 0 0 var(--space-2);
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
 }
 
@@ -267,7 +283,7 @@ kbd {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   transition: background-color 150ms ease-out;
 }
@@ -283,7 +299,7 @@ kbd {
 .chooser-status {
   margin: var(--space-3) 0;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .context-list {
@@ -313,7 +329,7 @@ kbd {
 
 .context-kind {
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .option-copy {
@@ -325,7 +341,7 @@ kbd {
 .source-status {
   flex: 0 0 auto;
   color: var(--color-accent);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 
@@ -358,7 +374,7 @@ kbd {
   min-height: 32px;
   padding: 6px 12px;
   border-radius: var(--radius-control);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
 }
 
@@ -384,7 +400,7 @@ kbd {
   outline-offset: -3px;
   color: var(--color-text);
   background: transparent;
-  font-size: 15px;
+  font-size: var(--text-lg);
   line-height: 23px;
 }
 
@@ -392,7 +408,7 @@ kbd {
   grid-area: label;
   margin: var(--space-2) var(--space-5) var(--space-1);
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
 }
 
@@ -440,7 +456,7 @@ kbd {
   justify-content: space-between;
   gap: var(--space-3);
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .media-actions {
@@ -452,7 +468,7 @@ kbd {
 .media-notice {
   margin: 0;
   color: var(--color-accent);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .image-preview button {
@@ -485,7 +501,7 @@ kbd {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   transition:
     background-color 150ms ease-out,
@@ -530,7 +546,7 @@ kbd {
 .voice-duration,
 .recording-status {
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .recording-status {
@@ -553,7 +569,7 @@ kbd {
   border-radius: var(--radius-control);
   color: var(--color-error);
   background: var(--color-error-soft);
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 17px;
 }
 
@@ -586,7 +602,7 @@ kbd {
 .keyboard-hint {
   margin: 0;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 
@@ -607,7 +623,7 @@ kbd {
   border-radius: 4px;
   background: color-mix(in srgb, var(--color-surface-subtle) 90%, transparent);
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   font-weight: 600;
   color: var(--color-text-muted);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
@@ -626,7 +642,7 @@ kbd {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   transition:
     background-color 150ms ease-out,
@@ -645,7 +661,7 @@ kbd {
   border-radius: var(--radius-control);
   background: var(--color-accent-soft);
   color: var(--color-accent);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 550;
   transition:
     background-color 150ms ease-out,
@@ -696,7 +712,7 @@ kbd {
 
 .settings-header h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--text-2xl);
   line-height: 28px;
 }
 
@@ -705,7 +721,7 @@ kbd {
   margin: var(--space-1) 0 0;
   max-width: 240px;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 16px;
 }
 
@@ -717,7 +733,7 @@ kbd {
   gap: 5px;
   padding-top: 2px;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .settings-save-status svg {
@@ -734,7 +750,7 @@ kbd {
 }
 
 .app-version strong {
-  font-size: 15px;
+  font-size: var(--text-lg);
   font-weight: 650;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
@@ -765,7 +781,7 @@ kbd {
 
 .settings-section h2 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--text-base);
   line-height: 18px;
   font-weight: 650;
 }
@@ -776,7 +792,7 @@ kbd {
   align-content: start;
   gap: var(--space-1);
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .settings-section input[type='text'] {
@@ -837,7 +853,7 @@ kbd {
   );
   color: var(--color-text);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 550;
   line-height: 1;
   text-align: center;
@@ -853,7 +869,7 @@ kbd {
   border-radius: 5px;
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
   transition:
@@ -889,7 +905,7 @@ kbd {
   padding: 4px 6px 4px 12px;
   border-bottom: 1px solid
     color-mix(in srgb, var(--color-divider) 55%, transparent);
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .provider-order li:last-child {
@@ -905,7 +921,7 @@ kbd {
 .provider-priority {
   width: 14px;
   color: var(--color-text-muted);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -977,7 +993,7 @@ kbd {
   border-radius: 6px;
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
   transition:
@@ -1077,14 +1093,14 @@ kbd {
 .model-identity strong,
 .speech-preference strong {
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 600;
 }
 
 .model-identity span,
 .speech-preference span {
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .model-management {
@@ -1094,7 +1110,7 @@ kbd {
 
 .model-status {
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .model-status[data-state='installed'] {
@@ -1119,7 +1135,7 @@ kbd {
 
 .secondary-action {
   min-height: 32px;
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   padding: 5px var(--space-3);
   border: 1px solid var(--color-divider);
@@ -1188,7 +1204,7 @@ kbd {
 }
 
 .integrations-loading {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--color-text-muted);
   margin: var(--space-2) 0;
 }
@@ -1203,7 +1219,7 @@ kbd {
   border-radius: 8px;
   background: color-mix(in srgb, var(--color-error) 5%, var(--color-surface));
   color: var(--color-error);
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .integration-card {
@@ -1293,13 +1309,13 @@ kbd {
 }
 
 .integration-title-row strong {
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--color-text);
 }
 
 .integration-subname {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 500;
   color: var(--color-text-muted);
   background: color-mix(in srgb, var(--color-divider) 40%, transparent);
@@ -1311,13 +1327,13 @@ kbd {
 
 .integration-desc {
   margin: 0 !important;
-  font-size: 11px !important;
+  font-size: var(--text-xs) !important;
   color: var(--color-text-muted);
   line-height: 1.4 !important;
 }
 
 .integration-details-text {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--color-text-muted);
   opacity: 0.85;
   margin-top: 2px;
@@ -1325,7 +1341,7 @@ kbd {
 
 .path-pill {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   padding: 1px 5px;
   border-radius: 4px;
   background: color-mix(in srgb, var(--color-divider) 25%, transparent);
@@ -1334,7 +1350,7 @@ kbd {
 }
 
 .integration-feedback {
-  font-size: 11px;
+  font-size: var(--text-xs);
   margin-top: 4px;
   padding: 3px 8px;
   border-radius: 4px;
@@ -1356,7 +1372,7 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 3.5px;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   font-weight: 600;
   padding: 1.5px 7px;
   border-radius: 999px;
@@ -1440,7 +1456,7 @@ kbd {
     var(--color-surface)
   );
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 500;
   cursor: pointer;
   transition:
@@ -1468,7 +1484,7 @@ kbd {
   align-items: center;
   gap: var(--space-2);
   margin: var(--space-3) 0;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .settings-error {
@@ -1496,7 +1512,7 @@ kbd {
   min-height: 32px;
   padding: 0 8px 16px;
   color: var(--color-text);
-  font-size: 15px;
+  font-size: var(--text-lg);
   font-weight: 650;
   letter-spacing: -0.01em;
 }
@@ -1527,7 +1543,7 @@ kbd {
 .library-navigation nav h2 {
   margin: 18px 8px 6px;
   color: var(--color-text-faint);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 650;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1546,7 +1562,7 @@ kbd {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 500;
   text-align: left;
   transition:
@@ -1609,7 +1625,7 @@ kbd {
 .detail-eyebrow {
   margin: 0;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 550;
   letter-spacing: 0.02em;
 }
@@ -1617,7 +1633,7 @@ kbd {
 .library-toolbar h1 {
   margin: 0;
   color: var(--color-text);
-  font-size: 18px;
+  font-size: var(--text-xl);
   font-weight: 650;
   letter-spacing: -0.015em;
   line-height: 24px;
@@ -1639,7 +1655,7 @@ kbd {
   gap: 2px;
   margin-left: auto;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .branch-filter select {
@@ -1662,7 +1678,7 @@ kbd {
   border-radius: var(--radius-control);
   background: var(--color-error-soft);
   color: var(--color-error);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .library-error button,
@@ -1670,7 +1686,7 @@ kbd {
 .open-media-button,
 .copy-text-button,
 .load-more-button {
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   display: inline-flex;
   min-height: 36px;
@@ -1752,7 +1768,7 @@ kbd {
   border-radius: var(--radius-control);
   background: var(--color-surface-subtle);
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--text-base);
   transition:
     border-color 120ms ease-out,
     background-color 120ms ease-out;
@@ -1780,7 +1796,7 @@ kbd {
   border: 1px solid color-mix(in srgb, var(--color-divider) 80%, transparent);
   border-radius: var(--radius-control);
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   background: var(--color-surface-subtle);
   cursor: pointer;
@@ -1829,7 +1845,7 @@ kbd {
   display: grid;
   gap: var(--space-1);
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .filter-grid fieldset {
@@ -1848,7 +1864,7 @@ kbd {
   width: 100%;
   margin-bottom: var(--space-1);
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .kind-filter {
@@ -1861,7 +1877,7 @@ kbd {
   border-radius: 999px;
   background: transparent;
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   transition:
     color 120ms ease-out,
@@ -1891,14 +1907,14 @@ kbd {
   border: 0;
   background: transparent;
   color: var(--color-accent);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .search-scope-note {
   grid-column: 1 / -1;
   margin: 0;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .stream-groups,
@@ -1916,7 +1932,7 @@ kbd {
 .stream-day > h2 {
   margin: 0 0 8px 2px;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 650;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -2027,7 +2043,7 @@ kbd {
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -2111,7 +2127,7 @@ kbd {
   align-items: center;
   gap: var(--space-2);
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .capture-row-meta time {
@@ -2139,7 +2155,7 @@ kbd {
   display: -webkit-box;
   overflow: hidden;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 450;
   line-height: 20px;
   -webkit-box-orient: vertical;
@@ -2170,7 +2186,7 @@ kbd {
 .detail-placeholder,
 .library-empty {
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .library-status {
@@ -2187,7 +2203,7 @@ kbd {
 .library-empty h2 {
   margin: 0 0 var(--space-2);
   color: var(--color-text);
-  font-size: 16px;
+  font-size: var(--text-lg);
 }
 
 .library-empty p {
@@ -2255,7 +2271,7 @@ kbd {
   border: none;
   background: transparent;
   color: var(--color-text);
-  font-size: 18px;
+  font-size: var(--text-xl);
   font-weight: 650;
   letter-spacing: -0.015em;
   line-height: 24px;
@@ -2283,7 +2299,7 @@ kbd {
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 14px;
+  font-size: var(--text-md);
   line-height: 21px;
 }
 
@@ -2303,7 +2319,7 @@ kbd {
   border-radius: var(--radius-control);
   color: var(--color-text-muted);
   background: var(--color-surface-subtle);
-  font-size: 13px;
+  font-size: var(--text-base);
 }
 
 .audio-player {
@@ -2330,7 +2346,7 @@ kbd {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
   gap: var(--space-3);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .capture-metadata dt {
@@ -2354,7 +2370,7 @@ kbd {
   justify-self: start;
   margin-top: var(--space-3);
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .copy-text-button svg {
@@ -2379,7 +2395,7 @@ kbd {
   border: 1px solid transparent;
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
   transition:
@@ -2417,7 +2433,7 @@ kbd {
 }
 
 .delete-warning-text {
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--color-text);
   line-height: 1.4;
@@ -2433,7 +2449,7 @@ kbd {
 .confirm-delete-button {
   padding: 6px 14px;
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
   transition:
@@ -2558,7 +2574,7 @@ kbd {
   }
 
   .library-toolbar h1 {
-    font-size: 18px;
+    font-size: var(--text-xl);
   }
 
   .stream-scroll-region,
@@ -2620,6 +2636,200 @@ kbd {
   .capture-actions {
     padding-left: var(--space-3);
   }
+}
+
+/* Foundation: shared control families. Later component rules only adjust
+   layout; size, type, radius and state come from here. */
+select {
+  appearance: none;
+  min-height: var(--control-md);
+  padding: 4px 30px 4px 10px;
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-control);
+  background-color: var(--color-surface);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--color-text-muted) 50%),
+    linear-gradient(135deg, var(--color-text-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 15px) 50%,
+    calc(100% - 11px) 50%;
+  background-size:
+    4px 4px,
+    4px 4px;
+  background-repeat: no-repeat;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--text-base);
+  cursor: pointer;
+  transition: border-color 120ms ease-out;
+}
+
+select:hover {
+  border-color: color-mix(in srgb, var(--color-text-muted) 45%, transparent);
+}
+
+select:focus-visible,
+input:focus-visible,
+textarea:not(.capture-input):focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
+}
+
+.secondary-action,
+.icon-label-button,
+.copy-text-button,
+.load-more-button,
+.chooser-close,
+.image-preview button,
+.library-error button,
+.capture-error button {
+  display: inline-flex;
+  min-height: var(--control-md);
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  box-shadow: 0 1px 0 oklch(0 0 0 / 4%);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+.secondary-action:hover:not(:disabled),
+.icon-label-button:hover:not(:disabled),
+.copy-text-button:hover:not(:disabled),
+.load-more-button:hover:not(:disabled),
+.chooser-close:hover:not(:disabled),
+.image-preview button:hover:not(:disabled),
+.library-error button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-text-muted) 40%, transparent);
+  background: var(--color-surface-subtle);
+}
+
+.capture-error button {
+  border-color: currentcolor;
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+}
+
+.cancel-button,
+.open-media-button,
+.delete-capture-button,
+.shortcut-display button,
+.shortcut-editor button {
+  display: inline-flex;
+  min-height: var(--control-sm);
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+.cancel-button:hover:not(:disabled),
+.open-media-button:hover:not(:disabled),
+.shortcut-display button:hover:not(:disabled),
+.shortcut-editor button:hover:not(:disabled) {
+  background: var(--color-surface-subtle);
+  color: var(--color-text);
+}
+
+.open-media-button {
+  margin-inline-start: -10px;
+}
+
+.delete-capture-button {
+  margin-inline-start: -10px;
+}
+
+.save-button,
+.context-create button {
+  display: inline-flex;
+  min-height: var(--control-md);
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--color-accent);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 14%),
+    0 1px 2px oklch(0 0 0 / 12%);
+  color: var(--color-on-accent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  transition: background-color 120ms ease-out;
+}
+
+.save-button:hover:not(:disabled),
+.context-create button:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  color: var(--color-on-accent);
+}
+
+.language-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  justify-self: end;
+  width: min(100%, 300px);
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--color-divider) 70%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+}
+
+.language-options button,
+.language-options button:hover {
+  min-height: var(--control-sm);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.language-options button:hover:not(.active) {
+  color: var(--color-text);
+}
+
+.language-options button.active {
+  border: 0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 600;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.08),
+    0 0.5px 1px rgba(0, 0, 0, 0.06);
+}
+
+.theme-options svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  stroke-width: 1.5;
 }
 
 :root[data-theme='light'] {

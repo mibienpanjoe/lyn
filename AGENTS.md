@@ -167,7 +167,7 @@ Optional speech uses Parakeet TDT 0.6B v3 Q8 through the pinned parakeet.cpp CPU
 
 Write concise Markdown with descriptive headings and relative links. Keep numbered filenames stable. Never present proposed designs as implemented or verified.
 
-Use `rustfmt` and Prettier. Use `snake_case` for Rust modules/functions, `PascalCase` for Rust types and Svelte components, and kebab-case for TypeScript utility files. Import individual outline icons from `@lucide/svelte/icons/*`; keep visible labels on capture actions and match icon stroke to adjacent text. Preserve typed Tauri IPC; the frontend must not access SQLite or arbitrary filesystem paths.
+Use `rustfmt` and Prettier. Use `snake_case` for Rust modules/functions, `PascalCase` for Rust types and Svelte components, and kebab-case for TypeScript utility files. Typography uses the locally bundled `@fontsource-variable/inter` face (never a remote font) and the `--text-*`, `--control-*` and radius tokens in `src/styles.css`; component rules must not introduce literal font sizes or undefined tokens (guarded by `src/visual-accessibility.test.ts`). Buttons belong to the shared primary/secondary/ghost families defined in the stylesheet foundation block. Import individual outline icons from `@lucide/svelte/icons/*`; keep visible labels on capture actions and match icon stroke to adjacent text. Preserve typed Tauri IPC; the frontend must not access SQLite or arbitrary filesystem paths.
 
 ## Testing Guidelines
 

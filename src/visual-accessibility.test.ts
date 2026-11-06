@@ -148,6 +148,18 @@ describe('visual accessibility verification', () => {
     );
   });
 
+  it('uses the bundled Inter face and type-scale tokens for every text size', () => {
+    const entry = readFileSync(resolve(import.meta.dirname, 'main.ts'), 'utf8');
+    expect(entry).toContain("import '@fontsource-variable/inter/wght.css';");
+    expect(styles).toMatch(/font-family:\s*'Inter Variable'/);
+    const rawSizes = Array.from(
+      styles.matchAll(/font-size:\s*(\d+(?:\.\d+)?px)/g),
+      (match) => match[1],
+    );
+    // Only the body root size is literal; everything else uses --text-*.
+    expect(rawSizes).toEqual(['13px']);
+  });
+
   it('treats the Library brand mark as decorative beside the visible Lyn name', async () => {
     const library: LibraryClient = {
       updateVoiceCaption: vi.fn(),
