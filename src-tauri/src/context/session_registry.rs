@@ -40,6 +40,8 @@ pub(crate) struct LiveContextSource {
     observed_at: Instant,
     expires_at: Instant,
     #[cfg(target_os = "linux")]
+    /// `(uid, kernel start time)` of the reporting process. `/proc/<pid>`
+    /// inodes are reassigned after dentry reclaim, so they are not identities.
     process_identity: Option<(u32, u64)>,
     #[cfg(target_os = "linux")]
     native: Option<std::sync::Arc<super::gnome_broker::NativeSourceLease>>,
@@ -105,18 +107,15 @@ impl LiveContextSource {
                 }
                 self.identity = refreshed;
             } else if let Some(pid) = self.process.and_then(CorrelationToken::native_process_id) {
-                let path = format!("/proc/{pid}");
-                let before = fs::metadata(&path).ok()?;
-                let process_identity = (before.uid(), before.ino());
+                let process_identity = process_lifetime(pid)?;
                 if Some(process_identity) != self.process_identity
-                    || before.uid() != fs::metadata("/proc/self").ok()?.uid()
+                    || process_identity.0 != fs::metadata("/proc/self").ok()?.uid()
                 {
                     return None;
                 }
-                let directory = fs::canonicalize(format!("{path}/cwd")).ok()?;
+                let directory = fs::canonicalize(format!("/proc/{pid}/cwd")).ok()?;
                 let refreshed = inspect_project_directory(&directory).ok()?;
-                let after = fs::metadata(&path).ok()?;
-                if process_identity != (after.uid(), after.ino())
+                if process_lifetime(pid)? != process_identity
                     || refreshed.project_key != self.identity.project_key
                     || refreshed.project_path != self.identity.project_path
                 {
@@ -172,6 +171,30 @@ impl LiveContextSource {
     pub(crate) fn observed_at(&self) -> Instant {
         self.observed_at
     }
+}
+
+/// Reads `(uid, start time)` for a live process. The start time is fixed for
+/// the process lifetime and differs for a later process reusing the PID; a
+/// zombie or unreadable process yields `None`.
+#[cfg(target_os = "linux")]
+fn process_lifetime(pid: u32) -> Option<(u32, u64)> {
+    use std::io::Read;
+    use std::os::unix::fs::MetadataExt;
+
+    let path = format!("/proc/{pid}");
+    let uid = fs::metadata(&path).ok()?.uid();
+    let mut text = String::new();
+    fs::File::open(format!("{path}/stat"))
+        .ok()?
+        .take(4097)
+        .read_to_string(&mut text)
+        .ok()?;
+    if text.len() > 4096 {
+        return None;
+    }
+    let started = crate::context::gnome_peer::start_time(&text)?;
+    // A uid change between reads means this is not one stable observation.
+    (fs::metadata(&path).ok()?.uid() == uid).then_some((uid, started))
 }
 
 #[derive(Default)]
@@ -271,12 +294,10 @@ impl ContextSourceRegistry {
                 observed_at: observation.observed_at(),
                 expires_at: observation.observed_at() + LIVE_SOURCE_TTL,
                 #[cfg(target_os = "linux")]
-                process_identity: observation.process().and_then(|token| {
-                    use std::os::unix::fs::MetadataExt;
-                    let metadata =
-                        fs::metadata(format!("/proc/{}", token.native_process_id()?)).ok()?;
-                    Some((metadata.uid(), metadata.ino()))
-                }),
+                process_identity: observation
+                    .process()
+                    .and_then(CorrelationToken::native_process_id)
+                    .and_then(process_lifetime),
                 #[cfg(target_os = "linux")]
                 native: None,
             },
@@ -748,5 +769,62 @@ mod tests {
         assert_ne!(first, second);
         assert!(registry.get(first, now).is_none());
         assert!(registry.get(second, now).is_some());
+    }
+
+    /// The kernel may assign a live process a new `/proc/<pid>` inode after
+    /// dentry reclaim, so the registered identity must be its start time.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn process_sources_are_identified_by_start_time_not_proc_inode() {
+        use std::os::unix::fs::MetadataExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .current_dir(directory.path())
+            .spawn()
+            .unwrap();
+        let now = Instant::now();
+        let mut registry = ContextSourceRegistry::default();
+        let source_id = registry
+            .register(
+                ProviderObservation::new(
+                    ContextProviderKind::Shell,
+                    ProviderSourceKind::ExternalTerminal,
+                    Some(WindowCorrelationToken::from_native(77)),
+                    Some(CorrelationToken::from_process_id(child.id())),
+                    Some(CorrelationToken::new()),
+                    directory.path().to_path_buf(),
+                    now,
+                    ObservationLiveness::Live,
+                ),
+                now,
+            )
+            .unwrap();
+
+        let stat = std::fs::read_to_string(format!("/proc/{}/stat", child.id())).unwrap();
+        let started: u64 = stat
+            .rsplit_once(')')
+            .unwrap()
+            .1
+            .split_whitespace()
+            .nth(19)
+            .unwrap()
+            .parse()
+            .unwrap();
+        let uid = std::fs::metadata(format!("/proc/{}", child.id()))
+            .unwrap()
+            .uid();
+        let source = registry.get(source_id, now).cloned().unwrap();
+        assert_eq!(source.process_identity, Some((uid, started)));
+        assert!(source.revalidated().is_some());
+
+        child.kill().unwrap();
+        child.wait().unwrap();
+        let source = registry.get(source_id, now).cloned().unwrap();
+        assert!(
+            source.revalidated().is_none(),
+            "an exited process stays stale"
+        );
     }
 }

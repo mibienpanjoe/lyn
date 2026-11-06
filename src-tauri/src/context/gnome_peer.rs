@@ -138,7 +138,7 @@ fn process_identity(pid: u32) -> io::Result<ProcessIdentity> {
     })
 }
 
-fn start_time(text: &str) -> Option<u64> {
+pub(crate) fn start_time(text: &str) -> Option<u64> {
     // comm (field 2) can contain spaces/newlines/parentheses. Discard it; never
     // retain/log it. The remaining state and starttime are fields 3 and 22.
     let (_, fields) = text.rsplit_once(')')?;
