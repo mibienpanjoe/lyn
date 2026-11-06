@@ -32,6 +32,7 @@
   --color-info: #2563eb;
   --color-error: #b4232c;
   --color-error-soft: #fbe7e8;
+  --media-outline: oklch(0 0 0 / 10%);
   --shadow-surface:
     0 0 0 1px oklch(0 0 0 / 7%), 0 2px 4px -1px oklch(0 0 0 / 5%),
     0 14px 32px -6px oklch(0 0 0 / 14%);
@@ -493,7 +494,7 @@ kbd {
   max-width: 100%;
   max-height: 148px;
   border-radius: var(--radius-control);
-  outline: 1px solid oklch(0 0 0 / 10%);
+  outline: 1px solid var(--media-outline);
   object-fit: contain;
 }
 
@@ -2202,7 +2203,7 @@ kbd {
 }
 
 .media-preview {
-  outline: 1px solid oklch(0 0 0 / 10%);
+  outline: 1px solid var(--media-outline);
   outline-offset: -1px;
 }
 
@@ -3443,6 +3444,7 @@ textarea:not(.capture-input):focus-visible {
   --color-info: #60a5fa;
   --color-error: #ff858b;
   --color-error-soft: #3c191c;
+  --media-outline: oklch(1 0 0 / 10%);
   --shadow-surface:
     0 0 0 1px oklch(1 0 0 / 9%), 0 4px 14px -2px oklch(0 0 0 / 50%),
     0 20px 48px -8px oklch(0 0 0 / 70%);
@@ -3467,17 +3469,10 @@ textarea:not(.capture-input):focus-visible {
     --color-info: #60a5fa;
     --color-error: #ff858b;
     --color-error-soft: #3c191c;
+    --media-outline: oklch(1 0 0 / 10%);
     --shadow-surface:
       0 0 0 1px oklch(1 0 0 / 9%), 0 4px 14px -2px oklch(0 0 0 / 50%),
       0 20px 48px -8px oklch(0 0 0 / 70%);
-  }
-
-  .image-preview img {
-    outline-color: oklch(1 0 0 / 10%);
-  }
-
-  .media-preview {
-    outline-color: oklch(1 0 0 / 10%);
   }
 }
 
