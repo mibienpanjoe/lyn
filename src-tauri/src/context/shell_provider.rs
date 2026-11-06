@@ -99,33 +99,49 @@ struct KittyPaneBinding {
 }
 
 const KITTY_OWNER_TTL: Duration = Duration::from_secs(30);
+/// A cached owner that disagrees with a heartbeat is re-queried after this,
+/// so a reused window id cannot refuse its new Kitty process for long.
+const KITTY_OWNER_RECHECK: Duration = Duration::from_secs(5);
 const MAX_KITTY_OWNERS: usize = 64;
 
-/// Bounded cache of X11 Kitty window -> owning client PID (XRes). An entry is
-/// re-queried after its TTL so a reused window id cannot keep a stale owner.
+/// Bounded cache of X11 Kitty window -> owning client PID (XRes). Only known
+/// owners are cached. `answered` records whether XRes has ever answered in
+/// this session: before that, a missing owner means XRes is unavailable;
+/// afterwards it is a transient failure that must not attest any pane.
 #[derive(Default)]
 struct KittyWindowOwners {
-    entries: HashMap<u32, (Option<u32>, Instant)>,
+    entries: HashMap<u32, (u32, Instant)>,
+    answered: bool,
 }
 
 impl KittyWindowOwners {
     fn owner(
         &mut self,
         window: u32,
+        expected: Option<u32>,
         now: Instant,
         lookup: impl FnOnce(u32) -> Option<u32>,
     ) -> Option<u32> {
-        if let Some((owner, checked)) = self.entries.get(&window)
-            && now.duration_since(*checked) < KITTY_OWNER_TTL
-        {
-            return *owner;
+        if let Some((owner, checked)) = self.entries.get(&window).copied() {
+            let age = now.duration_since(checked);
+            if age < KITTY_OWNER_TTL && (expected == Some(owner) || age < KITTY_OWNER_RECHECK) {
+                return Some(owner);
+            }
         }
         if self.entries.len() >= MAX_KITTY_OWNERS {
             self.entries.clear();
         }
-        let owner = lookup(window);
-        self.entries.insert(window, (owner, now));
-        owner
+        match lookup(window) {
+            Some(owner) => {
+                self.answered = true;
+                self.entries.insert(window, (owner, now));
+                Some(owner)
+            }
+            None => {
+                self.entries.remove(&window);
+                None
+            }
+        }
     }
 }
 
@@ -134,7 +150,8 @@ impl KittyWindowOwners {
 /// may bind only to a Kitty window owned by its own Kitty process (the pane's
 /// direct parent); otherwise two processes alternately replace each other's
 /// source and an open draft's selection goes stale within one heartbeat.
-/// Without XRes the previous single-process behaviour is kept.
+/// If XRes has never answered, the previous single-process behaviour is kept;
+/// once it has, an unknown owner refuses instead of letting panes compete.
 fn attest_kitty_window(
     active: Option<(u32, ContextWindowKind)>,
     process_id: u32,
@@ -145,18 +162,22 @@ fn attest_kitty_window(
 ) -> Option<(u32, ContextWindowKind)> {
     let (window, kind) = active?;
     if kind != ContextWindowKind::Kitty {
-        return Some((window, kind));
+        return None;
     }
-    match owners.owner(window, now, owner_of) {
-        None => Some((window, kind)),
-        Some(owner) => (parent_of(process_id) == Some(owner)).then_some((window, kind)),
+    let parent = parent_of(process_id);
+    match owners.owner(window, parent, now, owner_of) {
+        Some(owner) => (parent == Some(owner)).then_some((window, kind)),
+        None if !owners.answered => Some((window, kind)),
+        None => None,
     }
 }
 
 /// Kitty numbers panes per process, so two Kitty processes both report pane 1.
 /// Pane bindings are keyed by (Kitty process, pane id); the key is opaque.
+/// Pane id 0 is invalid and stays 0 so the binding step rejects it.
 fn process_pane_key(kitty_process: Option<u32>, terminal_session_id: u64) -> u64 {
     match (kitty_process, u32::try_from(terminal_session_id)) {
+        (_, Ok(0)) => 0,
         (Some(process), Ok(pane)) => (u64::from(process) << 32) | u64::from(pane),
         _ => terminal_session_id,
     }
@@ -167,6 +188,9 @@ fn kitty_pane_key(
     message: &KittyObservationMessage,
     parent_of: impl FnOnce(u32) -> Option<u32>,
 ) -> u64 {
+    if message.terminal_session_id == 0 {
+        return 0;
+    }
     if message.state == KittyState::Ended {
         // The closing pane's process may already be gone; find its binding.
         if let Some(key) = panes.iter().find_map(|(key, binding)| {
@@ -181,10 +205,11 @@ fn kitty_pane_key(
     process_pane_key(parent_of(message.process_id), message.terminal_session_id)
 }
 
-/// A new binding needs the active (or remembered) Kitty window to belong to
-/// the pane's Kitty process. An existing binding keeps refreshing its own
-/// window while another window has focus, so clicking a second Kitty window
-/// with a draft open does not expire the invoked pane.
+/// A heartbeat first refreshes the pane's existing binding on its own window
+/// (still owned by the pane's Kitty process), whatever has focus now: another
+/// Kitty window, another application or Lyn itself. Only an unbound pane, or
+/// one whose window is no longer its own, may bind to the active (or
+/// remembered) Kitty window, and only when that window is owned by its process.
 fn kitty_heartbeat_window(
     active: Option<(u32, ContextWindowKind)>,
     panes: &HashMap<u64, KittyPaneBinding>,
@@ -194,21 +219,22 @@ fn kitty_heartbeat_window(
     owner_of: impl Fn(u32) -> Option<u32>,
     now: Instant,
 ) -> Option<(u32, ContextWindowKind)> {
-    if let Some(window) = attest_kitty_window(
-        active,
-        message.process_id,
-        &parent_of,
-        owners,
-        &owner_of,
-        now,
-    ) {
+    if let Some(binding) = panes
+        .get(&message.terminal_session_id)
+        .filter(|binding| binding.process_id == message.process_id)
+        && let Some(window) = attest_kitty_window(
+            Some((binding.window_id, ContextWindowKind::Kitty)),
+            message.process_id,
+            &parent_of,
+            owners,
+            &owner_of,
+            now,
+        )
+    {
         return Some(window);
     }
-    let binding = panes
-        .get(&message.terminal_session_id)
-        .filter(|binding| binding.process_id == message.process_id)?;
     attest_kitty_window(
-        Some((binding.window_id, ContextWindowKind::Kitty)),
+        active,
         message.process_id,
         &parent_of,
         owners,
@@ -282,6 +308,15 @@ fn run(listener: UnixListener, app: AppHandle, runtime_uid: u32) {
                             ..message
                         })
                     }
+                    TerminalObservationMessage::KittyInvoke(message) => {
+                        TerminalObservationMessage::KittyInvoke(KittyInvokeMessage {
+                            terminal_session_id: process_pane_key(
+                                parent_process(message.process_id),
+                                message.terminal_session_id,
+                            ),
+                            ..message
+                        })
+                    }
                     other => other,
                 };
                 let kitty_window = match &message {
@@ -312,6 +347,15 @@ fn run(listener: UnixListener, app: AppHandle, runtime_uid: u32) {
                     }
                     _ => None,
                 };
+                let kitty_directory = match &message {
+                    TerminalObservationMessage::KittyInvoke(message) if kitty_window.is_some() => {
+                        process_directory(message.process_id, runtime_uid).ok()
+                    }
+                    TerminalObservationMessage::Kitty(message) if kitty_window.is_some() => {
+                        process_directory(message.process_id, runtime_uid).ok()
+                    }
+                    _ => None,
+                };
                 let registry_state = app.state::<std::sync::Mutex<ContextSourceRegistry>>();
                 let Ok(mut registry) = registry_state.lock() else {
                     continue;
@@ -322,13 +366,10 @@ fn run(listener: UnixListener, app: AppHandle, runtime_uid: u32) {
                             false
                         } else {
                             let active_window = kitty_window;
-                            let directory = process_directory(message.process_id, runtime_uid).ok();
+                            let directory = kitty_directory;
                             let focused = KittyObservationMessage {
                                 version: 1,
-                                terminal_session_id: process_pane_key(
-                                    parent_process(message.process_id),
-                                    message.terminal_session_id,
-                                ),
+                                terminal_session_id: message.terminal_session_id,
                                 process_id: message.process_id,
                                 state: KittyState::Focused,
                             };
@@ -395,9 +436,7 @@ fn run(listener: UnixListener, app: AppHandle, runtime_uid: u32) {
                     }
                     TerminalObservationMessage::Kitty(message) => {
                         let active_window = kitty_window;
-                        let directory = (message.state == KittyState::Focused)
-                            .then(|| process_directory(message.process_id, runtime_uid))
-                            .and_then(Result::ok);
+                        let directory = kitty_directory;
                         apply_kitty_message(
                             &mut registry,
                             &mut kitty_panes,
@@ -841,10 +880,11 @@ mod tests {
     };
 
     use super::{
-        KITTY_OWNER_TTL, KittyObservationMessage, KittyPaneBinding, KittyState, KittyWindowOwners,
-        ShellObservationMessage, ShellState, TerminalObservationMessage, apply_kitty_message,
-        apply_message, attest_kitty_window, foreground_shell_window, kitty_heartbeat_window,
-        kitty_pane_key, observation_window, parent_process, process_directory_at,
+        KITTY_OWNER_RECHECK, KITTY_OWNER_TTL, KittyObservationMessage, KittyPaneBinding,
+        KittyState, KittyWindowOwners, ShellObservationMessage, ShellState,
+        TerminalObservationMessage, apply_kitty_message, apply_message, attest_kitty_window,
+        foreground_shell_window, kitty_heartbeat_window, kitty_pane_key, observation_window,
+        parent_process, process_directory_at, process_pane_key,
         shell_observation_superseded_by_kitty, watch_shell_session,
     };
 
@@ -1206,15 +1246,28 @@ mod tests {
             }
         }
 
-        /// Window 81 belongs to Kitty 100, window 82 to Kitty 200.
+        /// Windows 81 and 83 belong to Kitty 100, window 82 to Kitty 200.
         fn heartbeat(&mut self, process_id: u32, active_window: u32, at: Instant) {
+            self.heartbeat_with_active(
+                process_id,
+                Some((active_window, ContextWindowKind::Kitty)),
+                at,
+            );
+        }
+
+        fn heartbeat_with_active(
+            &mut self,
+            process_id: u32,
+            active: Option<(u32, ContextWindowKind)>,
+            at: Instant,
+        ) {
             let parent = |process_id: u32| match process_id {
                 1001 => Some(100),
                 2001 => Some(200),
                 _ => None,
             };
             let owner = |window: u32| match window {
-                81 => Some(100),
+                81 | 83 => Some(100),
                 82 => Some(200),
                 _ => None,
             };
@@ -1229,7 +1282,7 @@ mod tests {
                 ..raw
             };
             let window = kitty_heartbeat_window(
-                Some((active_window, ContextWindowKind::Kitty)),
+                active,
                 &self.panes,
                 &message,
                 parent,
@@ -1366,16 +1419,11 @@ mod tests {
             None,
             "an unreadable parent cannot bind"
         );
-        // Without XRes the single-process behaviour is unchanged.
-        let mut unknown = KittyWindowOwners::default();
-        assert_eq!(
-            attest_kitty_window(kitty, 2000, parent, &mut unknown, |_| None, now),
-            kitty
-        );
         let editor = Some((82, ContextWindowKind::Vscode));
         assert_eq!(
             attest_kitty_window(editor, 2000, parent, &mut owners, |_| Some(1), now),
-            editor
+            None,
+            "a non-Kitty foreground never binds a Kitty pane"
         );
         assert_eq!(
             attest_kitty_window(None, 1000, parent, &mut owners, |_| Some(100), now),
@@ -1384,20 +1432,109 @@ mod tests {
     }
 
     #[test]
-    fn kitty_window_owners_are_cached_then_requeried_after_the_ttl() {
+    fn missing_xres_keeps_single_kitty_behaviour_but_transient_failures_refuse() {
+        let now = Instant::now();
+        let kitty = Some((81, ContextWindowKind::Kitty));
+        let parent = |process_id: u32| Some(process_id / 10);
+        // XRes never answered in this session: previous behaviour.
+        let mut unavailable = KittyWindowOwners::default();
+        assert_eq!(
+            attest_kitty_window(kitty, 2000, parent, &mut unavailable, |_| None, now),
+            kitty
+        );
+        // XRes answered before: a later failure must not let panes compete.
+        let mut answered = KittyWindowOwners::default();
+        assert_eq!(
+            attest_kitty_window(
+                Some((90, ContextWindowKind::Kitty)),
+                1000,
+                parent,
+                &mut answered,
+                |_| Some(100),
+                now
+            ),
+            Some((90, ContextWindowKind::Kitty))
+        );
+        assert_eq!(
+            attest_kitty_window(kitty, 2000, parent, &mut answered, |_| None, now),
+            None
+        );
+    }
+
+    #[test]
+    fn kitty_window_owners_are_cached_and_rechecked_on_disagreement() {
         let now = Instant::now();
         let mut owners = KittyWindowOwners::default();
-        let mut lookups = 0;
-        let mut owner_at = |at, value| {
-            owners.owner(81, at, |_| {
-                lookups += 1;
+        let lookups = Cell::new(0);
+        let mut owner_at = |at, expected, value| {
+            owners.owner(81, expected, at, |_| {
+                lookups.set(lookups.get() + 1);
                 Some(value)
             })
         };
-        assert_eq!(owner_at(now, 100), Some(100));
-        assert_eq!(owner_at(now + Duration::from_secs(29), 200), Some(100));
-        assert_eq!(owner_at(now + KITTY_OWNER_TTL, 200), Some(200));
-        assert_eq!(lookups, 2);
+        assert_eq!(owner_at(now, Some(100), 100), Some(100));
+        // Agreeing heartbeats use the cache for the whole TTL.
+        assert_eq!(
+            owner_at(now + Duration::from_secs(29), Some(100), 200),
+            Some(100)
+        );
+        assert_eq!(lookups.get(), 1);
+        // Disagreement inside the recheck window still trusts the cache...
+        assert_eq!(
+            owner_at(now + Duration::from_secs(2), Some(200), 200),
+            Some(100)
+        );
+        assert_eq!(lookups.get(), 1);
+        // ...but after it, a reused window id is re-queried and accepted.
+        assert_eq!(
+            owner_at(now + KITTY_OWNER_RECHECK, Some(200), 200),
+            Some(200)
+        );
+        assert_eq!(lookups.get(), 2);
+        assert_eq!(
+            owner_at(now + KITTY_OWNER_RECHECK + KITTY_OWNER_TTL, Some(300), 300),
+            Some(300)
+        );
+        assert_eq!(lookups.get(), 3);
+    }
+
+    #[test]
+    fn a_bound_kitty_pane_refreshes_while_another_application_has_focus() {
+        let now = Instant::now();
+        let mut kittys = TwoKittys::new();
+        kittys.heartbeat(1001, 81, now);
+        let invoked = kittys.source_for_window(81, now).unwrap();
+        for second in (2..=60).step_by(2) {
+            let at = now + Duration::from_secs(second);
+            kittys.heartbeat_with_active(1001, Some((95, ContextWindowKind::Vscode)), at);
+            assert_eq!(kittys.source_for_window(81, at), Some(invoked.clone()));
+        }
+    }
+
+    #[test]
+    fn a_bound_pane_keeps_its_window_when_its_kitty_opens_another_window() {
+        // Kitty 100 owns windows 81 and 83. The pane bound to 81 keeps
+        // heartbeating after focus moves to 83 (before its own focus report).
+        let now = Instant::now();
+        let mut kittys = TwoKittys::new();
+        kittys.heartbeat(1001, 81, now);
+        let invoked = kittys.source_for_window(81, now).unwrap();
+        let at = now + Duration::from_secs(2);
+        kittys.heartbeat(1001, 83, at);
+        assert_eq!(kittys.source_for_window(81, at), Some(invoked));
+        assert_eq!(kittys.source_for_window(83, at), None);
+    }
+
+    #[test]
+    fn kitty_pane_id_zero_is_never_qualified_into_a_valid_key() {
+        let message = KittyObservationMessage {
+            version: 1,
+            terminal_session_id: 0,
+            process_id: 1001,
+            state: KittyState::Focused,
+        };
+        assert_eq!(kitty_pane_key(&HashMap::new(), &message, |_| Some(100)), 0);
+        assert_eq!(process_pane_key(Some(100), 0), 0);
     }
 
     #[test]
